@@ -27,6 +27,9 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
     # 注册定时任务 + 清理僵尸（从旧 on_event 迁移）
     register_pipeline_jobs()
+    # 启动自动进度同步（每 5s 把 agent_tasks 完成比例写回 question_tasks.progress）
+    from app.core.progress_sync import start_progress_sync
+    start_progress_sync()
     from app.database.session import AsyncSessionLocal
     from app.agents.orchestrator import orchestrator
     async with AsyncSessionLocal() as db:

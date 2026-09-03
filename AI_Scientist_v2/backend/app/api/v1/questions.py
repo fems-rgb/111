@@ -65,42 +65,56 @@ class CreateQuestionRequest(BaseModel):
 
 # ─── 获取题目列表 ──────────────────────────────────────────────
 
-def _real_task_progress(db, task) -> int:
+async def _real_task_progress(db, task) -> int:
     """[动态进度] 用关联 project 的 agent_tasks 完成比例计算真实进度。
-    不写死任何数字；查不到关联时返回 None（由调用方保留原值）。
+    async 版本：全程使用 await db.execute(select(...))，兼容 AsyncSession。
+    链路: question_task.question_id -> ScienceQuestion.title
+          -> Project.title == "[题库] " + title -> agent_tasks 完成比例
+    查不到关联时返回 None（调用方保留原值）。
     """
     try:
-        from app.database.models import Project, AgentTask
         from sqlalchemy import select as _sel
+        from app.database.models import AgentTask, Project, ScienceQuestion
+
         qid = getattr(task, "question_id", None)
         if qid is None:
             return None
-        rows = db.query(AgentTask.project_id, AgentTask.status).filter(
-            AgentTask.project_id.in_(
-                db.query(Project.id).filter(Project.title.like("[题库]%"))
-            )
-        ).all()
-        # 用 question_id 精确关联：Project.title 含该题目标题
-        from app.database.models import ScienceQuestion
-        sq = db.query(ScienceQuestion).filter(ScienceQuestion.question_id == qid).first()
-        if not sq or not getattr(sq, "title", None):
+
+        sq = (await db.execute(
+            _sel(ScienceQuestion).where(ScienceQuestion.question_id == qid)
+        )).scalar_one_or_none()
+        if not sq:
             return None
-        prows = db.query(Project.id).filter(Project.title == "[题库] " + str(sq.title)[:80]).all()
-        if not prows:
-            prows = db.query(Project.id).filter(Project.title.like("%" + str(sq.title)[:24] + "%")).all()
-        if not prows:
+
+        title = str(getattr(sq, "title", "") or "").strip()
+        if not title:
             return None
-        pids = [r[0] for r in prows]
-        tasks = db.query(AgentTask.status).filter(AgentTask.project_id.in_(pids)).all()
-        if not tasks:
+
+        # 按标题匹配该项目（题库项目标题格式: "[题库] {title}"）
+        pids = (await db.execute(
+            _sel(Project.id).where(Project.title.like("%" + title[:20] + "%"))
+        )).all()
+        if not pids:
             return None
-        total = len(tasks)
-        done = sum(1 for (st,) in tasks if str(
-            st.value if hasattr(st, "value") else st
-        ).strip().lower() in ("completed", "complete", "done", "success", "succeeded"))
+        pid_list = [r[0] for r in pids]
+
+        st_rows = (await db.execute(
+            _sel(AgentTask.status).where(AgentTask.project_id.in_(pid_list))
+        )).all()
+        if not st_rows:
+            return None
+
+        total = len(st_rows)
+        done = 0
+        for (st,) in st_rows:
+            sv = st.value if hasattr(st, "value") else st
+            sv = str(sv).strip().lower() if sv is not None else ""
+            if sv in ("completed", "complete", "done", "success", "succeeded"):
+                done += 1
         return round(done / total * 100)
     except Exception:
         return None
+
 
 @router.get("/")
 async def list_questions(
@@ -180,6 +194,7 @@ async def my_tasks(
 
     # 批量获取题目标题
     qids = list(set(r.question_id for r in rows))
+
     title_map = {}
     if qids:
         qq = select(ScienceQuestion.question_id, ScienceQuestion.title).where(
@@ -409,8 +424,9 @@ async def on_agent_step_completed(project_id=None, task_id=None, **_kw):
 
     if not project_id:
         return
-    qt_ = await _find_task_by_project(db, int(project_id))
-    question_task_id = qt_.id if qt_ else None
+    async with AsyncSessionLocal() as db:
+        qt_ = await _find_task_by_project(db, int(project_id))
+        question_task_id = qt_.id if qt_ else None
     if not question_task_id:
         return
 
@@ -440,8 +456,9 @@ async def on_project_failed(project_id=None, error=None, **_kw):
     from sqlalchemy import select
     if not project_id:
         return
-    task = await _find_task_by_project(db, int(project_id))
-    task_id = task.id if task else None
+    async with AsyncSessionLocal() as db:
+        task = await _find_task_by_project(db, int(project_id))
+        task_id = task.id if task else None
     if not task_id:
         return
     async with AsyncSessionLocal() as db:
@@ -572,7 +589,7 @@ async def _execute_question_generation(
                 _r["generation_mode"] = "agent_center"
                 _r["pipeline_id"] = pipeline_id
                 task.result = _r
-                _rp = _real_task_progress(db, task)
+                _rp = await _real_task_progress(db, task)
                 task.progress = _rp if _rp is not None else 30
                 task.status = "running"
                 await db.commit()
@@ -603,7 +620,7 @@ async def _execute_question_generation(
                 result["generation_mode"] = "builtin_pipeline"
                 result["pipeline_id"] = pipeline_id
                 task.result = result
-                _rp = _real_task_progress(db, task)
+                _rp = await _real_task_progress(db, task)
                 task.progress = _rp if _rp is not None else 30
                 await db.commit()
 
@@ -616,7 +633,7 @@ async def _execute_question_generation(
                 _r["generation_mode"] = "builtin_pipeline"
                 _r["pipeline_id"] = pipeline_id
                 task.result = _r
-                _rp = _real_task_progress(db, task)
+                _rp = await _real_task_progress(db, task)
                 task.progress = _rp if _rp is not None else 30
                 task.status = "running"
                 await db.commit()
@@ -650,7 +667,7 @@ async def _execute_question_generation(
                 task.result = result
 
                 # 更新进度
-                _rp = _real_task_progress(db, task)
+                _rp = await _real_task_progress(db, task)
                 task.progress = _rp if _rp is not None else 30
                 await db.commit()
 
@@ -659,7 +676,7 @@ async def _execute_question_generation(
 
                 # 标记为 running，让前端轮询持续
                 task.status = "running"
-                _rp = _real_task_progress(db, task)
+                _rp = await _real_task_progress(db, task)
                 task.progress = _rp if _rp is not None else 30
                 await db.commit()
 
@@ -766,7 +783,7 @@ async def _execute_question_generation(
                 user_msg = research_text
 
                 # 更新进度: 调用AI中
-                _rp = _real_task_progress(db, task)
+                _rp = await _real_task_progress(db, task)
                 task.progress = _rp if _rp is not None else 30
                 task.result = result
                 await db.commit()
@@ -888,6 +905,43 @@ async def get_task_status(
     current_user: User = Depends(get_current_user),
 ):
     """查询生成任务状态与结果"""
+    # [真实进度] 按关联 project 的 agent_tasks 完成比例实时计算
+    _real_progress = None
+    try:
+        from sqlalchemy import select as _sel
+        from app.database.models import AgentTask as _AT, Project as _Proj
+
+        _q = select(QuestionTask).where(
+            QuestionTask.id == task_id,
+            QuestionTask.user_id == current_user.id,
+        )
+        _task = (await db.execute(_q)).scalar_one_or_none()
+        if _task is None:
+            raise RuntimeError("task None")
+        _question = (await db.execute(
+            select(ScienceQuestion).where(ScienceQuestion.question_id == _task.question_id)
+        )).scalar_one_or_none()
+        if _question and _question.title:
+            _title_key = str(_question.title).strip()[:20]
+            _pids = (await db.execute(
+                _sel(_Proj.id).where(_Proj.title.like("%" + _title_key + "%"))
+            )).all()
+            _pid_list = [r[0] for r in _pids]
+            if _pid_list:
+                _rows = (await db.execute(
+                    _sel(_AT.status).where(_AT.project_id.in_(_pid_list))
+                )).all()
+                _total = len(_rows)
+                _done = sum(
+                    1 for (_s,) in _rows
+                    if str(_s.value if hasattr(_s, "value") else _s).strip().lower()
+                    in ("completed", "complete", "done", "success", "succeeded")
+                )
+                if _total:
+                    _real_progress = round(_done / _total * 100)
+    except Exception as _ep:
+        print(f"[progress] 计算跳过: {_ep}")
+
     q = select(QuestionTask).where(
         QuestionTask.id == task_id,
         QuestionTask.user_id == current_user.id,
@@ -905,7 +959,7 @@ async def get_task_status(
         "question_id": task.question_id,
         "question_title": question.title if question else None,
         "status": task.status,
-        "progress": task.progress if task.progress is not None and task.progress > 0 else ((task.result or {}).get("progress", 0) if task.status != "completed" else 100),
+        "progress": (_real_progress if _real_progress is not None else task.progress) or 0,
         "result": task.result,
         "document_path": task.document_path,
         "version": task.version,

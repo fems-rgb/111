@@ -15,23 +15,25 @@ router = APIRouter(prefix="/stream", tags=["实时推送"])
 _user_queues: dict[int, list[asyncio.Queue]] = {}
 
 
-async def _event_handler(data: dict):
-    """事件总线处理器：将事件分发到所有在线用户的SSE队列"""
-    user_id = data.get("user_id")
+async def _event_handler(data: dict = None, **kwargs):
+    """事件总线处理器：将事件分发到所有在线用户的SSE队列。
+    兼容两种调用：emit(dict) 时 data={...}；emit(**kwargs) 时走 kwargs。
+    """
+    if isinstance(data, dict) and data:
+        payload = data
+    elif kwargs:
+        payload = kwargs
+    else:
+        payload = {}
+    user_id = payload.get("user_id")
     for uid, queues in _user_queues.items():
-        # 广播给所有用户，或只发给特定用户
         if user_id is None or uid == user_id:
             for q in queues:
                 try:
-                    q.put_nowait(data)
+                    q.put_nowait(payload)
                 except asyncio.QueueFull:
                     pass
 
-
-# 注册事件监听
-for evt in ["project.created", "project.completed", "project.failed",
-            "agent.started", "agent.completed", "agent.failed", "agent.review_needed", "agent.step_update"]:
-    event_bus.on(evt, _event_handler)
 
 
 @router.get("/events")
