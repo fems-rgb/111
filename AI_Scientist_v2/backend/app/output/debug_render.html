@@ -9,23 +9,39 @@
   h1 { font-size: 16pt; color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; }
   h2 { font-size: 13pt; color: #283593; border-left: 4px solid #283593; padding-left: 8px; margin-top: 18px; }
   h3 { font-size: 11pt; color: #3949ab; }
-  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+  table { border-collapse: collapse; table-layout: fixed; width: 100%; max-width: 100%; margin: 8px 0; font-size: 9.5pt; overflow-wrap: anywhere; }
   th, td { border: 1px solid #bbb; padding: 5px 8px; vertical-align: top; }
-  th { background: #e8eaf6; white-space: nowrap; }
-  table td:first-child { white-space: nowrap; }
-  /* fix_v17 */ }
+  th { background: #e8eaf6; white-space: normal; overflow-wrap: anywhere; }
+  table td:first-child { white-space: normal; overflow-wrap: anywhere; }
+  /* fix_v17 */
   .meta { font-size: 9pt; color: #555; }
   .chart { max-width: 100%; margin: 8px 0; border: 1px solid #eee; }
   .score { color: #c62828; font-weight: bold; }
-</style>
+
+  /* === 修复宽表格横向溢出 (challenge_cup) === */
+  table { word-break: break-word; }
+  th, td { white-space: normal !important; overflow-wrap: anywhere !important; word-break: break-word; }
+  /* 长文本单元格：紧凑行高，避免巨大空白 */
+  td { line-height: 1.4; }
+  /* 跨页：表头重复，行不拦腰断 */
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  /* 代码/路径/URL 强制换行 */
+  code, pre, .mono { word-break: break-all; overflow-wrap: anywhere; }
+  /* 宽表（5列以上）整体缩小字号，挤下长段落 */
+  table.wide-table, table.evidence-table, table.eval-table { font-size: 8.6pt; }
+  table.wide-table th, table.wide-table td,
+  table.evidence-table th, table.evidence-table td,
+  table.eval-table th, table.eval-table td { padding: 3px 5px; line-height: 1.32; }
+  </style>
 </head>
 <body>
 <style>
-  table { page-break-inside: auto; border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+  table { page-break-inside: auto; border-collapse: collapse; table-layout: fixed; width: 100%; max-width: 100%; margin: 8px 0; font-size: 9.5pt; overflow-wrap: anywhere; }
   tr { page-break-inside: avoid; }
   thead { display: table-header-group; }
   th, td { border: 1px solid #bbb; padding: 5px 8px; vertical-align: top; }
-  th { background: #e8eaf6; white-space: nowrap; }
+  th { background: #e8eaf6; white-space: normal; overflow-wrap: anywhere; }
   .keep-together { page-break-inside: avoid; }
   .chart { max-width: 100%; margin: 8px 0; border: 1px solid #eee; }
   .chart-block { page-break-inside: avoid; margin: 14px 0; }
@@ -44,7 +60,7 @@
 
   <h1>意识的生物学基础是什么——基于国产开源大模型 Qwen 的多智能体系统</h1>
   <p class="meta">构建版本: v39-0831-041442 | 参赛队：AI Scientist 21</p>
-  <p class="meta">生成时间: 2026-09-04 03:41 | 项目ID: 2 | 依据: 挑战杯 XH-202619 赛题规范</p>
+  <p class="meta">生成时间: 2026-09-04 03:53 | 项目ID: 2 | 依据: 挑战杯 XH-202619 赛题规范</p>
 
   <h2>摘要 (Abstract)</h2>
   <h3>研究背景</h3>
@@ -62,7 +78,7 @@
   <h3>2.1 理论框架与概念模型</h3><h4>逻辑推导链</h4><p>从已知事实出发，我们了解到大脑中存在与意识相关的特定区域，如前额叶皮层，并且可以通过观察脑电波活动来间接测量意识状态。然而，关于哪些具体的大脑机制直接负责产生意识仍存在争议。此外，不同理论模型（例如全局工作空间理论 vs. 集成信息理论）对解释意识的工作原理提出不同的假设。因此，我们需要构建一个综合性的理论框架，以更准确地描述从神经元活动到意识体验的转变过程。</p><h4>研究目标</h4><p>我们的研究目标是结合全局工作空间理论 (GWT) 和集成信息理论 (IIT)，构建一个综合性的理论模型，从而填补目前缺乏普遍接受的理论框架这一知识缺口。通过整合这两种理论的优势，我们可以更好地理解意识的生物学基础，并探索意识存在的边界条件。</p><h4>创新点</h4><p>1. 多理论融合：本研究将首次尝试结合GWT和IIT，构建一个综合性理论模型。GWT强调信息在大脑中的广播和共享，而IIT则关注信息的整合。这种融合有助于提供一个更加全面的视角来理解意识的产生机制。</p><p>2. 多模态数据整合：我们将利用功能性磁共振成像 (fMRI)、扩散张量成像 (DTI) 和生化检测等多种技术手段，收集并分析健康成年人和脑损伤患者的数据。这将为我们提供多层次、多维度的信息，以验证假设并构建更精确的理论模型。</p><h4>突破点说明</h4><p>1. 统一理论框架：当前关于意识的研究尚未形成统一的理论框架。通过结合GWT和IIT，我们希望能够构建一个被广泛认可的理论模型，为未来的研究提供坚实的基础。</p><p>2. 跨学科合作：意识的研究涉及多个学科，包括神经科学、心理学、哲学等。通过构建一个综合性的理论模型，我们能够促进跨学科对话与合作，推动相关领域的共同发展。</p><h4>概念模型描述</h4><p>我们的概念模型如下：</p><p>- 全局工作空间：前额叶皮层作为关键节点，负责将信息广播到其他脑区。根据GWT，当信息被广播到大脑的“全局工作空间”时，才会产生意识体验。</p><p>- 信息整合：全脑网络通过复杂的连接和交互，实现信息的整合。根据IIT，意识是由于大脑内部复杂的信息整合而产生的。我们假设，高水平的因果交互是意识产生的基础。</p><p>- 神经递质调节：乙酰胆碱和多巴胺等神经递质调节意识水平。这些神经递质参与调控觉醒周期及注意力分配，可能也是人类意识形成的关键因素之一。</p><h4>变量定义与计量模型</h4><p>- H1: 意识状态与前额叶皮层活动强度的关系<br>Consciousness_i = β_0 + β_1 × PFC_Activity_i + β_2 × Age_i + β_3 × Gender_i + β_4 × Health_Status_i + ε_i</p><p>- H2: 意识状态与全脑网络连接强度的关系<br>Consciousness_i = β_0 + β_1 × Network_Connectivity_i + β_2 × Age_i + β_3 × Gender_i + β_4 × Health_Status_i + ε_i</p><p>- H3: 意识状态与神经递质水平的关系<br>Consciousness_i = β_0 + β_1 × Neurotransmitter_Level_i + β_2 × Age_i + β_3 × Gender_i + β_4 × Health_Status_i + ε_i</p><h4>数据来源与样本</h4><p>- 数据来源：<br>- 功能性磁共振成像 (fMRI) 数据<br>- 扩散张量成像 (DTI) 数据<br>- 血清神经递质水平数据<br>- 行为测试数据</p><p>- 样本：<br>- 健康成年人（n = 100）<br>- 患有不同类型脑损伤的患者（n = 50）</p><h4>验证方法</h4><p>- H1验证：采用fMRI对志愿者进行扫描，同时记录其在不同任务条件下的脑区活动情况及自我报告的意识感受。比较不同意识状态下前额叶皮层的活动特征，并使用统计分析方法检验两者之间的相关性。<br>- H2验证：利用扩散张量成像(DTI)技术测量健康成人与患有不同类型脑损伤患者的大脑白质纤维束完整性。结合行为测试评估这些个体的认知表现，以确定网络连通性变化如何影响意识状态。<br>- H3验证：选取一组健康成年人作为研究对象，在控制饮食和其他外部干扰的前提下，定期检测其体内目标神经递质含量，并同步记录其日常活动中的精神状态变化。使用双盲法给予部分受试者安慰剂对照组对比效果。</p><p>通过上述方法，我们期望能够验证提出的假设，并构建一个综合性的理论模型，为理解意识的生物学基础提供新的见解。</p><p>---</p>
 
   <h2>三、必要的技术手段 (Technical Details)</h2>
-  <table class="keep-together">
+  <table class="keep-together"><colgroup><col style="width:33.3%"/><col style="width:33.3%"/><col style="width:33.3%"/></colgroup>
     <thead><tr><th>类别</th><th>技术</th><th>用途</th></tr></thead>
     <tbody>
     <tr><td>基座模型</td><td>Qwen（千问）开源系列（经阿里云百炼平台 API 调用）</td><td>科学文本理解 / 假设生成</td></tr>
@@ -79,7 +95,7 @@
   
   <h3>3.1 模型调用与成本统计（Qwen API 真实调用记录）</h3>
   <p>下表为各智能体调用 Qwen 大模型的真实记录，数据取自系统成本分析模块（agent_tasks 表）。</p>
-  <table class="keep-together">
+  <table class="keep-together"><colgroup><col style="width:25.0%"/><col style="width:25.0%"/><col style="width:25.0%"/><col style="width:25.0%"/></colgroup>
     <thead><tr><th>智能体</th><th>调用模型</th><th>Tokens</th><th>成本（元）</th></tr></thead>
     <tbody>
     
@@ -137,7 +153,7 @@
   
   <p>以下数据集均为公开/合规的真实观测数据集。<b>Source</b> 为假设推演依据的历史观测数据，<b>Target</b> 为验证实验所需的拟采集数据特征。</p>
   
-  <table class="keep-together">
+  <table class="keep-together"><colgroup><col style="width:33.3%"/><col style="width:33.3%"/><col style="width:33.3%"/></colgroup>
     <thead><tr><th>数据集</th><th>Source（历史数据）</th><th>Target（拟采集特征）</th></tr></thead>
     <tbody>
     
@@ -171,7 +187,7 @@
   <h3>7.1 实验结果明细</h3>
   <p>下表为将第四节候选假设操作化为可统计检验命题后的分析结果（编号 A1–A4 为分析智能体输出序号，"对应假设"列标注其与第四节候选假设的映射关系）。</p>
   
-  <table>
+  <table><colgroup><col style="width:12.5%"/><col style="width:12.5%"/><col style="width:12.5%"/><col style="width:12.5%"/><col style="width:12.5%"/><col style="width:12.5%"/><col style="width:12.5%"/><col style="width:12.5%"/></colgroup>
     <thead><tr><th>编号</th><th>对应假设</th><th>假设陈述</th><th>变量</th><th>可验证性</th><th>可证伪性</th><th>建议方法</th><th>反向证据</th></tr></thead>
     <tbody>
     
