@@ -109,7 +109,7 @@ def generate_competition_proposal(project_id: int):
 </table>
 
 <h3>1.4 选题说明</h3>
-<p>选题来自公开发布的 <strong>Science 125 前沿科学问题（2005年版）</strong>，领域为<strong>{domain}</strong>（自然科学方向），来源合规。系统围绕该问题链接 XENON、Planck、SDSS、LHC 等多维度实测数据，生成可验证假设（详见第三部分真实案例）。</p>
+<p>选题来自公开发布的 <strong>Science 125 前沿科学问题（2005年版）</strong>，领域为<strong>{domain}</strong>（自然科学方向），来源合规。系统围绕该问题链接相关公开观测与实验数据集 等多维度实测数据，生成可验证假设（详见第三部分真实案例）。</p>
 
 <h2>二、AI Scientists 架构设计与讲解</h2>
 <h3>2.1 基座模型与调用方式</h3>
@@ -140,7 +140,7 @@ def generate_competition_proposal(project_id: int):
 <p><strong>（4）任务路由：</strong><code>task_router.route_task</code> 按复杂度返回 <code>simple / workflow / multi_agent</code> 及建议智能体，决定执行路径。</p>
 
 <h3>2.4 多模态科学数据处理</h3>
-<p>系统配置 <strong>qwen-vl-max</strong> 视觉大模型，通过 doc_multimodal 等子智能体处理科学模态数据（CMB 功率谱图、星系旋转曲线、实验图表）。真实案例中实验图表由 experiment 智能体数值模拟生成并内嵌（见图 1），同时经多模态链路解析关联，支撑“多模态科学数据处理成效”评审项。</p>
+<p>系统配置 <strong>qwen-vl-max</strong> 视觉大模型，通过 doc_multimodal 等子智能体处理科学模态数据（领域典型观测图表与实验图表）。真实案例中实验图表由 experiment 智能体数值模拟生成并内嵌（见图 1），同时经多模态链路解析关联，支撑“多模态科学数据处理成效”评审项。</p>
 
 <h3>2.5 人在回路（Human-in-the-Loop）</h3>
 <p>前端提供可交互人机协作：支持<strong>驳回重做(retry)、跳过(skip)、中止(abort)、重启步骤(restart-step)、重启项目(restart-project)</strong>；数据库 <code>agent_tasks</code> 表以 <code>requires_review / review_comment / reviewed_by / retry_count</code> 字段留存人工介入痕迹，形成具备教学意义的人机协作流程。</p>
@@ -191,7 +191,10 @@ def generate_competition_proposal(project_id: int):
     # --- 案例 PDF（第③块）---
     try:
         from app.api.v1.export import generate_challenge_cup_pdf
-        case_pdf = generate_challenge_cup_pdf(project_id)
+        _rq = ""
+        if 'proj' in dir() and proj is not None:
+            _rq = getattr(proj, "research_question", "") or getattr(proj, "description", "")
+        case_pdf = generate_challenge_cup_pdf(project_id, research_question=_rq)
     except Exception as e:
         logger.error('[proposal] 案例 PDF 生成失败: %s', e)
         return None

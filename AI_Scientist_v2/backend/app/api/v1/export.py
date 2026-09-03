@@ -700,15 +700,15 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
         ps=_re.sub(r'科学问题[:：][^\n]*[\n]*','',ps)
         ps=_re.sub(r'问题描述[:：][^\n]*[\n]*','',ps)
         if not ps: ps=_clean(proj.research_question or proj.description or '')
-        _rq=str(proj.research_question or '宇宙由什么构成')
+        _rq=str(proj.research_question or proj.description or '').strip()
         _rq=_re.sub(r'科学问题[:：][^\n]*','',_rq)
         _rq=_re.sub(r'问题描述[:：][^\n]*','',_rq)
-        _rq=_rq.replace('\n',' ').strip() or '宇宙由什么构成'
+        _rq=_rq.replace('\n',' ').strip() or '该前沿科学问题'
         if not _re.search(r'(局限|不足|挑战|困难|难以|瓶颈|低效)',ps):
             ps=('在传统人工科研模式下，围绕“'+_rq+'”这一科学问题的探索，'
-                '高度依赖研究者个人经验与文献积累；面对暗物质候选粒子（WIMP/轴子）、暗能量状态方程、'
-                '额外维度等多方向并存，且涉及 XENON 直接探测、Planck CMB 功率谱、SDSS 巡天等'
-                '多模态实测数据的复杂局面时，人工梳理效率低下、易陷入思维定式，'
+                '高度依赖研究者个人经验与文献积累；面对研究对象的多层次机制与相互关联的关键变量，'
+                '且需整合多源异构实测数据与跨学科理论时，'
+                '人工梳理效率低下、易陷入思维定式，'
                 '难以在假设生成之初即保证其可验证性与自洽性，亦难以系统覆盖全部候选方向并给出可操作检验路径。\n\n'+ps)
         ps=ps[:2000]
 
@@ -730,7 +730,7 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
         except Exception:
             _m=_re.search(r'research_object["\']?\s*[:：]\s*["\']?([^"\',}]+)',kg)
             if _m: _ro=_m.group(1).strip()
-        rationale=('推导链条：①知识缺口识别（研究对象：'+(_ro or '宇宙的物质构成')+'，锁定关键变量）→ '
+        rationale=('推导链条：①知识缺口识别（研究对象：'+(_ro or _rq or '研究问题本身')+'，锁定关键变量）→ '
           '②文献事实提取（基于文献挖掘，避免断章取义）→ ③归纳与演绎推理生成候选假设（H1–H5）→ '
           '④操作化为可统计检验命题并设计实验→ ⑤数值模拟与显著性检验产出可视化证据。')
         rationale+=('\n\n【本系统的创新点】（1）机制创新：以多智能体流水线替代单人经验驱动，'
@@ -771,7 +771,7 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
         if _hm:
             methods_from_hyp="\n\n".join(_hm)
             if len(methods.strip())<300 and len(methods_from_hyp.strip())>80:
-                methods=('研究设计类型：混合方法，定量（Planck CMB功率谱/SDSS大尺度结构/XENON直接探测、线性回归、显著性检验、贝叶斯参数估计）与定性（理论模型与概念框架）结合。实验流程：①数据准备→②变量操作化→③计量模型设定→④参数估计→⑤稳健性检验→⑥可视化验证。\n\n'+_clean_light(methods_from_hyp))
+                methods=('研究设计类型：混合方法，针对研究对象的关键变量采用线性回归、显著性检验、贝叶斯参数估计等定量方法，并结合理论模型与概念框架的定性分析。实验流程：①数据准备→②变量操作化→③计量模型设定→④参数估计→⑤稳健性检验→⑥可视化验证。\n\n'+_clean_light(methods_from_hyp))
                 logger.info('[stageE] 方法论改用假设表构建(对齐H1-H5), 长度=%s', len(methods))
 
         # --- 7.1 结果表 ---

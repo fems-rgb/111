@@ -531,7 +531,11 @@ class Orchestrator:
                 try:
                     import asyncio as _asyncio
                     from app.api.v1.export import generate_challenge_cup_pdf as _gen_pdf
-                    _pdf = await _asyncio.get_running_loop().run_in_executor(None, _gen_pdf, project_id)
+                    _rq = ""
+                    if 'project' in dir() and project is not None:
+                        _rq = getattr(project, "research_question", "")
+                    _pdf = await _asyncio.get_running_loop().run_in_executor(
+                        None, lambda: _gen_pdf(project_id, research_question=_rq))
                     if _pdf:
                         logger.info("📄 赛题案例PDF已自动生成: %s", _pdf)
                 except Exception as _pe:
