@@ -196,10 +196,10 @@
   {% else %}<p>（暂无参考文献，需人工核验后补充）</p>{% endif %}
 
   <h2>九、论文信息 (Paper)</h2>
-  <p><b>参赛队：</b>AI Scientist 21</p>
-  <p><b>生成时间：</b>{{ generated_at }}</p>
-  <p><b>项目ID：</b>{{ project.id if project else "-" }}</p>
-  <p><b>赛题依据：</b>挑战杯 XH-202619</p>
+  <p><b>标题：</b>{% if '——' in paper_title %}{% if '——' in paper_title %}{{ paper_title }}{% else %}{{ paper_title|replace('基于', '——基于') }}{% endif %}{% else %}{% if '——' in paper_title %}{{ paper_title }}{% else %}{{ paper_title|replace('基于', '——基于') }}{% endif %}{% endif %}</p>
+  <p><b>【背景】</b>{{ abstract_bg_html|safe }}</p>
+  <p><b>【方法】</b>{{ abstract_method }}</p>
+  <p><b>【预期结果】</b>{{ abstract_result }}</p>
 <!-- fix_v21 -->
 </body>
 </html>

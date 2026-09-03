@@ -104,40 +104,10 @@ def _strip_section_headings(text):
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-
-
-def _strip_leading_title_prefix(text):
-    """逐段剥掉「标题词 + 冒号/：」前缀，避免与模板 <h3> 标题叠加。
-    例："研究方法：采用XXX。\n\n预期结果：预计YYY。"
-        → "采用XXX。\n\n预计YYY。"（每一段开头的标题词都剥）
-    正文中间出现的同名词（前面有正常文字）不受影响。
-    """
-    if not text:
-        return ""
-    _TITLES = ("研究方法", "研究背景", "预期结果", "解决思路", "创新点", "突破点说明",
-               "概念模型", "逻辑推导链", "理论框架", "假设评估", "反思报告",
-               "必要的技术手段", "候选假设", "数据集", "方法论", "实验设计", "实验结果",
-               "参考论文", "论文信息", "待研究问题", "方法", "结果", "背景", "摘要")
-    _PAT = re.compile(
-        r"\s*(?:" + "|".join(re.escape(t) for t in _TITLES) + r")\s*[:：:]\s*",
-        flags=re.I)
-    # 按空行分段，逐段剥开头的前缀
-    parts = []
-    for blk in re.split(r"\n\s*\n", text.strip()):
-        blk = blk.strip()
-        m = _PAT.match(blk)
-        while m and (m.end() - (blk[:m.start()].count(" ") + m.start())) < 30:
-            blk = blk[m.end():].lstrip()
-            m = _PAT.match(blk)
-        parts.append(blk)
-    return "\n\n".join(p for p in parts if p)
-
 def _paragraphize(text):
     """把「双换行分隔的纯文本」包成 <p>，让 CSS text-indent:2em 生效"""
     if not text:
         return ""
-    # 剥掉开头重复的标题前缀（模板 <h3> 已提供标题，避免叠加）
-    text = _strip_leading_title_prefix(text)
     if re.search(r"<(?:p|h[1-6]|li|table|ul|ol)\b", text):
         return text
     parts = []
