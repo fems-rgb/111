@@ -182,7 +182,8 @@ async def get_user_projects_with_progress(db: AsyncSession, user_id: int, status
         s = stat.setdefault(pid, [0, 0])
         s[0] += 1
         sv = st.value if hasattr(st, "value") else st
-        if sv == "completed":
+        sv = str(sv).strip().lower() if sv is not None else ""
+        if sv in ("completed", "complete", "done", "success", "succeeded"):
             s[1] += 1
     out = []
     for p in projects:

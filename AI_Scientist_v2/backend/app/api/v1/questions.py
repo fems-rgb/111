@@ -65,6 +65,43 @@ class CreateQuestionRequest(BaseModel):
 
 # ─── 获取题目列表 ──────────────────────────────────────────────
 
+def _real_task_progress(db, task) -> int:
+    """[动态进度] 用关联 project 的 agent_tasks 完成比例计算真实进度。
+    不写死任何数字；查不到关联时返回 None（由调用方保留原值）。
+    """
+    try:
+        from app.database.models import Project, AgentTask
+        from sqlalchemy import select as _sel
+        qid = getattr(task, "question_id", None)
+        if qid is None:
+            return None
+        rows = db.query(AgentTask.project_id, AgentTask.status).filter(
+            AgentTask.project_id.in_(
+                db.query(Project.id).filter(Project.title.like("[题库]%"))
+            )
+        ).all()
+        # 用 question_id 精确关联：Project.title 含该题目标题
+        from app.database.models import ScienceQuestion
+        sq = db.query(ScienceQuestion).filter(ScienceQuestion.question_id == qid).first()
+        if not sq or not getattr(sq, "title", None):
+            return None
+        prows = db.query(Project.id).filter(Project.title == "[题库] " + str(sq.title)[:80]).all()
+        if not prows:
+            prows = db.query(Project.id).filter(Project.title.like("%" + str(sq.title)[:24] + "%")).all()
+        if not prows:
+            return None
+        pids = [r[0] for r in prows]
+        tasks = db.query(AgentTask.status).filter(AgentTask.project_id.in_(pids)).all()
+        if not tasks:
+            return None
+        total = len(tasks)
+        done = sum(1 for (st,) in tasks if str(
+            st.value if hasattr(st, "value") else st
+        ).strip().lower() in ("completed", "complete", "done", "success", "succeeded"))
+        return round(done / total * 100)
+    except Exception:
+        return None
+
 @router.get("/")
 async def list_questions(
     category: str | None = None,
@@ -535,7 +572,8 @@ async def _execute_question_generation(
                 _r["generation_mode"] = "agent_center"
                 _r["pipeline_id"] = pipeline_id
                 task.result = _r
-                task.progress = 30
+                _rp = _real_task_progress(db, task)
+                task.progress = _rp if _rp is not None else 30
                 task.status = "running"
                 await db.commit()
 
@@ -565,7 +603,8 @@ async def _execute_question_generation(
                 result["generation_mode"] = "builtin_pipeline"
                 result["pipeline_id"] = pipeline_id
                 task.result = result
-                task.progress = 30
+                _rp = _real_task_progress(db, task)
+                task.progress = _rp if _rp is not None else 30
                 await db.commit()
 
                 from app.agents.orchestrator import orchestrator
@@ -577,7 +616,8 @@ async def _execute_question_generation(
                 _r["generation_mode"] = "builtin_pipeline"
                 _r["pipeline_id"] = pipeline_id
                 task.result = _r
-                task.progress = 30
+                _rp = _real_task_progress(db, task)
+                task.progress = _rp if _rp is not None else 30
                 task.status = "running"
                 await db.commit()
                 # 启动异步流水线，不阻塞当前请求
@@ -610,7 +650,8 @@ async def _execute_question_generation(
                 task.result = result
 
                 # 更新进度
-                task.progress = 30
+                _rp = _real_task_progress(db, task)
+                task.progress = _rp if _rp is not None else 30
                 await db.commit()
 
 
@@ -618,7 +659,8 @@ async def _execute_question_generation(
 
                 # 标记为 running，让前端轮询持续
                 task.status = "running"
-                task.progress = 30
+                _rp = _real_task_progress(db, task)
+                task.progress = _rp if _rp is not None else 30
                 await db.commit()
 
                 # 触发流水线执行（fire-and-forget，回调负责 completed/failed）
@@ -724,7 +766,8 @@ async def _execute_question_generation(
                 user_msg = research_text
 
                 # 更新进度: 调用AI中
-                task.progress = 30
+                _rp = _real_task_progress(db, task)
+                task.progress = _rp if _rp is not None else 30
                 task.result = result
                 await db.commit()
 
