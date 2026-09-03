@@ -32,6 +32,7 @@
         <div class="flex gap-2">
           <button v-if="project.status === 'draft'" @click="handleStart" class="btn-primary">🚀 启动研究</button>
           <button v-if="project.status === 'running'" @click="handlePause" class="btn-secondary">⏸️ 暂停</button>
+          <button v-else-if="project.status === 'paused'" @click="handleResume" class="btn-primary">▶️ 继续研究</button>
           <button @click="handleRestartProject" class="btn-secondary text-orange-600 border-orange-200 hover:bg-orange-50 hover:border-orange-300" title="清空当前进度并重新开始研究">🔄 重启研究</button>
         </div>
       </div>
@@ -319,6 +320,18 @@ async function handleStart() {
     start()
   } catch (e: any) {
     appStore.showToast(e.response?.data?.detail || '启动失败', 'error')
+  }
+}
+
+async function handleResume() {
+  try {
+    const { projectApi } = await import('@/api/modules/project')
+    await projectApi.resume(projectId.value)
+    appStore.showToast('已从断点继续', 'success')
+    await projectStore.fetchProject(projectId.value)
+    start()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '继续失败', 'error')
   }
 }
 

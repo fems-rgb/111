@@ -36,7 +36,7 @@ class Orchestrator:
     def __init__(self):
         self._running_projects: dict[int, bool] = {}
 
-    async def start_project(self, db: AsyncSession, project_id: int, user_id: int, custom_pipeline: list[str] | None = None, mode: str = "quick") -> dict:
+    async def start_project(self, db: AsyncSession, project_id: int, user_id: int, custom_pipeline: list[str] | None = None, mode: str = "quick", resume_mode: bool = False) -> dict:
         result = await db.execute(select(Project).where(Project.id == project_id))
         project = result.scalar_one_or_none()
         if not project:
@@ -73,30 +73,49 @@ class Orchestrator:
                 agent_sequence = [a for a in _FULL_CLOSURE if a in AGENT_REGISTRY]
 
         existing = await db.execute(select(AgentTask).where(AgentTask.project_id == project_id))
-        for t in existing.scalars().all():
-            await db.delete(t)
-        await db.flush()
+        if resume_mode:
+            # 继续模式：保留已完成/已生成的 task，只重置 RUNNING/FAILED 的为非阻塞状态
+            for t in existing.scalars().all():
+                if t.status in (TaskStatus.RUNNING, TaskStatus.FAILED, TaskStatus.WAITING_REVIEW):
+                    t.status = TaskStatus.PENDING
+            await db.flush()
+        else:
+            # 全新启动：清空所有 task 重建
+            for t in existing.scalars().all():
+                await db.delete(t)
+            await db.flush()
 
-        tasks = []
-        for i, agent_name in enumerate(agent_sequence):
-            agent_cls = AGENT_REGISTRY.get(agent_name)
-            if not agent_cls:
-                continue
-            agent = agent_cls()
-            # 默认全自主一条龙: 除非 project.config.review_steps 明确列出该 agent, 否则不审核
-            _proj_cfg = (project.config or {}) if hasattr(project, "config") and project.config else {}
-            _review_steps = _proj_cfg.get("review_steps", []) if isinstance(_proj_cfg, dict) else []
-            _need_review = agent_name in _review_steps
-            task = AgentTask(project_id=project_id, agent_name=agent_name, step_order=i+1,
-                             status=TaskStatus.PENDING,
-                             requires_review=_need_review,
-                             max_retries=(3 if mode == "expert" else agent.max_retries),
-                             model_used=route_result["suggested_model"])
-            db.add(task)
-            tasks.append(task)
+        if resume_mode:
+            # 继续模式：task 列表已保留（L76-81 重置了 RUNNING/FAILED），
+            # 直接复用现有 task，不重建
+            result = await db.execute(
+                select(AgentTask).where(AgentTask.project_id == project_id).order_by(AgentTask.step_order)
+            )
+            tasks = result.scalars().all()
+            project.status = ProjectStatus.RUNNING
+            await db.commit()
+        else:
+            # 全新启动：重建 task 列表
+            tasks = []
+            for i, agent_name in enumerate(agent_sequence):
+                agent_cls = AGENT_REGISTRY.get(agent_name)
+                if not agent_cls:
+                    continue
+                agent = agent_cls()
+                # 默认全自主一条龙: 除非 project.config.review_steps 明确列出该 agent, 否则不审核
+                _proj_cfg = (project.config or {}) if hasattr(project, "config") and project.config else {}
+                _review_steps = _proj_cfg.get("review_steps", []) if isinstance(_proj_cfg, dict) else []
+                _need_review = agent_name in _review_steps
+                task = AgentTask(project_id=project_id, agent_name=agent_name, step_order=i+1,
+                                 status=TaskStatus.PENDING,
+                                 requires_review=_need_review,
+                                 max_retries=(3 if mode == "expert" else agent.max_retries),
+                                 model_used=route_result["suggested_model"])
+                db.add(task)
+                tasks.append(task)
 
-        await db.commit()
-        project.status = ProjectStatus.RUNNING
+            await db.commit()
+            project.status = ProjectStatus.RUNNING
         await db.commit()
         await event_bus.emit(Events.PROJECT_CREATED, {"project_id": project_id, "user_id": user_id})
 

@@ -162,9 +162,31 @@ async def pause(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _get_project(db, project_id, user.id)
+    project = await _get_project(db, project_id, user.id)
+    # 1) 置内存标志 -> 循环下一轮检测到会自动 PAUSED（兜底）
     orchestrator.pause_project(project_id)
+    # 2) 立即持久化状态，让前端 fetchProject 秒级感知（即时反馈）
+    if project.status == ProjectStatus.RUNNING:
+        project.status = ProjectStatus.PAUSED
+        await db.commit()
     return {"message": "项目已暂停"}
+
+@router.post("/{project_id}/resume")
+async def resume(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """从暂停处继续：保留已完成的步骤，从下一个 pending 步骤接着跑"""
+    from app.core.exceptions import ProjectNotReadyError
+    project = await _get_project(db, project_id, user.id)
+    if project.status == ProjectStatus.RUNNING:
+        return {"message": "项目已在运行中"}
+    if project.status != ProjectStatus.PAUSED:
+        raise ProjectNotReadyError(f"只有暂停的项目才能继续，当前: {project.status.value}")
+    # resume_mode=True -> 不删 task，复用现有，从断点继续
+    await orchestrator.start_project(db, project_id, user.id, resume_mode=True)
+    return {"message": "已从断点继续", "project_id": project_id}
 
 @router.post("/{project_id}/restart")
 async def restart(

@@ -11,6 +11,7 @@ export const projectApi = {
   delete: (id: number) => client.delete(`/projects/${id}`),
   start: (id: number, pipeline?: string[]) => pipeline ? client.post(`/projects/${id}/start`, { pipeline }) : client.post(`/projects/${id}/start`),
   pause: (id: number) => client.post(`/projects/${id}/pause`),
+  resume: (id: number) => client.post(`/projects/${id}/resume`),
   restart: (id: number, pipeline?: string[]) => pipeline ? client.post(`/projects/${id}/restart`, { pipeline }) : client.post(`/projects/${id}/restart`),
   getTasks: (id: number) => client.get<AgentTask[]>(`/projects/${id}/tasks`),
   getStats: (params?: { workspace?: string }) => client.get<ProjectStats>('/projects/stats', { params }),
