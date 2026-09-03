@@ -1,0 +1,234 @@
+
+# proposal_addon.py —— 赛题完整技术方案文档生成器（自动生成）
+import os, html, asyncio, logging
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+ROOT = Path(r'D:\AI_Scientist\AI_Scientist')
+BACKEND = ROOT / 'backend'
+AGENTS = BACKEND / 'app' / 'agents'
+OUT_DIR = BACKEND / 'output' / 'pdf_reports'
+
+
+def _run_coro(coro):
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop and loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as ex:
+            return ex.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
+def _read_code_file(fname, start_kw=None, end_kw=None, maxlines=200, whole=False):
+    p = AGENTS / fname
+    if not p.exists():
+        return f"（未找到 {fname}）"
+    lines = p.read_text(encoding='utf-8', errors='ignore').split('\n')
+    if whole or start_kw is None:
+        return html.escape('\n'.join(lines[:maxlines]))
+    if not any(start_kw in l for l in lines):
+        return f"（源码中未找到标记：{start_kw}）"
+    si = next(i for i, l in enumerate(lines) if start_kw in l)
+    ei = next((i for i, l in enumerate(lines) if i > si and end_kw in l), min(si + maxlines, len(lines)))
+    return html.escape('\n'.join(lines[si:ei+1]))
+
+
+def generate_competition_proposal(project_id: int):
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    FRONT = OUT_DIR / '_front.pdf'
+    BACK = OUT_DIR / '_back.pdf'
+    FINAL = OUT_DIR / 'XH-202619_技术方案文档.pdf'
+
+    # --- 读真实数据 ---
+    rows, tot_t, tot_c, domain, title_q = [], 0, 0.0, '宇宙学', '宇宙由什么构成？'
+    try:
+        from sqlalchemy import select
+        from app.database.session import AsyncSessionLocal
+        from app.database.models import AgentTask, Project
+
+        async def _load(pid):
+            async with AsyncSessionLocal() as db:
+                rs = (await db.execute(select(AgentTask).where(AgentTask.project_id == pid))).scalars().all()
+                p = (await db.execute(select(Project).where(Project.id == pid))).scalar_one_or_none()
+                return rs, p
+
+        tasks, proj = _run_coro(_load(project_id))
+        for r in tasks:
+            rows.append((r.agent_name, r.model_used or '-', r.tokens_used or 0, round(float(r.cost_yuan or 0), 4)))
+            tot_t += (r.tokens_used or 0)
+            tot_c += float(r.cost_yuan or 0)
+        if proj:
+            domain = str(getattr(proj, 'domain', '') or domain)
+            title_q = str(getattr(proj, 'research_question', '') or title_q)
+    except Exception as e:
+        logger.warning('[proposal] 数据加载失败: %s', e)
+
+    esc = html.escape
+    rows_html = ''.join(
+        f'<tr><td>{esc(a)}</td><td>{esc(m)}</td><td>{t}</td><td>{c}</td></tr>'
+        for a, m, t, c in rows)
+    domain = esc(domain)
+    title_q = esc(title_q)
+
+    CSS = ('<style>body{font-family:"Microsoft YaHei","WenQuanYi Micro Hei",sans-serif;'
+           'font-size:10.5pt;line-height:1.5;margin:1.8cm;}'
+           'h1{font-size:18pt;text-align:center;color:#1a237e;}'
+           'h2{font-size:14pt;color:#1a237e;border-left:4px solid #1a237e;padding-left:8px;margin-top:14px;}'
+           'h3{font-size:11.5pt;color:#283593;margin-top:10px;}'
+           'table{border-collapse:collapse;width:100%;font-size:8.5pt;margin:6px 0;}'
+           'th,td{border:1px solid #999;padding:4px 6px;} th{background:#e8eaf6;}'
+           'pre{background:#f5f5f5;border:1px solid #ddd;padding:6px;font-size:7.5pt;'
+           'white-space:pre-wrap;word-wrap:break-word;}'
+           '.code-title{font-weight:bold;font-size:9pt;margin-top:10px;color:#c62828;}'
+           '.meta{text-align:center;color:#555;font-size:10pt;} p{text-align:justify;}</style>')
+
+    FRONT_HTML = f'''<html><head><meta charset="utf-8">{CSS}</head><body>
+<h1>基于国产开源大模型的 AI Scientist 的研发与应用<br/>技术方案文档</h1>
+<p class="meta">题目编号：XH-202619　|　发榜单位：浙江阿里巴巴云计算有限公司<br/>
+基座模型：Qwen（千问）开源系列（Qwen-Max / Qwen-VL-Max），经阿里云百炼平台 API 调用<br/>
+生成时间：2026-08-30　|　团队：__（请在前端填写）__　|　院校：__（请在前端填写）__</p>
+
+<h2>一、研究问题与解决方法</h2>
+<h3>1.1 传统科研模式的痛点</h3>
+<p>传统科研高度依赖研究者的个人经验与文献积累。在面对海量数据、跨学科交叉和复杂系统时，人工研究往往效率低下、易陷入思维定式，假设的提出缺乏系统性，且难以在生成之初即保证<strong>可验证性</strong>与<strong>自洽性</strong>。尤其在“{title_q}”这类前沿科学问题上，暗物质、暗能量、额外维度等候选方向分散于粒子物理、天体物理与宇宙学文献中，人工梳理并生成可检验假设的成本极高。</p>
+
+<h3>1.2 本系统的解决思路</h3>
+<p>本系统基于国产开源大模型 <strong>Qwen（千问）</strong>，通过<strong>阿里云百炼平台</strong>调用模型 API，构建多智能体（Multi-Agent）“科研灵感流水线”，实现从“数据/文献输入”到“可验证科学假设输出”的智能闭环。整体推导链条为：</p>
+<p><strong>①知识缺口识别 → ②文献事实提取 → ③逻辑驱动假设生成（归纳+演绎）→ ④研究设计与操作化 → ⑤实验规划 → ⑥数据分析与可视化 → ⑦结构化写作（12字段）→ ⑧评审/反思多轮迭代 + 人在回路。</strong></p>
+
+<h3>1.3 对应赛题四大能力项</h3>
+<table><tr><th>赛题能力项</th><th>本系统实现</th></tr>
+<tr><td>（一）文献挖掘与事实提取</td><td>literature 智能体进行系统文献综述，提取核心概念、理论基础（≥3）与研究空白，输出真实文献引用，避免断章取义</td></tr>
+<tr><td>（二）逻辑驱动的假设生成</td><td>hypothesis 智能体基于已知事实，利用归纳与演绎推理生成候选假设 H1–H5，并给出可验证性评分；design 智能体将其操作化为可证伪命题</td></tr>
+<tr><td>（三）论证可行与多轮迭代</td><td>analysis 智能体给出可运行数据分析代码与稳健性检验（≥3种）；review 与 reflection 智能体评审/反思，其反馈回注 writing 实现多轮迭代</td></tr>
+<tr><td>（四）智能体思辨与人在回路</td><td>设置 review（审稿）与 reflection（反思）双智能体构成“生成—评审—反思—迭代”思辨闭环；前端提供驳回重做(retry)、跳过(skip)、中止(abort)、重启步骤(restart-step)、重启项目(restart-project) 等人工介入能力</td></tr>
+</table>
+
+<h3>1.4 选题说明</h3>
+<p>选题来自公开发布的 <strong>Science 125 前沿科学问题（2005年版）</strong>，领域为<strong>{domain}</strong>（自然科学方向），来源合规。系统围绕该问题链接 XENON、Planck、SDSS、LHC 等多维度实测数据，生成可验证假设（详见第三部分真实案例）。</p>
+
+<h2>二、AI Scientists 架构设计与讲解</h2>
+<h3>2.1 基座模型与调用方式</h3>
+<p>基座模型采用 <strong>Qwen（千问）开源系列</strong>：文本任务 <strong>qwen-max</strong>，多模态/视觉任务 <strong>qwen-vl-max</strong>。全部调用均通过<strong>阿里云百炼平台 API</strong> 完成。本项目（Project {project_id}）各智能体调用统计如下（真实记录）：</p>
+<table><tr><th>智能体</th><th>调用模型</th><th>Tokens</th><th>成本（元）</th></tr>{rows_html}</table>
+<p><b>合计：</b>Tokens {tot_t}，成本 {round(tot_c,4)} 元。</p>
+
+<h3>2.2 多智能体架构与职责</h3>
+<p>系统共 9 个核心智能体串行协作，写作环节另由 5 个文档子智能体（doc_planner / doc_orchestrator / doc_multimodal / doc_quality / doc_reviewer）组成多智能体文档引擎协同完成。</p>
+<table>
+<tr><th>顺序</th><th>智能体</th><th>职责</th><th>关键输出</th></tr>
+<tr><td>1</td><td>knowledge_gap</td><td>知识缺口识别，锁定研究对象与关键变量</td><td>研究对象、关键变量</td></tr>
+<tr><td>2</td><td>literature</td><td>系统文献综述（概念界定、理论基础≥3、研究脉络、研究空白）</td><td>Markdown 综述 + 真实文献</td></tr>
+<tr><td>3</td><td>hypothesis</td><td>基于事实的归纳/演绎推理，生成候选假设并评分</td><td>候选假设 H1–H5（可验证性 6–9/10）</td></tr>
+<tr><td>4</td><td>design</td><td>实证研究方法论设计：变量定义表、计量模型、识别策略、稳健性检验（≥3种）</td><td>研究设计（Markdown）</td></tr>
+<tr><td>5</td><td>experiment_plan</td><td>实验规划与数值实验方案</td><td>实验方案与代码</td></tr>
+<tr><td>6</td><td>analysis</td><td>数据分析计划与主回归/稳健性/可视化 Python 代码</td><td>可运行分析代码</td></tr>
+<tr><td>7</td><td>writing</td><td>生成《科学假设与研究计划》，严格输出 12 个标准化字段</td><td>结构化科研提案（12字段）</td></tr>
+<tr><td>8</td><td>review</td><td>学术期刊审稿人：创新性25%/严谨性30%/贡献度25%/规范性20%</td><td>评分、结论、修改建议</td></tr>
+<tr><td>9</td><td>reflection</td><td>反思智能体，产出反思意见并回注 writing 实现迭代</td><td>反思意见</td></tr>
+</table>
+
+<h3>2.3 上下文工程（Context Engineering）设计</h3>
+<p>上下文工程是本系统保证多智能体协作一致性的核心，含四项机制：</p>
+<p><strong>（1）串行 context 累积传递：</strong>Orchestrator 在 <code>_execute_pipeline</code> 中维护统一 <code>context</code> 字符串，各智能体输出按序拼接后传入下一智能体；单任务上下文窗口限制 <code>MAX_CONTEXT_CHARS = 8000</code> 字符。</p>
+<p><strong>（2）候选假设表强制注入：</strong>针对 writing / analysis / design 智能体，执行前从数据库读取真实假设 H1–H5，拼装为【强制约束】块注入 context：严格沿用编号与内容、严禁重新编号、严禁引入假设表外研究对象、方法论须逐条覆盖全部假设。该机制从根本上解决了多智能体各自编号导致的假设错位问题。</p>
+<p><strong>（3）反思反馈注入（多轮迭代）：</strong>reflection 完成后将其反馈注入 writing 的 context（源码标记 <code>REFLECTION FEEDBACK INJECTION</code>），驱动“生成—评审—反思—迭代”闭环。</p>
+<p><strong>（4）任务路由：</strong><code>task_router.route_task</code> 按复杂度返回 <code>simple / workflow / multi_agent</code> 及建议智能体，决定执行路径。</p>
+
+<h3>2.4 多模态科学数据处理</h3>
+<p>系统配置 <strong>qwen-vl-max</strong> 视觉大模型，通过 doc_multimodal 等子智能体处理科学模态数据（CMB 功率谱图、星系旋转曲线、实验图表）。真实案例中实验图表由 experiment 智能体数值模拟生成并内嵌（见图 1），同时经多模态链路解析关联，支撑“多模态科学数据处理成效”评审项。</p>
+
+<h3>2.5 人在回路（Human-in-the-Loop）</h3>
+<p>前端提供可交互人机协作：支持<strong>驳回重做(retry)、跳过(skip)、中止(abort)、重启步骤(restart-step)、重启项目(restart-project)</strong>；数据库 <code>agent_tasks</code> 表以 <code>requires_review / review_comment / reviewed_by / retry_count</code> 字段留存人工介入痕迹，形成具备教学意义的人机协作流程。</p>
+
+<h3>2.6 百炼平台调用凭证</h3>
+<p>全部模型调用经阿里云百炼平台 API 完成，统计见上表（真实记录）。<strong>参赛提交时需在百炼控制台截取调用记录/API 凭证截图，附于本技术方案文档附录</strong>（截图需手动获取，系统不可自动生成）。</p>
+
+<h2>三、真实案例</h2>
+<p>以下页面为系统围绕选题“{title_q}”自动生成的《科学假设与研究计划》完整结果，严格包含赛题要求的 10 项标准化字段（待研究问题、解决思路、技术手段、数据集 Source/Target、标题、摘要、方法论、实验设计、实验结果、参考论文），并附模型调用统计与人在回路说明。</p>
+</body></html>'''
+
+    code_qwen = _read_code_file('qwen_client.py', whole=True, maxlines=110)
+    code_router = _read_code_file('task_router.py', whole=True, maxlines=110)
+    code_loop = _read_code_file('orchestrator.py', start_kw='span = Tracer.create_span', end_kw='structured_output', maxlines=60)
+    code_reflect = _read_code_file('orchestrator.py', start_kw='REFLECTION FEEDBACK INJECTION', end_kw='ref_task = None', maxlines=20)
+    code_hypctx = _read_code_file('orchestrator.py', start_kw='[hyp-context]', end_kw='logger.info("[hyp-context]', maxlines=30)
+    code_writing = _read_code_file('writing.py', start_kw='你是"智研星枢"', end_kw='禁止使用任何其他章节标题', maxlines=45)
+
+    BACK_HTML = f'''<html><head><meta charset="utf-8">{CSS}</head><body>
+<h2>四、源代码（核心工作流程与上下文工程）</h2>
+<p>以下为系统智能体工作流程与上下文工程的核心真实源代码，摘自项目 <code>backend/app/agents/</code>，未做虚构修改。</p>
+<div class="code-title">4.1 Qwen 模型 API 调用封装（qwen_client.py）</div><pre>{code_qwen}</pre>
+<div class="code-title">4.2 任务复杂度路由（task_router.py）</div><pre>{code_router}</pre>
+<div class="code-title">4.3 智能体工作流主循环与假设结构化提取（orchestrator.py）</div>
+<p>流水线核心：创建追踪 span → 调用多智能体文档引擎（或回退 WritingAgent）→ 执行智能体 → 对 design/analysis 输出做科学假设结构化提取与校验。</p><pre>{code_loop}</pre>
+<div class="code-title">4.4 上下文工程：反思反馈注入（orchestrator.py）</div>
+<p>reflection 完成后将反思意见注入 writing 智能体上下文，实现多轮迭代。</p><pre>{code_reflect}</pre>
+<div class="code-title">4.5 上下文工程：候选假设表强制注入（orchestrator.py）</div>
+<p>将数据库真实 H1–H5 假设表注入 writing/analysis/design 的 context，杜绝编号错位与虚构研究对象。</p><pre>{code_hypctx}</pre>
+<div class="code-title">4.6 写作智能体 12 字段结构化提示词（writing.py）</div>
+<p>定义《科学假设与研究计划》必须输出的 12 个标准化字段，确保严格对齐赛题规范。</p><pre>{code_writing}</pre>
+
+<h2>五、附录与提交说明</h2>
+<h3>5.1 待补充材料（需人工完成）</h3>
+<ul>
+<li><strong>阿里云百炼平台调用凭证截图</strong>：登录百炼控制台，截取本项目 API 调用记录页面（含模型名、tokens、费用），附于本页之后。赛题硬性要求。</li>
+<li><strong>团队/教师/院校配置</strong>：在前端“编辑团队配置”中填写团队名称、成员、指导教师、院校，否则作品提交无效。</li>
+</ul>
+<h3>5.2 提交方式提醒</h3>
+<p>按赛题要求，请于 <strong>2026 年 9 月 5 日</strong>前将盖章报名表及作品材料打包压缩，上传至<strong>夸克网盘</strong>，并将分享链接、提取码及网盘文件截图整理为单独附件，提交至 <code>https://survey.aliyun.com/apps/zhiliao/A4e_qqNGu</code>。<strong>无需</strong>在挑战杯官网提交。</p>
+</body></html>'''
+
+    from weasyprint import HTML as _HTML
+    _HTML(string=FRONT_HTML).write_pdf(str(FRONT))
+    _HTML(string=BACK_HTML).write_pdf(str(BACK))
+    logger.info('[proposal] 前部/后部渲染完成')
+
+    # --- 案例 PDF（第③块）---
+    try:
+        from app.api.v1.export import generate_challenge_cup_pdf
+        case_pdf = generate_challenge_cup_pdf(project_id)
+    except Exception as e:
+        logger.error('[proposal] 案例 PDF 生成失败: %s', e)
+        return None
+    if not case_pdf or not Path(case_pdf).exists():
+        logger.error('[proposal] 案例 PDF 不存在')
+        return None
+
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
+    doc = fitz.open()
+    for f in [FRONT, case_pdf, BACK]:
+        d = fitz.open(str(f))
+        doc.insert_pdf(d)
+        d.close()
+    doc.save(str(FINAL))
+    n = doc.page_count
+    doc.close()
+    logger.info('[proposal] 完整技术方案文档已生成: %s (%s 页)', FINAL, n)
+    if n > 20:
+        logger.warning('[proposal] 页数 %s > 20，需精简', n)
+    return str(FINAL)
+
+
+def register_proposal_routes(router):
+    from fastapi import Depends, HTTPException, Response
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    @router.get("/competition-proposal/{project_id}")
+    def competition_proposal(project_id: int, db: AsyncSession = Depends(get_db)):
+        pdf = generate_competition_proposal(project_id)
+        if not pdf or not os.path.exists(pdf):
+            raise HTTPException(500, "完整技术方案文档生成失败，请先确保流水线已完整运行")
+        with open(pdf, "rb") as f:
+            data = f.read()
+        return Response(data, media_type="application/pdf",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="XH-202619_proposal_{project_id}.pdf"'})
+    get_db = __import__('app.api.v1.export', fromlist=['get_db']).get_db

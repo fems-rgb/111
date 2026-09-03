@@ -1,0 +1,1787 @@
+[
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 27,
+    "text": "保存"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 95,
+    "text": "保存成功"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 98,
+    "text": "保存失败"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 27,
+    "text": "保存中..."
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 339,
+    "text": "避免与滚动冲突"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 21,
+    "text": "步骤节点 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 102,
+    "text": "材料科学"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 21,
+    "text": "操作"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 87,
+    "text": "操作成功"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 90,
+    "text": "操作失败"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 135,
+    "text": "草稿"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 339,
+    "text": "超过才视为拖拽"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 20,
+    "text": "成本"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 53,
+    "text": "成本分析"
+  },
+  {
+    "file": "src/components/common/StatusBadge.vue",
+    "line": 20,
+    "text": "成功"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 59,
+    "text": "触摸拖拽时的浮动幽灵元素 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 242,
+    "text": "创建失败"
+  },
+  {
+    "file": "src/views/observability/CostView.vue",
+    "line": 25,
+    "text": "次调用"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 72,
+    "text": "从下方点击 Agent 添加到流水线"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 52,
+    "text": "错误"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 45,
+    "text": "错误提示 --"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 82,
+    "text": "错误信息 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 62,
+    "text": "大语言模型在低资源语言上的跨语言迁移能力是否存在涌现阈值"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 80,
+    "text": "代码仓库链接"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 20,
+    "text": "代码复现检查"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 25,
+    "text": "代码文件"
+  },
+  {
+    "file": "src/components/common/StatusBadge.vue",
+    "line": 14,
+    "text": "待审核"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 126,
+    "text": "导出失败:"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 77,
+    "text": "导出中..."
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 77,
+    "text": "导出Word文档"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 9,
+    "text": "导航 --"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 84,
+    "text": "到流水线"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 70,
+    "text": "登录"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 52,
+    "text": "登录表单 --"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 195,
+    "text": "登录失败"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 70,
+    "text": "登录中..."
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 111,
+    "text": "等待中"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 19,
+    "text": "底部用户区"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 21,
+    "text": "点击"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 12,
+    "text": "点击或拖拽上传图片"
+  },
+  {
+    "file": "src/views/observability/CostView.vue",
+    "line": 14,
+    "text": "调用次数"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 138,
+    "text": "迭代中"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 3,
+    "text": "顶部"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 4,
+    "text": "顶部工具栏 --"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 9,
+    "text": "定时触发"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 3,
+    "text": "动态背景粒子 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 45,
+    "text": "对标 DeepSeek Harness"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 47,
+    "text": "对话"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 526,
+    "text": "对话失败"
+  },
+  {
+    "file": "src/views/knowledge/KnowledgeView.vue",
+    "line": 9,
+    "text": "多模态导入"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 20,
+    "text": "多模态分析"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 169,
+    "text": "多模态分析 --"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 42,
+    "text": "多模态文件传输中枢 --"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 13,
+    "text": "多智能体人文社科科研平台"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 5,
+    "text": "发布自定义 Skill"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 37,
+    "text": "发送"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 124,
+    "text": "发送失败"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 76,
+    "text": "仿真环境...\""
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 25,
+    "text": "分析"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 17,
+    "text": "分析 --"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 32,
+    "text": "分析结果 --"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 94,
+    "text": "分析失败"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 25,
+    "text": "分析中..."
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 24,
+    "text": "个人简介"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 7,
+    "text": "个人空间"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 13,
+    "text": "个人设置"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 333,
+    "text": "个文件并发送..."
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 59,
+    "text": "跟随系统"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 3,
+    "text": "工作空间选择器"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 46,
+    "text": "工作台"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 112,
+    "text": "公开"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 56,
+    "text": "管理后台"
+  },
+  {
+    "file": "src/components/common/StatusBadge.vue",
+    "line": 12,
+    "text": "规划中"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 18,
+    "text": "耗时"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 45,
+    "text": "核心"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 60,
+    "text": "核心科学问题"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 69,
+    "text": "候选假设"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 104,
+    "text": "环境科学"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 10,
+    "text": "恢复默认"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 134,
+    "text": "回复"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 83,
+    "text": "或点击上传"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 51,
+    "text": "或输入"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 21,
+    "text": "或直接开始新对话"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 20,
+    "text": "机构"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 12,
+    "text": "基于国产开源大模型的"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 71,
+    "text": "基于XX理论"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 102,
+    "text": "计算生物学"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 4,
+    "text": "技能市场"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 21,
+    "text": "加载过往对话"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 90,
+    "text": "加载历史失败"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 106,
+    "text": "加载中..."
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 156,
+    "text": "假设"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 237,
+    "text": "假设正在验证中"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 8,
+    "text": "减小间距)"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 36,
+    "text": "角色"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 99,
+    "text": "教师"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 103,
+    "text": "教育学"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 58,
+    "text": "仅核心问题 --"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 8,
+    "text": "紧凑模式"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 12,
+    "text": "进度条 --"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 55,
+    "text": "禁用"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 103,
+    "text": "经济管理"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 94,
+    "text": "拒绝"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 17,
+    "text": "聚焦后用"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 122,
+    "text": "均衡"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 49,
+    "text": "科学假设与研究计划设计器"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 50,
+    "text": "科学问题"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 22,
+    "text": "科研动态流"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 8,
+    "text": "科研全流程自动化编排"
+  },
+  {
+    "file": "src/views/knowledge/KnowledgeView.vue",
+    "line": 8,
+    "text": "科研资料统一管理"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 19,
+    "text": "可点击进入设置"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 75,
+    "text": "可选 Agent 池 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 50,
+    "text": "可验证方案"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 9,
+    "text": "课堂空间"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 121,
+    "text": "快速"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 58,
+    "text": "快速模式"
+  },
+  {
+    "file": "src/components/layout/AppLayout.vue",
+    "line": 18,
+    "text": "閫氱煡 --"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 15,
+    "text": "类型"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 21,
+    "text": "历史记录"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 62,
+    "text": "例如"
+  },
+  {
+    "file": "src/composables/useSSE.ts",
+    "line": 36,
+    "text": "连接成功"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 9,
+    "text": "联动"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 104,
+    "text": "临床医学"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 53,
+    "text": "流水线 --"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 3,
+    "text": "流水线构建器"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 102,
+    "text": "流水线实时进度"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 64,
+    "text": "流水线已全部完成"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 50,
+    "text": "流水线已停止"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 495,
+    "text": "流水线已终止"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 74,
+    "text": "论文导出按钮 --"
+  },
+  {
+    "file": "src/stores/pipeline.ts",
+    "line": 60,
+    "text": "没有活跃的流水线"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 87,
+    "text": "密码"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 16,
+    "text": "名称"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 3,
+    "text": "模式指示 --"
+  },
+  {
+    "file": "src/views/observability/CostView.vue",
+    "line": 19,
+    "text": "模型成本分布"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 114,
+    "text": "默认管理员: admin"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 108,
+    "text": "默认权限"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 272,
+    "text": "内部资料库"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 22,
+    "text": "你想了解这张图片的什么学术信息"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 92,
+    "text": "昵称"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 93,
+    "text": "批准继续"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 272,
+    "text": "企业数字化转型数据集"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 10,
+    "text": "企业研发"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 162,
+    "text": "启动"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 247,
+    "text": "启动失败"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 33,
+    "text": "启动研究"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 55,
+    "text": "启用"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 8,
+    "text": "启用紧凑布局"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 57,
+    "text": "浅色"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 123,
+    "text": "强力"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 39,
+    "text": "切换 --"
+  },
+  {
+    "file": "src/components/layout/AppHeader.vue",
+    "line": 22,
+    "text": "切换到暗色"
+  },
+  {
+    "file": "src/components/layout/AppHeader.vue",
+    "line": 22,
+    "text": "切换到亮色"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 122,
+    "text": "切换到专家模式可填写假设"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 62,
+    "text": "清空"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 52,
+    "text": "请从人文社科学术研究角度分析这张图片的内容和研究价值"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 51,
+    "text": "请检查内容后重新提交"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 69,
+    "text": "请上传图片文件"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 144,
+    "text": "请使用上方设计器创建"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 65,
+    "text": "请输入密码\" required"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 58,
+    "text": "请输入用户名\" required"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 56,
+    "text": "请先启动项目"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 466,
+    "text": "请修改后重试"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 36,
+    "text": "驱动的人文社科科研平台"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 61,
+    "text": "全部完成提示 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 134,
+    "text": "全部状态"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 14,
+    "text": "全功能拖拽排序"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 5,
+    "text": "全链路追踪"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 8,
+    "text": "全选"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 257,
+    "text": "确定要删除该项目吗"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 492,
+    "text": "确定要终止当前流水线吗"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 88,
+    "text": "人工审核 --"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 202,
+    "text": "人工智能"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 103,
+    "text": "人文社科"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 50,
+    "text": "赛道一"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 163,
+    "text": "删除"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 262,
+    "text": "删除失败"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 5,
+    "text": "上传区域 --"
+  },
+  {
+    "file": "src/views/knowledge/KnowledgeView.vue",
+    "line": 5,
+    "text": "上传文献"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 96,
+    "text": "身份"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 58,
+    "text": "深色"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 7,
+    "text": "深色模式"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 270,
+    "text": "审核操作失败"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 45,
+    "text": "审核拒绝"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 8,
+    "text": "审核未通过"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 91,
+    "text": "审核意见...\""
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 119,
+    "text": "生成假设并创建项目"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 119,
+    "text": "生成研究计划..."
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 112,
+    "text": "失败"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 45,
+    "text": "失败时的操作面板 --"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 14,
+    "text": "时间"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 18,
+    "text": "实时连接中"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 76,
+    "text": "实验设计"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 111,
+    "text": "实验室可见"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 8,
+    "text": "实验室空间"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 15,
+    "text": "实验数据清洗"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 53,
+    "text": "收起高级选项"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 51,
+    "text": "输出"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 70,
+    "text": "输出内容 --"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 50,
+    "text": "输入"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 33,
+    "text": "输入框 --"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 35,
+    "text": "输入你的问题...\""
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 71,
+    "text": "数据"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 194,
+    "text": "数据分析"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 76,
+    "text": "数据分析方案"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 26,
+    "text": "数据集"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 24,
+    "text": "数据库表"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 140,
+    "text": "刷新"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 110,
+    "text": "私有"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 129,
+    "text": "思考中..."
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 22,
+    "text": "替代静态统计"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 84,
+    "text": "添加"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 54,
+    "text": "跳过此步骤"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 487,
+    "text": "跳过失败"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 117,
+    "text": "通用助手"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 194,
+    "text": "同行评审"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 73,
+    "text": "图片不能超过10MB"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 3,
+    "text": "图片学术分析"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 37,
+    "text": "推理轨迹数"
+  },
+  {
+    "file": "src/components/layout/AppHeader.vue",
+    "line": 28,
+    "text": "退出"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 17,
+    "text": "拖拽调整顺序"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 80,
+    "text": "拖拽上传 PDF"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 9,
+    "text": "拖拽式 DAG 编辑器"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 83,
+    "text": "拖拽文件到此处"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 5,
+    "text": "外观主题"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 65,
+    "text": "完整科研闭环字段 --"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 30,
+    "text": "未分析"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 466,
+    "text": "未通过"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 26,
+    "text": "位置"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 26,
+    "text": "文献"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 10,
+    "text": "文献摘要提取"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 193,
+    "text": "文献综述"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 71,
+    "text": "我们假设...\""
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 3,
+    "text": "系统统计 --"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 16,
+    "text": "显示名称"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 34,
+    "text": "详情"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 96,
+    "text": "项目标题"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 128,
+    "text": "项目列表"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 21,
+    "text": "项目头部 --"
+  },
+  {
+    "file": "src/composables/useSSE.ts",
+    "line": 95,
+    "text": "项目研究完成"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 244,
+    "text": "项目已启动"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 260,
+    "text": "项目已删除"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 256,
+    "text": "项目已暂停"
+  },
+  {
+    "file": "src/composables/useSSE.ts",
+    "line": 98,
+    "text": "项目执行失败"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 339,
+    "text": "像素"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 17,
+    "text": "消息列表 --"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 9,
+    "text": "新对话"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 5,
+    "text": "新建 Pipeline"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 53,
+    "text": "修改后重新提交"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 97,
+    "text": "需审核"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 90,
+    "text": "需要人工审核"
+  },
+  {
+    "file": "src/composables/useSSE.ts",
+    "line": 92,
+    "text": "需要人工审核:"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 98,
+    "text": "学生"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 35,
+    "text": "学术分析结果"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 119,
+    "text": "学术论文"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 194,
+    "text": "学术写作"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 20,
+    "text": "学校"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 45,
+    "text": "研究计划设计器"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 237,
+    "text": "研究计划已生成"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 100,
+    "text": "研究领域"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 4,
+    "text": "研究流水线进度"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 193,
+    "text": "研究设计"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 38,
+    "text": "研究问题"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 131,
+    "text": "研究项目"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 100,
+    "text": "研究员"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 21,
+    "text": "验证 GitHub 仓库可运行性"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 74,
+    "text": "验证方法"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 122,
+    "text": "验证方法和证据材料"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 53,
+    "text": "移除"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 17,
+    "text": "移动"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 266,
+    "text": "已拒绝"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 266,
+    "text": "已批准"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 34,
+    "text": "已生成假设"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 112,
+    "text": "已跳过"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 137,
+    "text": "已完成"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 14,
+    "text": "已选流水线"
+  },
+  {
+    "file": "src/components/common/StatusBadge.vue",
+    "line": 17,
+    "text": "已暂停"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 9,
+    "text": "以上设置即时生效"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 16,
+    "text": "异常值检测与标准化"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 51,
+    "text": "引用资料库"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 25,
+    "text": "用户管理"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 23,
+    "text": "用户管理 --"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 34,
+    "text": "用户名"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 35,
+    "text": "邮箱"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 30,
+    "text": "右侧表单区 --"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 114,
+    "text": "与Agent直接对话"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 17,
+    "text": "预览"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 136,
+    "text": "运行中"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 32,
+    "text": "运行中流水线"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 34,
+    "text": "暂停"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 259,
+    "text": "暂停失败"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 21,
+    "text": "暂无历史消息"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 56,
+    "text": "暂无任务"
+  },
+  {
+    "file": "src/views/observability/CostView.vue",
+    "line": 20,
+    "text": "暂无数据"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 144,
+    "text": "暂无项目"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 26,
+    "text": "暂无用户"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 9,
+    "text": "暂无追踪记录"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 128,
+    "text": "增强版"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 53,
+    "text": "展开完整科研字段"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 32,
+    "text": "账号信息"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 49,
+    "text": "正常"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 333,
+    "text": "正在上传"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 473,
+    "text": "正在重新提交..."
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 80,
+    "text": "证据材料"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 13,
+    "text": "支持 JPG"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 84,
+    "text": "支持 PDF"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 273,
+    "text": "知识库"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 55,
+    "text": "执行流水线"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 27,
+    "text": "执行任务数"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 9,
+    "text": "执行日志追踪"
+  },
+  {
+    "file": "src/composables/useSSE.ts",
+    "line": 89,
+    "text": "执行失败:"
+  },
+  {
+    "file": "src/composables/useSSE.ts",
+    "line": 85,
+    "text": "执行完成"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 111,
+    "text": "执行中"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 112,
+    "text": "直接对话"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 88,
+    "text": "至少6位\" required"
+  },
+  {
+    "file": "src/views/chat/ChatView.vue",
+    "line": 6,
+    "text": "智能对话"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 6,
+    "text": "智研星辰"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 35,
+    "text": "智研星枢"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 51,
+    "text": "中心"
+  },
+  {
+    "file": "src/components/pipeline/PipelineProgress.vue",
+    "line": 55,
+    "text": "终止流水线"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 497,
+    "text": "终止失败"
+  },
+  {
+    "file": "src/components/layout/AppLayout.vue",
+    "line": 10,
+    "text": "鐘舵"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 478,
+    "text": "重试失败"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 27,
+    "text": "重新上传"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 110,
+    "text": "注册"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 74,
+    "text": "注册表单 --"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 205,
+    "text": "注册失败"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 37,
+    "text": "注册时间"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 110,
+    "text": "注册中..."
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 19,
+    "text": "注入拦截次数"
+  },
+  {
+    "file": "src/components/layout/AppHeader.vue",
+    "line": 19,
+    "text": "专家"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 65,
+    "text": "专家模式"
+  },
+  {
+    "file": "src/components/layout/AppHeader.vue",
+    "line": 11,
+    "text": "专家模式 Toggle --"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 23,
+    "text": "专业Agent"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 17,
+    "text": "状态"
+  },
+  {
+    "file": "src/components/layout/AppSidebar.vue",
+    "line": 52,
+    "text": "追踪回放"
+  },
+  {
+    "file": "src/views/observability/TraceView.vue",
+    "line": 42,
+    "text": "追踪详情弹窗 --"
+  },
+  {
+    "file": "src/views/knowledge/KnowledgeView.vue",
+    "line": 4,
+    "text": "资料库"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 6,
+    "text": "字体大小"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 104,
+    "text": "自定义"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 6,
+    "text": "自定义研究流水线"
+  },
+  {
+    "file": "src/views/settings/SettingsView.vue",
+    "line": 9,
+    "text": "自动保存到本地"
+  },
+  {
+    "file": "src/views/automation/AutomationView.vue",
+    "line": 4,
+    "text": "自动化流水线"
+  },
+  {
+    "file": "src/views/skills/SkillMarketView.vue",
+    "line": 11,
+    "text": "自动解析论文 PDF 生成结构化摘要"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 97,
+    "text": "自动生成或手动填写\" required"
+  },
+  {
+    "file": "src/views/knowledge/KnowledgeView.vue",
+    "line": 9,
+    "text": "自动向量化索引"
+  },
+  {
+    "file": "src/views/workspace/ChatView.vue",
+    "line": 273,
+    "text": "综述"
+  },
+  {
+    "file": "src/views/workspace/DashboardView.vue",
+    "line": 41,
+    "text": "总成本"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 11,
+    "text": "总项目数"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 7,
+    "text": "总用户数"
+  },
+  {
+    "file": "src/views/admin/AdminView.vue",
+    "line": 15,
+    "text": "总API成本"
+  },
+  {
+    "file": "src/views/observability/CostView.vue",
+    "line": 10,
+    "text": "总Token数"
+  },
+  {
+    "file": "src/views/agents/AgentPlayground.vue",
+    "line": 362,
+    "text": "阻止页面滚动"
+  },
+  {
+    "file": "src/components/common/ImageAnalyzer.vue",
+    "line": 13,
+    "text": "最大10MB"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 101,
+    "text": "最终成果 --"
+  },
+  {
+    "file": "src/views/workspace/ProjectDetail.vue",
+    "line": 103,
+    "text": "最终研究成果"
+  },
+  {
+    "file": "src/views/auth/LoginView.vue",
+    "line": 6,
+    "text": "左侧品牌区 --"
+  }
+]

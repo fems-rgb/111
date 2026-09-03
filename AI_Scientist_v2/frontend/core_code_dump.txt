@@ -1,0 +1,1264 @@
+﻿
+========== Tailwind Config (D:\AI_Scientist\AI_Scientist\frontend\tailwind.config.js) ==========
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: ['./index.html', './src/**/*.{vue,js,ts,jsx,tsx}'],
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        primary: { 50:'#eff6ff',100:'#dbeafe',200:'#bfdbfe',300:'#93c5fd',400:'#60a5fa',500:'#3b82f6',600:'#2563eb',700:'#1d4ed8',800:'#1e40af',900:'#1e3a8a' },
+        accent: { 50:'#f0fdf4',100:'#dcfce7',200:'#bbf7d0',300:'#86efac',400:'#4ade80',500:'#22c55e',600:'#16a34a',700:'#15803d',800:'#166534',900:'#14532d' },
+        surface: { 50:'#f8fafc',100:'#f1f5f9',200:'#e2e8f0',300:'#cbd5e1',400:'#94a3b8',500:'#64748b',600:'#475569',700:'#334155',800:'#1e293b',900:'#0f172a' }
+      },
+      fontFamily: {
+        sans: ['"Noto Sans SC"', '"Inter"', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace']
+      },
+      animation: {
+        'fade-in': 'fadeIn 0.3s ease-out',
+        'slide-up': 'slideUp 0.3s ease-out',
+        'pulse-slow': 'pulse 3s infinite'
+      },
+      keyframes: {
+        fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+        slideUp: { '0%': { opacity: '0', transform: 'translateY(10px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } }
+      }
+    }
+  },
+  plugins: []
+}
+
+========== Router (D:\AI_Scientist\AI_Scientist\frontend\src\router\index.ts) ==========
+import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    { path: '/login', name: 'Login', component: () => import('@/views/auth/LoginView.vue'), meta: { guest: true } },
+    {
+      path: '/', component: () => import('@/components/layout/AppLayout.vue'), meta: { requiresAuth: true },
+      children: [
+        { path: '', name: 'Dashboard', component: () => import('@/views/workspace/DashboardView.vue') },
+        { path: 'project/:id', name: 'ProjectDetail', component: () => import('@/views/workspace/ProjectDetail.vue') },
+        { path: 'agents', name: 'Agents', component: () => import('@/views/agents/AgentPlayground.vue') },
+        { path: 'chat', name: 'Chat', component: () => import('@/views/chat/ChatView.vue') },
+        { path: 'traces', name: 'Traces', component: () => import('@/views/observability/TraceView.vue') },
+        { path: 'cost', name: 'Cost', component: () => import('@/views/observability/CostView.vue') },
+        { path: 'settings', name: 'Settings', component: () => import('@/views/settings/SettingsView.vue') },
+        { path: 'admin', name: 'Admin', component: () => import('@/views/admin/AdminView.vue'), meta: { requiresAdmin: true } },
+      ]
+    },
+    { path: '/:pathMatch(.*)*', redirect: '/' }
+  ]
+})
+
+router.beforeEach((to, _from, next) => {
+  const authStore = useAuthStore()
+  if (to.meta.requiresAuth && !authStore.isLoggedIn) {
+    next({ name: 'Login' })
+  } else if (to.meta.guest && authStore.isLoggedIn) {
+    next({ name: 'Dashboard' })
+  } else if (to.meta.requiresAdmin && !authStore.isAdmin) {
+    next({ name: 'Dashboard' })
+  } else {
+    next()
+  }
+})
+
+export default router
+
+========== Component: AppHeader.vue (D:\AI_Scientist\AI_Scientist\frontend\src\components\layout\AppHeader.vue) ==========
+<template>
+  <header class="h-16 bg-white border-b border-surface-200 flex items-center justify-between px-6">
+    <div class="flex items-center gap-4">
+      <button @click="appStore.toggleSidebar()" class="p-2 hover:bg-surface-100 rounded-lg transition-colors">
+        <span class="text-lg">鈽?/span>
+      </button>
+      <h1 class="text-lg font-semibold text-surface-800">{{ pageTitle }}</h1>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="text-sm text-surface-500">{{ new Date().toLocaleDateString('zh-CN') }}</span>
+      <button @click="appStore.toggleDarkMode()" class="p-2 hover:bg-surface-100 dark:hover:bg-surface-700 rounded-lg transition-colors" :title="appStore.darkMode ? '鍒囨崲鍒颁寒鑹? : '鍒囨崲鍒版殫鑹?">
+        <span class="inline-flex items-center justify-center w-5 h-5">
+          <svg v-if="appStore.darkMode" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </span>
+      </button>
+      <button @click="authStore.logout(); $router.push('/login')" class="btn-secondary text-sm">閫€鍑?/button>
+    </div>
+  </header>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
+
+const route = useRoute()
+const appStore = useAppStore()
+const authStore = useAuthStore()
+
+const pageTitles: Record<string, string> = {
+  '/': '宸ヤ綔鍙?, '/agents': 'Agent涓績', '/chat': 'AI瀵硅瘽',
+  '/traces': '杩借釜鍥炴斁', '/cost': '鎴愭湰鍒嗘瀽', '/settings': '涓汉璁剧疆', '/admin': '绠＄悊鍚庡彴'
+}
+const pageTitle = computed(() => pageTitles[route.path] || '鏅虹爺鏄熸灑')
+</script>
+
+========== Component: AppLayout.vue (D:\AI_Scientist\AI_Scientist\frontend\src\components\layout\AppLayout.vue) ==========
+<template>
+  <div class="flex h-screen overflow-hidden">
+    <AppSidebar />
+    <div class="flex-1 flex flex-col overflow-hidden">
+      <AppHeader />
+      <main class="flex-1 overflow-y-auto p-6 bg-surface-50">
+        <router-view :key="$route.fullPath" />
+      </main>
+    </div>
+    <!-- SSE閻樿埖鈧?-->
+    <div class="fixed bottom-4 right-4 z-40">
+      <div :class="['flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg', connected ? 'bg-green-600 text-white' : 'bg-red-600 text-white']">
+        <span class="w-2 h-2 rounded-full bg-white animate-pulse"></span>
+        {{ connected ? '鐎圭偞妞傛潻鐐村复' : '閺傤厼绱戦柌宥堢箾娑?..' }}
+      </div>
+    </div>
+
+    <!-- Toast闁氨鐓?-->
+    <div class="fixed top-4 right-4 z-50 space-y-2">
+      <transition-group name="slide-up">
+        <div v-for="toast in appStore.toasts" :key="toast.id"
+             :class="['px-4 py-3 rounded-lg shadow-lg text-white text-sm', toast.type === 'error' ? 'bg-red-600' : toast.type === 'success' ? 'bg-green-600' : 'bg-primary-600']">
+          {{ toast.message }}
+        </div>
+      </transition-group>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import AppSidebar from './AppSidebar.vue'
+import AppHeader from './AppHeader.vue'
+import { useAppStore } from '@/stores/app'
+import { useSSE } from '@/composables/useSSE'
+const appStore = useAppStore()
+const { connected, connect } = useSSE()
+
+import { onMounted } from 'vue'
+onMounted(() => { connect() })
+</script>
+
+<style scoped>
+.fade-enter-active, .fade-leave-active { transition: opacity 0.2s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+</style>
+
+========== Component: AppSidebar.vue (D:\AI_Scientist\AI_Scientist\frontend\src\components\layout\AppSidebar.vue) ==========
+<template>
+  <aside :class="['bg-white border-r border-surface-200 flex flex-col transition-all duration-300', appStore.sidebarCollapsed ? 'w-16' : 'w-64']">
+    <!-- Logo -->
+    <div class="h-16 flex items-center px-4 border-b border-surface-100">
+      <span class="text-2xl">馃И</span>
+      <span v-if="!appStore.sidebarCollapsed" class="ml-3 font-bold text-lg bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">鏅虹爺鏄熻景</span>
+    </div>
+
+    <!-- 瀵艰埅 -->
+    <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
+      <router-link v-for="item in navItems" :key="item.path" :to="item.path"
+                   :class="[$route.path === item.path ? 'sidebar-link-active' : 'sidebar-link']"
+                   :title="appStore.sidebarCollapsed ? item.label : ''">
+        <span class="text-lg">{{ item.icon }}</span>
+        <span v-if="!appStore.sidebarCollapsed">{{ item.label }}</span>
+      </router-link>
+    </nav>
+
+    <!-- 搴曢儴鐢ㄦ埛鍖猴紙鍙偣鍑昏繘鍏ヨ缃級 -->
+    <div class="p-3 border-t border-surface-100">
+      <router-link to="/settings"
+        class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-surface-50 transition-colors cursor-pointer group">
+        <div class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-medium text-sm group-hover:ring-2 ring-primary-300 transition-all">
+          {{ authStore.displayName?.charAt(0)?.toUpperCase() || 'U' }}
+        </div>
+        <div v-if="!appStore.sidebarCollapsed" class="flex-1 min-w-0">
+          <p class="text-sm font-medium truncate">{{ authStore.displayName }}</p>
+          <p class="text-xs text-surface-400 truncate">{{ authStore.user?.role }}</p>
+        </div>
+        <span v-if="!appStore.sidebarCollapsed" class="text-surface-300 group-hover:text-primary-500 transition-colors">鈿欙笍</span>
+      </router-link>
+    </div>
+  </aside>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
+
+const appStore = useAppStore()
+const authStore = useAuthStore()
+
+const navItems = computed(() => {
+  const items = [
+    { path: '/', icon: '馃彔', label: '宸ヤ綔鍙? },
+    { path: '/agents', icon: '馃', label: 'Agent涓績' },
+    { path: '/chat', icon: '馃挰', label: 'AI瀵硅瘽' },
+    { path: '/traces', icon: '馃攳', label: '杩借釜鍥炴斁' },
+    { path: '/cost', icon: '馃挵', label: '鎴愭湰鍒嗘瀽' },
+  ]
+  if (authStore.isAdmin) {
+    items.push({ path: '/admin', icon: '馃洝锔?, label: '绠＄悊鍚庡彴' })
+  }
+  return items
+})
+</script>
+
+========== View: AdminView.vue (D:\AI_Scientist\AI_Scientist\frontend\src\views\admin\AdminView.vue) ==========
+<template>
+  <div class="space-y-6 animate-fade-in">
+    <!-- 绯荤粺缁熻 -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-primary-600">{{ systemStats.user_count || 0 }}</p>
+        <p class="text-sm text-surface-500">鎬荤敤鎴锋暟</p>
+      </div>
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-green-600">{{ systemStats.project_count || 0 }}</p>
+        <p class="text-sm text-surface-500">鎬婚」鐩暟</p>
+      </div>
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-purple-600">楼{{ systemStats.cost_summary?.total_cost_yuan?.toFixed(2) || '0.00' }}</p>
+        <p class="text-sm text-surface-500">鎬籄PI鎴愭湰</p>
+      </div>
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-red-600">{{ systemStats.prompt_guard?.blocked_count || 0 }}</p>
+        <p class="text-sm text-surface-500">娉ㄥ叆鎷︽埅娆℃暟</p>
+      </div>
+    </div>
+
+    <!-- 鐢ㄦ埛绠＄悊 -->
+    <div class="card">
+      <h2 class="text-lg font-semibold mb-4">馃懃 鐢ㄦ埛绠＄悊</h2>
+      <div v-if="users.length === 0" class="text-center py-8 text-surface-400">鏆傛棤鐢ㄦ埛</div>
+      <div v-else class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-surface-200">
+              <th class="text-left py-3 px-3 font-medium">鐢ㄦ埛鍚?/th>
+              <th class="text-left py-3 px-3 font-medium">閭</th>
+              <th class="text-left py-3 px-3 font-medium">瑙掕壊</th>
+              <th class="text-left py-3 px-3 font-medium">鏈烘瀯</th>
+              <th class="text-left py-3 px-3 font-medium">鐘舵€?/th>
+              <th class="text-left py-3 px-3 font-medium">鎿嶄綔</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in users" :key="u.id" class="border-b border-surface-100 hover:bg-surface-50">
+              <td class="py-3 px-3 font-medium">{{ u.username }}</td>
+              <td class="py-3 px-3 text-surface-500">{{ u.email }}</td>
+              <td class="py-3 px-3"><span class="badge-info">{{ u.role }}</span></td>
+              <td class="py-3 px-3 text-surface-500">{{ u.institution || '-' }}</td>
+              <td class="py-3 px-3">
+                <span :class="u.is_active !== false ? 'badge-success' : 'badge-error'">
+                  {{ u.is_active !== false ? '姝ｅ父' : '绂佺敤' }}
+                </span>
+              </td>
+              <td class="py-3 px-3">
+                <button @click="toggleUser(u.id)" class="text-primary-600 hover:underline text-xs">
+                  {{ u.is_active !== false ? '绂佺敤' : '鍚敤' }}
+                </button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { adminApi } from '@/api/modules/admin'
+import { useAppStore } from '@/stores/app'
+import type { User } from '@/types'
+
+const appStore = useAppStore()
+const systemStats = ref<any>({})
+const users = ref<User[]>([])
+
+async function fetchData() {
+  try {
+    const [statsRes, usersRes] = await Promise.all([adminApi.getStats(), adminApi.getUsers()])
+    systemStats.value = statsRes.data
+    users.value = usersRes.data
+  } catch {}
+}
+
+async function toggleUser(userId: number) {
+  try {
+    await adminApi.toggleUser(userId)
+    appStore.showToast('鎿嶄綔鎴愬姛', 'success')
+    await fetchData()
+  } catch {
+    appStore.showToast('鎿嶄綔澶辫触', 'error')
+  }
+}
+
+onMounted(fetchData)
+</script>
+
+========== View: AgentPlayground.vue (D:\AI_Scientist\AI_Scientist\frontend\src\views\agents\AgentPlayground.vue) ==========
+<template>
+  <div class="space-y-6 animate-fade-in">
+    <!-- ====== 娴佹按绾挎瀯寤哄櫒 ====== -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">馃 鑷畾涔夌爺绌舵祦姘寸嚎</h2>
+        <div class="flex gap-2">
+          <button @click="selectAll" class="btn-secondary text-xs px-3 py-1">鍏ㄩ€?/button>
+          <button @click="clearSelection" class="btn-secondary text-xs px-3 py-1">娓呯┖</button>
+          <button @click="resetDefault" class="btn-secondary text-xs px-3 py-1">鎭㈠榛樿</button>
+        </div>
+      </div>
+
+      <!-- 宸查€夋祦姘寸嚎锛堝叏鍔熻兘鎷栨嫿鎺掑簭锛?-->
+      <div v-if="localAgents.length > 0" class="mb-4">
+        <p class="text-xs text-surface-500 mb-2">
+          鈫曪笍 鎷栨嫿璋冩暣椤哄簭 路 鈱笍 Tab鑱氱劍鍚庣敤 鈫戔啌 绉诲姩 路 鐐瑰嚮 鉁?绉婚櫎
+        </p>
+        <div ref="pipelineContainer" class="flex flex-wrap gap-3 relative">
+          <div
+            v-for="(agent, index) in localAgents"
+            :key="agent.name"
+            :ref="(el) => setItemRef(el as HTMLElement, index)"
+            :tabindex="0"
+            role="listitem"
+            :aria-label="`${agent.display_name}锛屼綅缃?${index + 1}锛屽叡 ${localAgents.length} 椤筦"
+            draggable="true"
+            @dragstart="onDragStart(index, $event)"
+            @dragover.prevent="onDragOver(index)"
+            @drop="onDrop(index)"
+            @dragend="onDragEnd"
+            @touchstart.passive="onTouchStart(index, $event)"
+            @touchmove="onTouchMove($event)"
+            @touchend="onTouchEnd"
+            @keydown="onKeyDown(index, $event)"
+            class="pipeline-chip group relative flex items-center gap-2 px-3 py-2 rounded-lg border-2 border-primary-400 bg-primary-50 select-none outline-none focus-visible:ring-2 focus-visible:ring-primary-600 focus-visible:ring-offset-2"
+            :class="{
+              'dragging': dragIndex === index,
+              'drag-over': dragOverIndex === index && dragIndex !== index,
+              'grab-cursor': true
+            }"
+            :style="getFlipStyle(agent.name)"
+          >
+            <span class="drag-handle text-surface-400 touch-none">鉅?/span>
+            <span class="text-lg pointer-events-none">{{ agentIcons[agent.name] || '馃' }}</span>
+            <span class="text-sm font-medium pointer-events-none">{{ agent.display_name }}</span>
+            <span class="text-[10px] text-primary-600 pointer-events-none">#{{ index + 1 }}</span>
+            <button
+              @click.stop="removeAgent(agent.name)"
+              @keydown.enter.stop="removeAgent(agent.name)"
+              type="button"
+              tabindex="0"
+              :aria-label="`绉婚櫎 ${agent.display_name}`"
+              class="ml-1 w-5 h-5 rounded-full bg-red-100 text-red-500 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity hover:bg-red-200 focus:opacity-100 focus:ring-1 focus:ring-red-400"
+            >鉁?/button>
+          </div>
+        </div>
+
+        <!-- 瑙︽懜鎷栨嫿鏃剁殑娴姩骞界伒鍏冪礌 -->
+        <Teleport to="body">
+          <div
+            v-if="touchDragging"
+            class="fixed z-[9999] pointer-events-none px-4 py-2 rounded-lg border-2 border-primary-500 bg-primary-100 shadow-xl opacity-90 scale-105 flex items-center gap-2"
+            :style="{ left: touchGhostX + 'px', top: touchGhostY + 'px', transform: 'translate(-50%, -50%)' }"
+          >
+            <span class="text-lg">{{ agentIcons[touchDragAgent?.name || ''] || '馃' }}</span>
+            <span class="text-sm font-medium">{{ touchDragAgent?.display_name }}</span>
+          </div>
+        </Teleport>
+      </div>
+      <div v-else class="mb-4 p-4 border-2 border-dashed border-surface-200 rounded-lg text-center text-surface-400 text-sm">
+        馃憞 浠庝笅鏂圭偣鍑?Agent 娣诲姞鍒版祦姘寸嚎
+      </div>
+
+      <!-- 鍙€?Agent 姹?-->
+      <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div
+          v-for="agent in availableAgents"
+          :key="agent.name"
+          @click="addAgent(agent)"
+          @keydown.enter="addAgent(agent)"
+          tabindex="0"
+          role="button"
+          :aria-label="`娣诲姞 ${agent.display_name} 鍒版祦姘寸嚎`"
+          :aria-pressed="isSelected(agent.name)"
+          class="p-3 rounded-xl border transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary-500"
+          :class="isSelected(agent.name)
+            ? 'border-primary-400 bg-primary-50 ring-1 ring-primary-300'
+            : 'border-surface-200 hover:border-primary-300 hover:shadow-md'"
+        >
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xl">{{ agentIcons[agent.name] || '馃' }}</span>
+            <h3 class="font-medium text-sm">{{ agent.display_name }}</h3>
+            <span v-if="isSelected(agent.name)" class="ml-auto text-primary-500 text-sm">鉁?/span>
+          </div>
+          <p class="text-xs text-surface-500 line-clamp-2">{{ agent.description }}</p>
+          <span v-if="agent.requires_review" class="badge-warning text-[10px] mt-1 inline-block">闇€瀹℃牳</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== 娴佹按绾垮疄鏃惰繘搴?====== -->
+    <PipelineProgress
+      v-if="pipelineSteps.length > 0"
+      :steps="pipelineSteps"
+      :reject-reason="rejectReason"
+      @retry="handleRetryReview"
+      @skip="handleSkipStep"
+      @abort="handleAbortPipeline"
+    />
+
+    <!-- ====== 鐩存帴瀵硅瘽 ====== -->
+    <div class="card">
+      <h2 class="text-lg font-semibold mb-4">馃挰 涓嶢gent鐩存帴瀵硅瘽</h2>
+      <div class="flex gap-3 mb-4">
+        <select v-model="selectedAgent" class="input-field w-48">
+          <option value="general">閫氱敤鍔╂墜</option>
+          <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name }}</option>
+        </select>
+        <select v-model="selectedModel" class="input-field w-48">
+          <option value="qwen-turbo">Qwen-Turbo锛堝揩閫燂級</option>
+          <option value="qwen-plus">Qwen-Plus锛堝潎琛★級</option>
+          <option value="qwen-max">Qwen-Max锛堝己鍔涳級</option>
+        </select>
+      </div>
+      <div class="flex gap-3">
+        <input v-model="chatInput" class="input-field flex-1" placeholder="杈撳叆浣犵殑闂..." @keyup.enter="handleChat" />
+        <button @click="handleChat" :disabled="chatLoading" class="btn-primary">
+          {{ chatLoading ? '鎬濊€冧腑...' : '鍙戦€? }}
+        </button>
+      </div>
+      <div v-if="chatReply" class="mt-4 p-4 bg-surface-50 rounded-lg">
+        <div class="flex justify-between items-center mb-2">
+          <span class="text-sm font-medium text-surface-600">AI鍥炲</span>
+          <span class="text-xs text-surface-400">{{ chatMeta }}</span>
+        </div>
+        <MarkdownView :content="chatReply" />
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, watch, nextTick, reactive } from 'vue'
+import { useAgentStore } from '@/stores/agent'
+import { useAppStore } from '@/stores/app'
+import { usePipelineStore } from '@/stores/pipeline'
+import MarkdownView from '@/components/common/MarkdownView.vue'
+import { useSSE } from '@/composables/useSSE'
+import PipelineProgress from '@/components/pipeline/PipelineProgress.vue'
+
+const DEFAULT_WORKFLOW = ['literature', 'design', 'analysis', 'writing', 'review']
+
+const agentStore = useAgentStore()
+const appStore = useAppStore()
+const pipelineStore = usePipelineStore()
+
+const agents = ref<any[]>([])
+const localAgents = ref<Array<{ name: string; display_name: string }>>([])
+
+// ===== Store 鈫?Local 鍙屽悜鍚屾 =====
+watch(
+  () => pipelineStore.selectedAgents,
+  (val) => {
+    const localKey = localAgents.value.map(a => a.name).join('|')
+    const storeKey = val.map(a => a.name).join('|')
+    if (localKey !== storeKey) {
+      localAgents.value = JSON.parse(JSON.stringify(val))
+    }
+  },
+  { immediate: true, deep: true }
+)
+
+watch(
+  localAgents,
+  (val) => {
+    const localKey = val.map(a => a.name).join('|')
+    const storeKey = pipelineStore.selectedAgents.map(a => a.name).join('|')
+    if (localKey !== storeKey) {
+      pipelineStore.setAgents(JSON.parse(JSON.stringify(val)))
+    }
+  },
+  { deep: true }
+)
+
+// ===== FLIP 鍔ㄧ敾绯荤粺 =====
+interface FlipState {
+  x: number; y: number; width: number; height: number
+}
+
+const pipelineContainer = ref<HTMLElement | null>(null)
+const itemRefs = new Map<number, HTMLElement>()
+const flipPrev = new Map<string, FlipState>()
+const flipAnimating = reactive<Record<string, { dx: number; dy: number }>>({})
+
+function setItemRef(el: HTMLElement | null, index: number) {
+  if (el) {
+    itemRefs.set(index, el)
+  } else {
+    itemRefs.delete(index)
+  }
+}
+
+// 璁板綍褰撳墠浣嶇疆锛團irst锛?
+function capturePositions() {
+  flipPrev.clear()
+  itemRefs.forEach((el, idx) => {
+    const agent = localAgents.value[idx]
+    if (agent && el) {
+      const rect = el.getBoundingClientRect()
+      flipPrev.set(agent.name, { x: rect.left, y: rect.top, width: rect.width, height: rect.height })
+    }
+  })
+}
+
+// 璁＄畻鍙嶈浆鍋忕Щ骞跺姩鐢伙紙Invert + Play锛?
+async function animateFlip() {
+  await nextTick()
+  const newRefs = new Map<number, HTMLElement>()
+  itemRefs.forEach((el, idx) => {
+    const agent = localAgents.value[idx]
+    if (agent && el) {
+      newRefs.set(idx, el)
+    }
+  })
+
+  newRefs.forEach((el, idx) => {
+    const agent = localAgents.value[idx]
+    if (!agent) return
+    const prev = flipPrev.get(agent.name)
+    if (!prev) return
+    const newRect = el.getBoundingClientRect()
+    const dx = prev.x - newRect.left
+    const dy = prev.y - newRect.top
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return
+
+    flipAnimating[agent.name] = { dx, dy }
+    el.style.transform = `translate(${dx}px, ${dy}px)`
+    el.style.transition = 'none'
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 0.25s cubic-bezier(0.2, 0, 0, 1)'
+        el.style.transform = ''
+        const onEnd = () => {
+          el.style.transition = ''
+          delete flipAnimating[agent.name]
+          el.removeEventListener('transitionend', onEnd)
+        }
+        el.addEventListener('transitionend', onEnd)
+      })
+    })
+  })
+}
+
+function getFlipStyle(_name: string) {
+  return {}
+}
+
+// 鐩戝惉 localAgents 鍙樺寲锛岃Е鍙?FLIP 鍔ㄧ敾
+watch(localAgents, async () => {
+  await animateFlip()
+}, { flush: 'post' })
+
+// ===== SSE 鍒濆姝ラ =====
+const sseInitialSteps = computed(() =>
+  localAgents.value.map((a, i) => ({
+    agent_name: a.name,
+    display_name: a.display_name,
+    status: 'pending' as const,
+    step_order: i + 1
+  }))
+)
+
+const { pipelineSteps, connect } = useSSE(sseInitialSteps.value)
+connect()
+
+watch(localAgents, (newVal) => {
+  pipelineSteps.value = newVal.map((a, i) => ({
+    agent_name: a.name,
+    display_name: a.display_name,
+    status: 'pending',
+    step_order: i + 1
+  }))
+}, { deep: true })
+
+const agentIcons: Record<string, string> = {
+  literature: '馃摉', design: '馃搻', analysis: '馃搳', writing: '鉁嶏笍', review: '馃攳'
+}
+
+// ===== 妗岄潰绔嫋鎷斤紙HTML5 DnD锛?====
+const dragIndex = ref<number | null>(null)
+const dragOverIndex = ref<number | null>(null)
+
+function onDragStart(index: number, event: DragEvent) {
+  dragIndex.value = index
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', String(index))
+  }
+  // 寤惰繜娣诲姞 dragging 绫伙紝璁╂祻瑙堝櫒鍏堟崟鑾锋嫋鎷藉浘鍍?
+  requestAnimationFrame(() => {
+    capturePositions()
+  })
+}
+
+function onDragOver(index: number) {
+  if (dragIndex.value === null || dragIndex.value === index) return
+  dragOverIndex.value = index
+}
+
+function onDrop(targetIndex: number) {
+  if (dragIndex.value === null || dragIndex.value === targetIndex) return
+  capturePositions()
+  const list = [...localAgents.value]
+  const [moved] = list.splice(dragIndex.value, 1)
+  list.splice(targetIndex, 0, moved)
+  localAgents.value = list
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+function onDragEnd() {
+  dragIndex.value = null
+  dragOverIndex.value = null
+}
+
+// ===== 绉诲姩绔Е鎽告嫋鎷?=====
+const touchDragging = ref(false)
+const touchDragIndex = ref<number | null>(null)
+const touchDragAgent = computed(() =>
+  touchDragIndex.value !== null ? localAgents.value[touchDragIndex.value] : null
+)
+const touchGhostX = ref(0)
+const touchGhostY = ref(0)
+let touchStartX = 0
+let touchStartY = 0
+let touchMoved = false
+const TOUCH_THRESHOLD = 10 // 鍍忕礌锛岃秴杩囨墠瑙嗕负鎷栨嫿锛堥伩鍏嶄笌婊氬姩鍐茬獊锛?
+
+function onTouchStart(index: number, event: TouchEvent) {
+  const touch = event.touches[0]
+  touchStartX = touch.clientX
+  touchStartY = touch.clientY
+  touchDragIndex.value = index
+  touchMoved = false
+}
+
+function onTouchMove(event: TouchEvent) {
+  if (touchDragIndex.value === null) return
+  const touch = event.touches[0]
+  const dx = touch.clientX - touchStartX
+  const dy = touch.clientY - touchStartY
+
+  if (!touchDragging.value && Math.sqrt(dx * dx + dy * dy) < TOUCH_THRESHOLD) return
+
+  if (!touchDragging.value) {
+    touchDragging.value = true
+    capturePositions()
+  }
+
+  event.preventDefault() // 闃绘椤甸潰婊氬姩
+  touchGhostX.value = touch.clientX
+  touchGhostY.value = touch.clientY
+
+  // 妫€娴嬪綋鍓嶆墜鎸囦笅鏂圭殑鍏冪礌
+  const el = document.elementFromPoint(touch.clientX, touch.clientY)
+  if (el) {
+    const chip = el.closest('.pipeline-chip') as HTMLElement
+    if (chip) {
+      const parent = chip.parentElement
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(c => c.classList.contains('pipeline-chip'))
+        const targetIdx = siblings.indexOf(chip)
+        if (targetIdx >= 0 && targetIdx !== touchDragIndex.value) {
+          dragOverIndex.value = targetIdx
+        }
+      }
+    }
+  }
+}
+
+function onTouchEnd() {
+  if (touchDragging.value && touchDragIndex.value !== null && dragOverIndex.value !== null) {
+    capturePositions()
+    const list = [...localAgents.value]
+    const [moved] = list.splice(touchDragIndex.value, 1)
+    list.splice(dragOverIndex.value, 0, moved)
+    localAgents.value = list
+  }
+  touchDragging.value = false
+  touchDragIndex.value = null
+  dragOverIndex.value = null
+  touchMoved = false
+}
+
+// ===== 閿洏鏃犻殰纰?=====
+function onKeyDown(index: number, event: KeyboardEvent) {
+  if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+    event.preventDefault()
+    if (index <= 0) return
+    capturePositions()
+    const list = [...localAgents.value]
+    ;[list[index - 1], list[index]] = [list[index], list[index - 1]]
+    localAgents.value = list
+    nextTick(() => {
+      itemRefs.get(index - 1)?.focus()
+    })
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+    event.preventDefault()
+    if (index >= localAgents.value.length - 1) return
+    capturePositions()
+    const list = [...localAgents.value]
+    ;[list[index], list[index + 1]] = [list[index + 1], list[index]]
+    localAgents.value = list
+    nextTick(() => {
+      itemRefs.get(index + 1)?.focus()
+    })
+  } else if (event.key === 'Delete' || event.key === 'Backspace') {
+    event.preventDefault()
+    const agent = localAgents.value[index]
+    if (agent) removeAgent(agent.name)
+  }
+}
+
+// ===== 閫夋嫨閫昏緫 =====
+const isSelected = (name: string) => localAgents.value.some(a => a.name === name)
+const availableAgents = computed(() => agents.value)
+
+function addAgent(agent: any) {
+  if (!isSelected(agent.name)) {
+    localAgents.value = [...localAgents.value, { name: agent.name, display_name: agent.display_name }]
+  }
+}
+
+function removeAgent(name: string) {
+  localAgents.value = localAgents.value.filter(a => a.name !== name)
+}
+
+function selectAll() {
+  capturePositions()
+  localAgents.value = agents.value.map(a => ({ name: a.name, display_name: a.display_name }))
+}
+
+function clearSelection() {
+  capturePositions()
+  localAgents.value = []
+}
+
+function resetDefault() {
+  capturePositions()
+  localAgents.value = DEFAULT_WORKFLOW
+    .map(name => {
+      const a = agents.value.find(ag => ag.name === name)
+      return a ? { name: a.name, display_name: a.display_name } : null
+    })
+    .filter(Boolean) as Array<{ name: string; display_name: string }>
+}
+
+// ===== 瀹℃牳鎷掔粷 / 澶辫触澶勭悊 =====
+const rejectReason = ref('')
+
+watch(pipelineSteps, (steps) => {
+  const rejected = steps.find(s => s.status === 'rejected' || s.status === 'failed')
+  if (rejected) {
+    rejectReason.value = (rejected as any).reason || `${rejected.display_name || rejected.agent_name} 鏈€氳繃锛岃淇敼鍚庨噸璇昤
+  } else {
+    rejectReason.value = ''
+  }
+}, { deep: true })
+
+async function handleRetryReview() {
+  appStore.showToast('姝ｅ湪閲嶆柊鎻愪氦...', 'info')
+  try {
+    await pipelineStore.retryCurrentStep()
+    connect()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '閲嶈瘯澶辫触', 'error')
+  }
+}
+
+async function handleSkipStep() {
+  try {
+    await pipelineStore.skipCurrentStep()
+    connect()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '璺宠繃澶辫触', 'error')
+  }
+}
+
+async function handleAbortPipeline() {
+  if (!confirm('纭畾瑕佺粓姝㈠綋鍓嶆祦姘寸嚎鍚楋紵')) return
+  try {
+    await pipelineStore.abortPipeline()
+    appStore.showToast('娴佹按绾垮凡缁堟', 'success')
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '缁堟澶辫触', 'error')
+  }
+}
+// ===== 瀵硅瘽閫昏緫 =====
+const selectedAgent = ref('general')
+const selectedModel = ref('qwen-plus')
+const chatInput = ref('')
+const chatReply = ref('')
+const chatMeta = ref('')
+const chatLoading = ref(false)
+
+onMounted(async () => {
+  await agentStore.fetchAgents()
+  agents.value = agentStore.agents
+  if (pipelineStore.selectedAgents.length === 0) {
+    resetDefault()
+  }
+})
+
+async function handleChat() {
+  if (!chatInput.value.trim()) return
+  chatLoading.value = true
+  chatReply.value = ''
+  try {
+    const res = await agentStore.directChat(chatInput.value, selectedAgent.value, selectedModel.value)
+    chatReply.value = res.data.reply
+    chatMeta.value = `${res.data.model} 路 ${res.data.tokens.input + res.data.tokens.output} tokens 路 楼${res.data.cost.toFixed(4)}`
+    chatInput.value = ''
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '瀵硅瘽澶辫触', 'error')
+  } finally { chatLoading.value = false }
+}
+</script>
+
+<style scoped>
+.pipeline-chip {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  cursor: grab;
+  touch-action: pan-y;
+}
+.pipeline-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.pipeline-chip:active {
+  cursor: grabbing;
+}
+.pipeline-chip.dragging {
+  opacity: 0.4;
+  transform: scale(0.95);
+  box-shadow: none;
+}
+.pipeline-chip.drag-over {
+  box-shadow: 0 0 0 3px rgb(var(--color-primary-500, 59 130 246)), 0 4px 12px rgba(0,0,0,0.1);
+  transform: scale(1.02);
+}
+.grab-cursor {
+  cursor: grab;
+}
+.grab-cursor:active {
+  cursor: grabbing;
+}
+</style>
+
+========== View: LoginView.vue (D:\AI_Scientist\AI_Scientist\frontend\src\views\auth\LoginView.vue) ==========
+<template>
+  <div class="min-h-screen flex relative overflow-hidden">
+    <!-- 鍔ㄦ€佽儗鏅矑瀛?-->
+    <canvas ref="canvasRef" class="absolute inset-0 w-full h-full pointer-events-none z-0"></canvas>
+
+    <!-- 宸︿晶鍝佺墝鍖?-->
+    <div class="hidden lg:flex lg:w-1/2 relative z-10 items-center justify-center p-12">
+      <div class="absolute inset-0 bg-gradient-to-br from-primary-600/90 via-primary-700/90 to-primary-900/90 backdrop-blur-sm"></div>
+      <div class="relative text-center text-white animate-slide-up">
+        <div class="text-7xl mb-6 animate-bounce-slow">馃彌锔?/div>
+        <h1 class="text-5xl font-bold mb-4 tracking-tight">鏅虹爺鏄熸灑</h1>
+        <p class="text-xl opacity-90 mb-2 animate-fade-in-up">鍩轰簬鍥戒骇寮€婧愬ぇ妯″瀷鐨?/p>
+        <p class="text-xl opacity-90 mb-8 animate-fade-in-up animation-delay-500">澶氭櫤鑳戒綋浜烘枃绀剧绉戠爺骞冲彴</p>
+        <div class="flex gap-3 justify-center text-sm opacity-80 flex-wrap">
+          <span class="px-4 py-1.5 bg-white/20 rounded-full backdrop-blur-md border border-white/10 hover:bg-white/30 transition-all">馃摉 鏂囩尞缁艰堪</span>
+          <span class="px-4 py-1.5 bg-white/20 rounded-full backdrop-blur-md border border-white/10 hover:bg-white/30 transition-all">馃搻 鐮旂┒璁捐</span>
+          <span class="px-4 py-1.5 bg-white/20 rounded-full backdrop-blur-md border border-white/10 hover:bg-white/30 transition-all">馃搳 鏁版嵁鍒嗘瀽</span>
+          <span class="px-4 py-1.5 bg-white/20 rounded-full backdrop-blur-md border border-white/10 hover:bg-white/30 transition-all">鉁嶏笍 瀛︽湳鍐欎綔</span>
+          <span class="px-4 py-1.5 bg-white/20 rounded-full backdrop-blur-md border border-white/10 hover:bg-white/30 transition-all">馃攳 鍚岃璇勫</span>
+          <span class="px-4 py-1.5 bg-white/20 rounded-full backdrop-blur-md border border-white/10 hover:bg-white/30 transition-all">馃柤锔?澶氭ā鎬佸垎鏋?/span>
+        </div>
+        <div class="mt-10 grid grid-cols-3 gap-4 text-center">
+          <div><p class="text-3xl font-bold">5</p><p class="text-xs opacity-70">涓撲笟Agent</p></div>
+          <div><p class="text-3xl font-bold">12</p><p class="text-xs opacity-70">鏁版嵁搴撹〃</p></div>
+          <div><p class="text-3xl font-bold">72+</p><p class="text-xs opacity-70">浠ｇ爜鏂囦欢</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 鍙充晶琛ㄥ崟鍖?-->
+    <div class="flex-1 flex items-center justify-center p-8 bg-surface-50 dark:bg-surface-900 relative z-10">
+      <div class="w-full max-w-md animate-fade-in">
+        <div class="lg:hidden text-center mb-8">
+          <span class="text-5xl">馃彌锔?/span>
+          <h1 class="text-3xl font-bold mt-3 bg-gradient-to-r from-primary-600 to-accent-600 bg-clip-text text-transparent">鏅虹爺鏄熸灑</h1>
+          <p class="text-surface-500 mt-1">AI椹卞姩鐨勪汉鏂囩ぞ绉戠鐮斿钩鍙?/p>
+        </div>
+
+        <!-- Tab鍒囨崲 -->
+        <div class="flex mb-8 bg-surface-100 dark:bg-surface-800 rounded-xl p-1">
+          <button @click="isLogin = true" :class="['flex-1 py-2.5 rounded-lg text-sm font-medium transition-all duration-300', isLogin ? 'bg-white dark:bg-surface-700 shadow-sm text-primary-700 dark:text-primary-400' : 'text-surface-500 dark:text-surface-400']">鐧诲綍</button>
+          <button @click="isLogin = false" :class="['flex-1 py-2.5 rounded-lg text-sm font-medium transition-all duration-300', !isLogin ? 'bg-white dark:bg-surface-700 shadow-sm text-primary-700 dark:text-primary-400' : 'text-surface-500 dark:text-surface-400']">娉ㄥ唽</button>
+        </div>
+
+        <!-- 閿欒鎻愮ず -->
+        <transition name="slide-up">
+          <div v-if="error" class="mb-4 p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm flex items-center gap-2">
+            <span>鈿狅笍</span> {{ error }}
+          </div>
+        </transition>
+
+        <!-- 鐧诲綍琛ㄥ崟 -->
+        <form v-if="isLogin" @submit.prevent="handleLogin" class="space-y-4">
+          <div class="group">
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">鐢ㄦ埛鍚?/label>
+            <div class="relative">
+              <span class="absolute left-3 top-3 text-surface-400">馃懁</span>
+              <input v-model="loginForm.username" type="text" class="input-field pl-10" placeholder="璇疯緭鍏ョ敤鎴峰悕" required />
+            </div>
+          </div>
+          <div class="group">
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">瀵嗙爜</label>
+            <div class="relative">
+              <span class="absolute left-3 top-3 text-surface-400">馃敀</span>
+              <input v-model="loginForm.password" type="password" class="input-field pl-10" placeholder="璇疯緭鍏ュ瘑鐮? required />
+            </div>
+          </div>
+          <button type="submit" :disabled="loading"
+                  class="w-full py-3 bg-gradient-to-r from-primary-600 to-primary-700 text-white rounded-xl font-medium hover:from-primary-700 hover:to-primary-800 transition-all duration-300 shadow-lg shadow-primary-500/25 disabled:opacity-50 transform hover:scale-[1.02] active:scale-[0.98]">
+            {{ loading ? '鈴?鐧诲綍涓?..' : '馃殌 鐧诲綍' }}
+          </button>
+        </form>
+
+        <!-- 娉ㄥ唽琛ㄥ崟 -->
+        <form v-else @submit.prevent="handleRegister" class="space-y-3">
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">鐢ㄦ埛鍚?/label>
+              <input v-model="regForm.username" type="text" class="input-field" required />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">閭</label>
+              <input v-model="regForm.email" type="email" class="input-field" required />
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">瀵嗙爜</label>
+            <input v-model="regForm.password" type="password" class="input-field" placeholder="鑷冲皯6浣? required />
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">鏄电О</label>
+              <input v-model="regForm.display_name" type="text" class="input-field" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">韬唤</label>
+              <select v-model="regForm.role" class="input-field">
+                <option value="student">瀛︾敓</option>
+                <option value="teacher">鏁欏笀</option>
+                <option value="researcher">鐮旂┒鍛?/option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">鏈烘瀯/瀛︽牎</label>
+            <input v-model="regForm.institution" type="text" class="input-field" />
+          </div>
+          <button type="submit" :disabled="loading"
+                  class="w-full py-3 bg-gradient-to-r from-primary-600 to-accent-600 text-white rounded-xl font-medium hover:from-primary-700 hover:to-accent-700 transition-all duration-300 shadow-lg shadow-primary-500/25 disabled:opacity-50 transform hover:scale-[1.02] active:scale-[0.98]">
+            {{ loading ? '鈴?娉ㄥ唽涓?..' : '鉁?娉ㄥ唽' }}
+          </button>
+        </form>
+
+        <p class="mt-6 text-center text-xs text-surface-400">榛樿绠＄悊鍛? admin / admin123456</p>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+
+const router = useRouter()
+const authStore = useAuthStore()
+
+const isLogin = ref(true)
+const loading = ref(false)
+const error = ref('')
+const canvasRef = ref<HTMLCanvasElement | null>(null)
+
+const loginForm = reactive({ username: '', password: '' })
+const regForm = reactive({ username: '', email: '', password: '', display_name: '', role: 'student', institution: '' })
+
+// 鈹€鈹€ 绮掑瓙鑳屾櫙鍔ㄧ敾 鈹€鈹€
+let animId: number
+onMounted(() => {
+  const canvas = canvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')!
+  let w = canvas.width = window.innerWidth
+  let h = canvas.height = window.innerHeight
+
+  const particles: { x: number; y: number; vx: number; vy: number; r: number; o: number }[] = []
+  for (let i = 0; i < 80; i++) {
+    particles.push({
+      x: Math.random() * w, y: Math.random() * h,
+      vx: (Math.random() - 0.5) * 0.5, vy: (Math.random() - 0.5) * 0.5,
+      r: Math.random() * 2 + 1, o: Math.random() * 0.5 + 0.1
+    })
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, w, h)
+    for (const p of particles) {
+      p.x += p.vx; p.y += p.vy
+      if (p.x < 0 || p.x > w) p.vx *= -1
+      if (p.y < 0 || p.y > h) p.vy *= -1
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(59, 130, 246, ${p.o})`
+      ctx.fill()
+    }
+    // 杩炵嚎
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x
+        const dy = particles[i].y - particles[j].y
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        if (dist < 120) {
+          ctx.beginPath()
+          ctx.moveTo(particles[i].x, particles[i].y)
+          ctx.lineTo(particles[j].x, particles[j].y)
+          ctx.strokeStyle = `rgba(59, 130, 246, ${0.1 * (1 - dist / 120)})`
+          ctx.stroke()
+        }
+      }
+    }
+    animId = requestAnimationFrame(draw)
+  }
+  draw()
+
+  const resize = () => { w = canvas.width = window.innerWidth; h = canvas.height = window.innerHeight }
+  window.addEventListener('resize', resize)
+  onUnmounted(() => { cancelAnimationFrame(animId); window.removeEventListener('resize', resize) })
+})
+
+async function handleLogin() {
+  loading.value = true; error.value = ''
+  try {
+    await authStore.login(loginForm.username, loginForm.password)
+    router.push('/')
+  } catch (e: any) {
+    error.value = e.response?.data?.detail || '鐧诲綍澶辫触'
+  } finally { loading.value = false }
+}
+
+async function handleRegister() {
+  loading.value = true; error.value = ''
+  try {
+    await authStore.register(regForm)
+    router.push('/')
+  } catch (e: any) {
+    error.value = e.response?.data?.detail || '娉ㄥ唽澶辫触'
+  } finally { loading.value = false }
+}
+</script>
+
+<style scoped>
+@keyframes bounce-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.animate-bounce-slow { animation: bounce-slow 3s ease-in-out infinite; }
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 0.9; transform: translateY(0); }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.8s ease-out forwards;
+  opacity: 0;
+}
+.animation-delay-500 {
+  animation-delay: 0.5s;
+}
+</style>
+
+========== View: ChatView.vue (D:\AI_Scientist\AI_Scientist\frontend\src\views\chat\ChatView.vue) ==========
+<template>
+  <div class="flex flex-col h-[calc(100vh-8rem)] animate-fade-in">
+    <div class="card flex-1 flex flex-col overflow-hidden">
+      <!-- 椤堕儴宸ュ叿鏍?-->
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">馃挰 AI鏅鸿兘瀵硅瘽</h2>
+        <div class="flex gap-2">
+          <button @click="clearChat" class="btn-secondary text-sm px-3 py-1.5">
+            馃棏锔?鏂板璇?
+          </button>
+          <button @click="loadHistory" :disabled="loadingHistory" class="btn-secondary text-sm px-3 py-1.5">
+            {{ loadingHistory ? '鍔犺浇涓?..' : '馃摐 鍘嗗彶璁板綍' }}
+          </button>
+        </div>
+      </div>
+
+      <!-- 娑堟伅鍒楄〃 -->
+      <div ref="msgContainer" class="flex-1 overflow-y-auto space-y-4 mb-4 pr-2">
+        <div v-if="messages.length === 0" class="text-center py-12 text-surface-400">
+          <span class="text-4xl block mb-3">馃挰</span>
+          <p>{{ historyLoaded ? '鏆傛棤鍘嗗彶娑堟伅' : '鐐瑰嚮銆屽巻鍙茶褰曘€嶅姞杞借繃寰€瀵硅瘽锛屾垨鐩存帴寮€濮嬫柊瀵硅瘽' }}</p>
+        </div>
+        <div v-for="msg in messages" :key="msg.id"
+             :class="['flex', msg.role === 'user' ? 'justify-end' : 'justify-start']">
+          <div :class="['max-w-[80%] rounded-2xl px-4 py-3', msg.role === 'user' ? 'bg-primary-600 text-white' : 'bg-surface-100 text-surface-800']">
+            <MarkdownView v-if="msg.role === 'assistant'" :content="msg.content" />
+            <p v-else class="whitespace-pre-wrap">{{ msg.content }}</p>
+            <p class="text-xs mt-1 opacity-60">{{ new Date(msg.created_at).toLocaleTimeString('zh-CN') }}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 杈撳叆妗?-->
+      <div class="flex gap-3 pt-4 border-t border-surface-100">
+        <input v-model="inputText" class="input-field flex-1" placeholder="杈撳叆浣犵殑闂..." @keyup.enter="handleSend" />
+        <button @click="handleSend" :disabled="sending" class="btn-primary">
+          {{ sending ? '...' : '鍙戦€? }}
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, nextTick } from 'vue'
+import { chatApi } from '@/api/modules/chat'
+import { useAppStore } from '@/stores/app'
+import MarkdownView from '@/components/common/MarkdownView.vue'
+import type { ChatMessage } from '@/types'
+
+const appStore = useAppStore()
+const messages = ref<ChatMessage[]>([])
+const inputText = ref('')
+const sending = ref(false)
+const loadingHistory = ref(false)
+const historyLoaded = ref(false)
+const msgContainer = ref<HTMLElement | null>(null)
+
+async function loadHistory() {
+  if (loadingHistory.value) return
+  loadingHistory.value = true
+  try {
+    const res = await chatApi.history(undefined, 50)
+    messages.value = [...res.data].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    historyLoaded.value = true
+    scrollToBottom()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '鍔犺浇鍘嗗彶澶辫触', 'error')
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+function clearChat() {
+  messages.value = []
+  historyLoaded.value = false
+}
+
+async function handleSend() {
+  if (!inputText.value.trim() || sending.value) return
+  const text = inputText.value
+  inputText.value = ''
+  sending.value = true
+
+  const tempMsg: ChatMessage = {
+    id: Date.now(), project_id: null, user_id: 0,
+    role: 'user', content: text, content_type: 'text', tokens_used: 0, created_at: new Date().toISOString()
+  }
+  messages.value.push(tempMsg)
+  scrollToBottom()
+
+  try {
+    const res = await chatApi.send(text)
+    const aiMsg: ChatMessage = {
+      id: Date.now() + 1, project_id: null, user_id: 0,
+      role: 'assistant', content: res.data.reply, content_type: 'markdown',
+      tokens_used: res.data.tokens.input + res.data.tokens.output, created_at: new Date().toISOString()
+    }
+    messages.value.push(aiMsg)
+    scrollToBottom()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '鍙戦€佸け璐?, 'error')
+  } finally { sending.value = false }
+}
+
+function scrollToBottom() {
+  nextTick(() => {
+    if (msgContainer.value) {
+      msgContainer.value.scrollTop = msgContainer.value.scrollHeight
+    }
+  })
+}
+</script>
+
+========== View: CostView.vue (D:\AI_Scientist\AI_Scientist\frontend\src\views\observability\CostView.vue) ==========
+<template>
+  <div class="space-y-6 animate-fade-in">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-primary-600">楼{{ summary.total_cost_yuan?.toFixed(2) || '0.00' }}</p>
+        <p class="text-sm text-surface-500 mt-1">鎬绘垚鏈?/p>
+      </div>
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-green-600">{{ summary.total_tokens?.toLocaleString() || 0 }}</p>
+        <p class="text-sm text-surface-500 mt-1">鎬籘oken鏁?/p>
+      </div>
+      <div class="card text-center">
+        <p class="text-3xl font-bold text-purple-600">{{ summary.call_count || 0 }}</p>
+        <p class="text-sm text-surface-500 mt-1">璋冪敤娆℃暟</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="text-lg font-semibold mb-4">馃搳 妯″瀷鎴愭湰鍒嗗竷</h2>
+      <div v-if="Object.keys(summary.model_breakdown || {}).length === 0" class="text-center py-8 text-surface-400">鏆傛棤鏁版嵁</div>
+      <div v-else class="space-y-3">
+        <div v-for="(data, model) in summary.model_breakdown" :key="model" class="flex items-center gap-4 p-3 rounded-lg bg-surface-50">
+          <div class="flex-1">
+            <p class="font-medium">{{ model }}</p>
+            <p class="text-sm text-surface-500">{{ data.calls }} 娆¤皟鐢?路 {{ data.tokens.toLocaleString() }} tokens</p>
+          </div>
+          <p class="text-lg font-bold text-primary-600">楼{{ data.cost.toFixed(4) }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { observabilityApi } from '@/api/modules/observability'
+import type { CostSummary } from '@/types'
+
+const summary = ref<CostSummary>({ total_cost_yuan: 0, total_tokens: 0, call_count: 0, model_breakdown: {} })
+
+onMounted(async () => {
+  try {
+    const res = await observabilityApi.getCost()
+    summary.value = res.data
+  } catch {}
+})
+</script>

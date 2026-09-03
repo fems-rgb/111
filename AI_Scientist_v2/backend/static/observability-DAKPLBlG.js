@@ -1,0 +1,1 @@
+import{E as e}from"./index-6lOK-6Tv.js";const r={getTraces:(t,a=50)=>e.get("/observability/traces",{params:{project_id:t,limit:a}}),getTraceDetail:t=>e.get(`/observability/traces/${t}`),getCost:()=>e.get("/observability/cost")};export{r as o};

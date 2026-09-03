@@ -1,0 +1,469 @@
+﻿<template>
+  <!-- loading -->
+  <div v-if="loading" class="card text-center py-16">
+    <div class="animate-spin text-4xl mb-4 inline-block">🔄</div>
+    <p class="text-surface-500">Loading project...</p>
+  </div>
+
+  <!-- error -->
+  <div v-else-if="loadError" class="card text-center py-16">
+    <div class="text-5xl mb-4">😞</div>
+    <p class="text-red-500 text-lg mb-2">
+    {{ loadError }}</p>
+    <div class="flex gap-3 justify-center mt-4">
+      <button @click="reloadProject" class="btn-primary">🔄 Retry</button>
+      <button @click="$router.push('/')" class="btn-secondary">← Back</button>
+    </div>
+  </div>
+
+  <!-- normal -->
+  <div v-else-if="project" class="space-y-6 animate-fade-in">
+    <!-- 项目头部 -->
+    <div class="card">
+      <div class="flex items-start justify-between">
+        <div>
+          <div class="flex items-center gap-3">
+            <button @click="$router.push('/')" class="text-surface-400 hover:text-surface-600">←</button>
+            <h1 class="text-xl font-bold">{{ project.title }}</h1>
+            <StatusBadge :status="project.status" />
+          </div>
+          <p class="text-sm text-surface-500 mt-2">{{ project.domain }} · {{ project.complexity || '未分析' }}</p>
+        </div>
+        <div class="flex gap-2">
+          <button v-if="project.status === 'draft'" @click="handleStart" class="btn-primary">🚀 启动研究</button>
+          <button v-if="project.status === 'running'" @click="handlePause" class="btn-secondary">⏸️ 暂停</button>
+          <button @click="handleRestartProject" class="btn-secondary text-orange-600 border-orange-200 hover:bg-orange-50 hover:border-orange-300" title="清空当前进度并重新开始研究">🔄 重启研究</button>
+        </div>
+      </div>
+      <div class="mt-4 p-4 bg-surface-50 rounded-lg">
+        <p class="text-sm font-medium text-surface-700 mb-1">研究问题</p>
+        <p class="text-sm text-surface-600">{{ project.research_question }}</p>
+      </div>
+    </div>
+
+    
+    <!-- P1-P20赛题报告导出 -->
+    <div class="card border-l-4 border-l-indigo-500 mt-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold flex items-center gap-2">🏆 赛题报告导出 <span class="text-xs font-normal text-surface-400">{{ compConfig.competition_id || project?.title || '未配置' }} {{ compConfig.track ? '· ' + compConfig.track : '' }} {{ compConfig.direction ? '· ' + compConfig.direction : '' }}</span></h2>
+        <button @click="showCompConfig = !showCompConfig" class="text-xs text-indigo-600 hover:underline">{{ showCompConfig ? '收起配置' : '编辑团队配置' }}</button>
+      </div>
+      <div v-if="!showCompConfig" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-3">
+        <div><span class="text-surface-400">团队：</span><span class="font-medium">{{ compConfig.team_name || '未填写' }}</span></div>
+        <div><span class="text-surface-400">成员：</span><span class="font-medium">{{ compConfig.members || '默认' }}</span></div>
+        <div><span class="text-surface-400">教师：</span><span class="font-medium">{{ compConfig.advisor || '未填写' }}</span></div>
+        <div><span class="text-surface-400">院校：</span><span class="font-medium">{{ compConfig.university || '未填写' }}</span></div>
+      </div>
+      <div v-if="showCompConfig" class="space-y-3 p-4 bg-indigo-50/50 rounded-lg border border-indigo-100 mb-3">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">团队名称</label><input v-model="compForm.team_name" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">团队成员</label><input v-model="compForm.members" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">指导教师</label><input v-model="compForm.advisor" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">所在院校</label><input v-model="compForm.university" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">赛题编号</label><input v-model="compForm.competition_id" placeholder="如 XH-202619" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">赛道</label><input v-model="compForm.track" placeholder="如 赛道一" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">方向</label><input v-model="compForm.direction" placeholder="如 方向1A" class="input-field text-sm" /></div>
+          <div><label class="block text-xs font-medium text-surface-600 mb-1">主要案例</label><input v-model="compForm.primary_case" class="input-field text-sm" /></div>
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button @click="saveCompConfig" :disabled="savingComp" class="btn-primary text-sm">{{ savingComp ? '保存中...' : '💾 保存' }}</button>
+          <button @click="showCompConfig = false" class="btn-secondary text-sm">取消</button>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button @click="exportP1P20('markdown')" class="btn-secondary text-sm border-indigo-200">📋 P1-P20(MD)</button>
+        <button @click="exportP1P20('pdf')" class="btn-primary text-sm">📕 P1-P20(PDF)</button>
+      </div>
+    </div>
+    <!-- Pipeline Progress + ETA -->
+    <PipelineProgress
+      v-if="pipelineStepsForProgress.length > 0"
+      :steps="pipelineStepsForProgress"
+      :reject-reason="rejectReason"
+      :iteration-count="iterationCount"
+      :current-stage="currentStage"
+      @retry="handleRetryAfterReject"
+      @skip="handleSkipAfterReject"
+      @abort="handleAbortPipeline"
+      @restart-step="handleRestartStep"
+      @restart-project="handleRestartProject"
+    />
+
+    <!-- Agent流水线 -->
+    <div class="card">
+      <h2 class="text-lg font-semibold mb-4">🤖 Agent执行流水线</h2>
+      <div v-if="tasks.length === 0" class="text-center py-8 text-surface-400">暂无任务，请先启动项目</div>
+      <div v-else class="space-y-4">
+        <div v-for="(task, idx) in tasks" :key="task.id" class="border border-surface-200 rounded-lg p-4 hover:border-primary-200 transition-colors">
+          <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-3">
+              <span class="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700">{{ idx + 1 }}</span>
+              <span class="font-medium">{{ agentLabels[task.agent_name] || task.agent_name }}</span>
+              <StatusBadge :status="task.status" />
+            </div>
+            <div class="text-sm text-surface-400">
+              {{ task.tokens_used > 0 ? `${task.tokens_used} tokens · ¥${task.cost_yuan.toFixed(4)}` : '' }}
+            </div>
+          </div>
+
+          <!-- 输出内容 -->
+          <div v-if="task.output_data" class="mt-3">
+            <MarkdownView
+    :content="task.output_data" />
+            <!-- 论文导出按钮 -->
+            <div v-if="task.agent_name === 'writing' && task.status === 'completed'" class="mt-3 mb-2">
+              <button @click="handleExport(task)" class="btn-primary" :disabled="exporting || !task.output_data">
+                {{ exporting ? '⏳ 导出中...' : '📥 导出Word文档' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 错误信息 -->
+          <div v-if="task.error_message" class="mt-3 p-3 bg-red-50 rounded-lg text-red-700 text-sm">
+            ❌
+    {{ task.error_message }}
+          </div>
+
+          <!-- 人工审核 -->
+          <div v-if="task.status === 'waiting_review'" class="mt-4 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+            <p class="font-medium text-yellow-800 mb-3">⏸️ 需要人工审核</p>
+            <textarea v-model="reviewComment" class="input-field h-20 mb-3" placeholder="审核意见..."></textarea>
+            <div class="flex gap-2">
+              <button @click="handleReview(task.id, true)" class="btn-primary">✅ 批准继续</button>
+              <button @click="handleReview(task.id, false)" class="btn-danger">❌ 拒绝</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 最终成果 -->
+    <div v-if="project.final_output" class="card">
+      <h2 class="text-lg font-semibold mb-4">📄 最终研究成果</h2>
+      <MarkdownView :content="project.final_output" />
+  </div>
+  <div v-else class="text-center py-20 text-surface-400">加载中...</div>
+  </div>
+</template>
+
+<script setup lang="ts">
+// ===== 论文导出功能 START =====
+import { exportToWord } from '@/utils/exportPaper';
+
+const exporting = ref(false);
+const handleExport = async (task: any) => {
+  exporting.value = true;
+  try {
+    const title = task.project_title || task.title || '学术论文';
+    await exportToWord(title);
+  } catch (e: unknown) {
+    const err = e as { message?: string };
+    const msg = err?.message || String(e);
+    appStore.showToast('导出失败: ' + msg, 'error');
+  } finally {
+    exporting.value = false;
+  }
+};
+// ===== 论文导出功能 END =====
+import { ref, onMounted, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { useProjectStore } from '@/stores/project'
+import { useAgentStore } from '@/stores/agent'
+import { useAppStore } from '@/stores/app'
+import { usePipelineStore } from '@/stores/pipeline'
+import { projectApi } from '@/api/modules/project'
+import { usePolling } from '@/composables/usePolling'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import MarkdownView from '@/components/common/MarkdownView.vue'
+import PipelineProgress from '@/components/pipeline/PipelineProgress.vue'
+
+const route = useRoute()
+const router = useRouter()
+const projectStore = useProjectStore()
+const agentStore = useAgentStore()
+const appStore = useAppStore()
+const pipelineStore = usePipelineStore()
+
+const reviewComment = ref('')
+const loading = ref(true)
+const loadError = ref('')
+const rejectReason = ref('')
+
+const iterationCount = computed(() => {
+  const steps = pipelineStepsForProgress.value
+  const versions = steps.map(s => (s as any).version).filter(v => v != null)
+  return versions.length > 0 ? Math.max(...versions) : 1
+})
+
+const currentStage = computed(() => {
+  const steps = pipelineStepsForProgress.value
+  const active = steps.find(s => s.status === 'running' || s.status === 'pending')
+  if (active) return (active as any).display_name || (active as any).agent_name
+  const last = steps[steps.length - 1]
+  return last?.display_name || last?.agent_name || ''
+})
+
+import { watch } from 'vue'
+
+const pipelineStepsForProgress = computed(() => {
+  if (!tasks.value || tasks.value.length === 0) return []
+  const now = Date.now()
+  return tasks.value.map((t: any, i: number) => {
+    let elapsed = 0
+    if (t.started_at) {
+      const parseTime = (v: any): number => {
+        if (typeof v === 'number') return v * 1000
+        if (typeof v === 'string') {
+          if (/Z|[+-]\d{2}:\d{2}$/.test(v)) {
+            return new Date(v).getTime()
+          }
+          const match = v.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/)
+          if (match) {
+            return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]))
+          }
+          return new Date(v.replace(' ', 'T')).getTime()
+        }
+        return NaN
+      }
+      const start = parseTime(t.started_at)
+      const end = t.finished_at ? parseTime(t.finished_at) : now
+      if (!isNaN(start) && !isNaN(end) && end >= start) {
+        elapsed = Math.round((end - start) / 1000)
+      }
+    }
+    return {
+      agent_name: t.agent_name,
+      display_name: (agentLabels[t.agent_name] || t.agent_name).replace(/^[^\s]+\s/, ''),
+      status: t.status === 'waiting_review' ? 'running' : t.status,
+      elapsed,
+      reason: t.error_message,
+      step_order: i + 1
+    }
+  })
+})
+
+const agentLabels: Record<string, string> = {
+  literature: '📖 文献综述', hypothesis: '💡 假设生成', design: '📐 研究设计',
+  analysis: '📊 数据分析', writing: '✍️ 学术写作', review: '🔍 同行评审',
+  reflection: '🔄 反思迭代'
+}
+
+const projectId = computed(() => Number(route.params.id))
+const project = computed(() => projectStore.currentProject)
+const tasks = computed(() => projectStore.tasks)
+
+const pipelineProgress = computed(() => {
+  const total = tasks.value?.length || 0
+  if (total === 0) return { completed: 0, total: 0, percent: 0 }
+  const completed = tasks.value.filter((t: any) => t.status === 'completed').length
+  return { completed, total, percent: Math.round((completed / total) * 100) }
+})
+
+watch(tasks, (val) => {
+  const rejected = val?.find((t: any) => t.status === 'rejected' || t.status === 'failed')
+  if (rejected) {
+    rejectReason.value = rejected.error_message || ((agentLabels[rejected.agent_name] || rejected.agent_name) + ' review failed')
+  } else {
+    rejectReason.value = ''
+  }
+}, { deep: true })
+
+const { start, stop } = usePolling(async () => {
+  await projectStore.fetchProject(projectId.value)
+  await projectStore.fetchTasks(projectId.value)
+  if (project.value?.status === 'completed' || project.value?.status === 'failed') {
+    stop()
+  }
+}, 3000)
+
+async function reloadProject() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('REQUEST_TIMEOUT')), 15000)
+    )
+    await Promise.race([
+      (async () => {
+        await projectStore.fetchProject(projectId.value)
+        await projectStore.fetchTasks(projectId.value)
+      })(),
+      timeoutPromise
+    ])
+    if (project.value?.status === 'running' || project.value?.status === 'waiting_review') {
+      start()
+    }
+  } catch (e: any) {
+    const status = e.response?.status
+    if (e.message === 'REQUEST_TIMEOUT') {
+      loadError.value = '⏱️ 加载超时（15秒），请检查后端服务是否启动'
+    } else if (status === 404) {
+      loadError.value = '项目不存在 (ID: ' + projectId.value + ')'
+    } else {
+      loadError.value = e.response?.data?.detail || e.message || ('加载失败 HTTP ' + (status || 'unknown'))
+    }
+    stop()
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => { await reloadProject(); await loadCompConfig() })
+
+async function handleStart() {
+  try {
+    const pipeline = pipelineStore.getPipelineNames()
+    await projectStore.startProject(projectId.value, pipeline.length > 0 ? pipeline : undefined)
+    appStore.showToast('项目已启动', 'success')
+    start()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '启动失败', 'error')
+  }
+}
+
+async function handlePause() {
+  try {
+    const { projectApi } = await import('@/api/modules/project')
+    await projectApi.pause(projectId.value)
+    stop()
+    appStore.showToast('项目已暂停', 'success')
+    await projectStore.fetchProject(projectId.value)
+  } catch (e: any) {
+    appStore.showToast('暂停失败', 'error')
+  }
+}
+async function handleRestartProject() {
+  if (!confirm('确定要重新开始项目吗？所有任务记录将被清除。')) return
+  try {
+    const { projectApi } = await import('@/api/modules/project')
+    const pipeline = pipelineStore.getPipelineNames()
+    await projectApi.restart(projectId.value, pipeline.length > 0 ? pipeline : undefined)
+    appStore.showToast('项目已重新开始', 'success')
+    await projectStore.fetchProject(projectId.value)
+    start()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '重启失败', 'error')
+  }
+}
+
+async function handleReview(taskId: number, approved: boolean) {
+  try {
+    await agentStore.reviewTask(taskId, approved, reviewComment.value)
+    appStore.showToast(approved ? '已批准' : '已拒绝', 'success')
+    reviewComment.value = ''
+    start()
+  } catch (e: any) {
+    appStore.showToast('审核操作失败', 'error')
+  }
+}
+
+async function handleRetryAfterReject() {
+  appStore.showToast('Retrying...', 'info')
+  try {
+    await pipelineStore.retryCurrentStep()
+    start()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || 'Retry failed', 'error')
+  }
+}
+
+async function handleSkipAfterReject() {
+  try {
+    await pipelineStore.skipCurrentStep()
+    start()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || 'Skip failed', 'error')
+  }
+}
+
+
+async function handleRestartStep(agentName: string) {
+  if (!confirm(`确认重启步骤「${agentName}」？当前执行将被中断。`)) return
+  appStore.showToast(`正在重启 ${agentName}...`, 'info')
+  try {
+    await pipelineStore.retryCurrentStep()
+    start()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || 'Restart failed', 'error')
+  }
+}
+
+async function handleAbortPipeline() {
+  if (!confirm('Abort current pipeline? This cannot be undone.')) return
+  try {
+    await pipelineStore.abortPipeline()
+    stop()
+    appStore.showToast('Pipeline aborted', 'success')
+    await reloadProject()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || 'Abort failed', 'error')
+  }
+}
+
+// ===== 研究报告导出 =====
+async function exportReport(format: 'markdown' | 'pdf') {
+  try {
+    const pid = projectId.value
+    const url = `/api/v1/export/competition-report/${pid}?format=${format}`
+    const response = await fetch(url, {
+      headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
+    })
+    if (!response.ok) { const e = await response.json().catch(()=>({})); throw new Error(e.detail || response.statusText) }
+    const blob = await response.blob()
+    const ext = format === 'pdf' ? 'pdf' : 'md'
+    const name = (project.value?.title || 'report').replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, '_')
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = name + '_report.' + ext
+    a.click()
+    URL.revokeObjectURL(a.href)
+    appStore.showToast('✅ 报告已导出', 'success')
+  } catch (e: any) {
+    appStore.showToast('导出失败: ' + (e.message || e), 'error')
+  }
+}
+
+// ===== P1-P20赛题报告导出 =====
+const showCompConfig = ref(false)
+const savingComp = ref(false)
+const compConfig = ref<any>({ team_name: '', members: '', tech_team: '', text_team: '', advisor: '', university: '', competition_id: '', track: '', direction: '', primary_case: '' })
+const compForm = ref<any>({})
+
+async function loadCompConfig() {
+  try {
+    const r = await fetch(`/api/v1/export/${projectId.value}/competition-config`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('token') } })
+    if (r.ok) { compConfig.value = await r.json(); compForm.value = { ...compConfig.value } }
+  } catch(e) { console.error(e) }
+}
+
+async function saveCompConfig() {
+  savingComp.value = true
+  try {
+    const r = await fetch(`/api/v1/export/${projectId.value}/competition-config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
+      body: JSON.stringify(compForm.value)
+    })
+    if (!r.ok) throw new Error('保存失败')
+    compConfig.value = { ...compForm.value }; showCompConfig.value = false
+    appStore.showToast('✅ 赛题配置已保存', 'success')
+  } catch(e: any) { appStore.showToast(e.message, 'error') }
+  finally { savingComp.value = false }
+}
+
+async function exportP1P20(fmt: 'markdown'|'pdf') {
+  try {
+    const r = await fetch(`/api/v1/export/competition-report/${projectId.value}?format=${fmt}`, {
+      headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
+    })
+    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || r.statusText) }
+    const blob = await r.blob()
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+    const fname = [compConfig.value.competition_id, compConfig.value.track, compConfig.value.direction, '技术方案'].filter(Boolean).join('_') || '赛题报告'; a.download = fname + (fmt === 'pdf' ? '.pdf' : '.md'); a.click()
+    URL.revokeObjectURL(a.href); appStore.showToast('✅ P1-P20报告已导出', 'success')
+  } catch(e: any) { appStore.showToast('导出失败: ' + e.message, 'error') }
+}
+</script>
+
+
+
+

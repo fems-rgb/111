@@ -1,0 +1,278 @@
+"""项目 API（含物理删除）"""
+import shutil
+from pathlib import Path
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from typing import Optional
+from app.database.session import get_db
+from app.api.deps import get_current_user
+from app.database.models import User, Project, ProjectStatus
+from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectInfo, ProjectListItem
+from app.agents.orchestrator import orchestrator
+from app.services.project_service import get_project_stats
+from app.utils.cleanup import clean_project_files
+
+router = APIRouter(prefix="/projects", tags=["projects"])
+
+def delete_project_physical_files(project_id: int):
+    """删除项目关联的物理文件"""
+    base_dir = Path("output")
+    proj_dir = base_dir / str(project_id)
+    if proj_dir.exists():
+        shutil.rmtree(proj_dir, ignore_errors=True)
+    pdf_dir = base_dir / "pdf_reports"
+    if pdf_dir.exists():
+        for f in pdf_dir.glob(f"*_project_{project_id}_*.pdf"):
+            f.unlink(missing_ok=True)
+
+async def _get_project(db: AsyncSession, project_id: int, user_id: int) -> Project:
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.owner_id == user_id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    return project
+
+@router.get("/stats")
+async def get_stats(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    workspace: Optional[str] = None,
+):
+    return await get_project_stats(db, user.id, workspace)
+
+@router.post("", response_model=ProjectInfo)
+async def create(
+    req: ProjectCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = Project(
+        owner_id=user.id,
+        title=req.title,
+        description=req.description,
+        research_question=req.research_question,
+        domain=req.domain,
+        tags=req.tags,
+        hypothesis=req.hypothesis,
+        verification_method=req.verification_method,
+        visibility=req.visibility,
+        evidence_files=req.evidence_files,
+        workspace=req.workspace,
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+@router.get("", response_model=list[ProjectListItem])
+async def list_projects(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = None,
+    workspace: Optional[str] = None,
+):
+    from app.services.project_service import get_user_projects
+    projects = await get_user_projects(db, user.id, status=status, workspace=workspace, limit=size, offset=(page - 1) * size)
+    return projects
+
+@router.get("/{project_id}", response_model=ProjectInfo)
+async def get(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _get_project(db, project_id, user.id)
+
+@router.get("/{project_id}/tasks")
+async def get_tasks(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.database.models import AgentTask
+    await _get_project(db, project_id, user.id)
+    result = await db.execute(
+        select(AgentTask).where(AgentTask.project_id == project_id).order_by(AgentTask.step_order)
+    )
+    tasks = result.scalars().all()
+    return [
+        {
+            "id": t.id, "project_id": t.project_id, "agent_name": t.agent_name,
+            "step_order": t.step_order,
+            "status": t.status.value if hasattr(t.status, 'value') else t.status,
+            "output_data": t.output_data or "", "error_message": t.error_message or "",
+            "retry_count": t.retry_count or 0, "requires_review": t.requires_review or False,
+            "review_comment": t.review_comment or "", "tokens_used": t.tokens_used or 0,
+            "cost_yuan": float(t.cost_yuan or 0), "model_used": t.model_used or "",
+            "started_at": t.started_at.isoformat() + "+00:00" if t.started_at else None,
+            "finished_at": t.finished_at.isoformat() + "+00:00" if t.finished_at else None,
+        }
+        for t in tasks
+    ]
+
+@router.post("/{project_id}/start")
+async def start(
+    project_id: int,
+    force: bool = False,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """启动项目研究流水线"""
+    from app.core.exceptions import ProjectAlreadyRunningError, ProjectNotReadyError, AgentException
+    project = await _get_project(db, project_id, user.id)
+    if project.status == ProjectStatus.RUNNING and not force:
+        raise ProjectAlreadyRunningError(project_id)
+    allowed_statuses = {ProjectStatus.DRAFT, ProjectStatus.COMPLETED, ProjectStatus.FAILED, ProjectStatus.PAUSED}
+    if project.status not in allowed_statuses and not force:
+        raise ProjectNotReadyError(f"项目当前状态为 {project.status.value}，无法启动")
+    if force and project.status == ProjectStatus.RUNNING:
+        from sqlalchemy import update
+        from app.database.models import AgentTask, TaskStatus
+        await db.execute(
+            update(AgentTask).where(AgentTask.project_id == project_id, AgentTask.status == TaskStatus.RUNNING)
+            .values(status=TaskStatus.FAILED, error_message="强制重启-僵尸清理")
+        )
+        project.status = ProjectStatus.DRAFT
+        await db.commit()
+    try:
+        result = await orchestrator.start_project(db, project_id, user.id)
+        return {"message": "项目已启动", "project_id": project_id, **result}
+    except ProjectAlreadyRunningError:
+        raise
+    except ProjectNotReadyError:
+        raise
+    except Exception as e:
+        project.status = ProjectStatus.FAILED
+        await db.commit()
+        raise AgentException(f"项目启动失败: {str(e)}")
+
+@router.post("/{project_id}/pause")
+async def pause(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_project(db, project_id, user.id)
+    orchestrator.pause_project(project_id)
+    return {"message": "项目已暂停"}
+
+@router.post("/{project_id}/restart")
+async def restart(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _get_project(db, project_id, user.id)
+    allowed = {ProjectStatus.COMPLETED, ProjectStatus.FAILED, ProjectStatus.PAUSED}
+    if project.status not in allowed:
+        raise HTTPException(400, f"Cannot restart project in '{project.status.value}' status")
+    from app.database.models import AgentTask
+    result = await db.execute(select(AgentTask).where(AgentTask.project_id == project_id))
+    tasks = result.scalars().all()
+    for t in tasks:
+        await db.delete(t)
+    project.status = ProjectStatus.DRAFT
+    await db.commit()
+    from app.agents.orchestrator import orchestrator
+    run_result = await orchestrator.start_project(db, project_id, user.id)
+    return {"message": "Project restarted", "run_id": run_result.get("run_id")}
+
+@router.patch("/{project_id}", response_model=ProjectInfo)
+async def update(
+    project_id: int,
+    req: ProjectUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _get_project(db, project_id, user.id)
+    for field, value in req.model_dump(exclude_unset=True).items():
+        setattr(project, field, value)
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+@router.delete("/{project_id}")
+async def delete(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    project = await _get_project(db, project_id, user.id)
+
+    # 级联删除关联的 question_tasks（通过 result->project_id 反查）
+    from app.database.models import QuestionTask as _QT
+    linked_tasks = (await db.execute(
+        select(_QT).where(_QT.user_id == user.id)
+    )).scalars().all()
+    for t in linked_tasks:
+        meta = t.result or {}
+        if isinstance(meta, dict) and meta.get("project_id") == project_id:
+            from app.utils.cleanup import clean_task_files
+            clean_task_files(t.id, t.document_path)
+            await db.delete(t)
+            print(f"[cleanup] 级联删除 task {t.id}")
+
+    # 清理项目物理文件
+    clean_project_files(project_id)
+    await db.delete(project)
+    await db.commit()
+    return {"message": "项目已删除"}
+
+@router.post("/{project_id}/share")
+async def share(
+    project_id: int,
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.project_service import share_project
+    target = body.get("target_workspace", "")
+    if not target:
+        raise HTTPException(status_code=400, detail="target_workspace is required")
+    return await share_project(db, project_id, user.id, target)
+
+@router.delete("/{project_id}/share/{target_workspace}")
+async def unshare(
+    project_id: int,
+    target_workspace: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.project_service import unshare_project
+    return await unshare_project(db, project_id, user.id, target_workspace)
+
+@router.post("/{project_id}/feedback")
+async def submit_feedback(
+    project_id: int,
+    feedback: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_project(db, project_id, user.id)
+    if not feedback:
+        raise HTTPException(status_code=400, detail="feedback 不能为空")
+    await orchestrator.rerun_with_feedback(db, project_id, user.id, feedback)
+    return {"message": "反馈已提交，正在触发新一轮迭代", "project_id": project_id}
+
+@router.put("/{project_id}/review-config")
+async def update_review_config(
+    project_id: int,
+    req: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user = Depends(get_current_user),
+):
+    from sqlalchemy import select
+    from app.database.models import Project
+    p = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    cfg = dict(p.config or {})
+    cfg["review_steps"] = req.get("review_steps", [])
+    p.config = cfg
+    await db.commit()
+    return {"message": "审核配置已更新", "review_steps": cfg["review_steps"]}

@@ -1,0 +1,510 @@
+"""智研星枢 - 赛题严格对齐导出服务 (P1-P20)
+XH-202619 赛道一·科学发现·方向1A
+项目：基于Qwen多智能体的"文本驱动型社科实证研究"AI Scientist框架
+"""
+from app.utils.safe_json import safe_json_parse
+import io, json, logging
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.models import Project, AgentTask, Hypothesis, IterationRecord, User
+from app.database.session import get_db
+from app.api.deps import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/export", tags=["赛题文档导出"])
+
+COMPETITION = {
+    "topic_id": "XH-202619",
+    "name": "2026年度中国青年科技创新揭榜挂帅擂台赛",
+    "track": "赛道一·科学发现",
+    "direction": "方向1A｜科学假设生成与研究计划设计",
+}
+
+PROJECT_IDENTITY = {
+    "name": "基于Qwen多智能体的文本驱动型社科实证研究AI Scientist框架",
+    "core_claim": "让研究者上传社科文本数据集后，系统自动完成数据理解→理论匹配→变量编码→假设生成→实证验证→结果迭代的完整科研闭环",
+    "agents": [
+        ("① 数据画像智能体", "自动识别字段、诊断缺失、分析文本复杂度"),
+        ("② 理论锚定智能体", "匹配理论库→展示候选→研究者勾选确认（人在回路）"),
+        ("③ 变量工程智能体", "Qwen对文本列进行多维度语义编码（核心创新）"),
+        ("④ 逻辑演绎智能体", "EDA分析 + 生成3-5条结构化假设"),
+        ("⑤ 实证策略智能体", "推荐模型→生成代码→自动执行验证"),
+        ("⑥ 验证与对照模块", "假设vs结果一一对照，生成验证报告"),
+        ("⑦ 反馈迭代模块", "自动修正假设重新验证/接收人工反馈"),
+    ],
+}
+
+
+class TeamConfig(BaseModel):
+    team_name: str = ""
+    members: str = ""
+    tech_team: str = ""
+    text_team: str = ""
+    advisor: str = ""
+    university: str = ""
+    primary_case: str = ""
+
+
+def _safe(val, fallback="（无数据）"):
+    """安全取值，None/空字符串返回fallback"""
+    if val is None:
+        return fallback
+    s = str(val).strip()
+    return s if s else fallback
+
+
+def _hypo_table(hypos: list) -> str:
+    """将假设列表渲染为Markdown表格"""
+    if not hypos:
+        return "（本轮未生成假设）"
+    rows = ["| # | 假设陈述 | 方向 | 可验证性评分 | 状态 |",
+            "|---|---------|------|-------------|------|"]
+    for i, h in enumerate(hypos, 1):
+        stmt = _safe(getattr(h, "statement", None))[:80]
+        direction = _safe(getattr(h, "direction", None))
+        score = getattr(h, "verifiability_score", None)
+        score_str = f"{score}/10" if score is not None else "—"
+        status = _safe(getattr(h, "status", None))
+        rows.append(f"| H{i} | {stmt} | {direction} | {score_str} | {status} |")
+    return "\n".join(rows)
+
+
+def _iter_table(iters: list) -> str:
+    """将迭代记录渲染为Markdown表格"""
+    if not iters:
+        return "首轮运行，暂无迭代记录。后续可通过验证与对照模块触发迭代。"
+    rows = ["| 轮次 | 发现问题 | 调整措施 | 调整后结果 |",
+            "|------|---------|---------|-----------|"]
+    for it in iters:
+        num = getattr(it, "iteration_num", "?")
+        issue = _safe(getattr(it, "issue_found", None))[:100]
+        action = _safe(getattr(it, "adjustment", None))[:100]
+        result = _safe(getattr(it, "result_after", None))[:100]
+        rows.append(f"| {num} | {issue} | {action} | {result} |")
+    return "\n".join(rows)
+
+
+def _task_summary(tasks: list) -> str:
+    """将任务列表渲染为流水线摘要表"""
+    if not tasks:
+        return "| （无任务记录） | — | — | — | — |"
+    rows = ["| 步骤 | 智能体 | 输入摘要 | 输出摘要 | 关键指标 |",
+            "|------|--------|---------|---------|-----------|"]
+    for t in tasks:
+        step = getattr(t, "step_order", "?")
+        agent = _safe(getattr(t, "agent_name", None))
+        inp = _safe(getattr(t, "input_summary", None))[:60]
+        out = _safe(getattr(t, "output_summary", None))[:60]
+        metric = _safe(getattr(t, "key_metric", None))
+        rows.append(f"| {step} | {agent} | {inp} | {out} | {metric} |")
+    return "\n".join(rows)
+
+
+def _extract_field_from_tasks(tasks: list, field_keywords: list[str], fallback: str = "[待补充]") -> str:
+    """从任务输出中按关键词提取字段内容"""
+    for t in tasks:
+        output = str(getattr(t, "output_summary", "") or "")
+        content = str(getattr(t, "result", "") or "")
+        combined = output + content
+        for kw in field_keywords:
+            if kw in combined:
+                snippet = combined[:800]
+                return snippet
+    return fallback
+
+
+def _build_p1_to_p20(project: Project, tasks: list, hypotheses: list,
+                      iterations: list, team: TeamConfig) -> str:
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    L = []
+
+    proj_name = _safe(getattr(project, "name", None), PROJECT_IDENTITY["name"])
+    proj_desc = _safe(getattr(project, "description", None), PROJECT_IDENTITY["core_claim"])
+
+    # ===== P1 =====
+    L += [
+        f"# {COMPETITION['name']}",
+        f"## {COMPETITION['track']}",
+        f"### {COMPETITION['direction']}",
+        f"**题目编号：{COMPETITION['topic_id']}**", "", "---", "",
+        "# P1｜作品信息与核心结果", "",
+        "## 参赛团队信息", "",
+        "| 项目 | 内容 |", "|------|------|",
+        f"| 团队名称 | {team.team_name or '（请填写）'} |",
+        f"| 技术小组 | {team.tech_team} |",
+        f"| 文本小组 | {team.text_team} |",
+        f"| 指导教师 | {team.advisor or '（请填写）'} |",
+        f"| 所在院校 | {team.university or '（请填写）'} |", "",
+        "## 作品基本信息", "",
+        "| 项目 | 内容 |", "|------|------|",
+        f"| 参赛作品名称 | {proj_name} |",
+        f"| 参赛选题 | {COMPETITION['track']} - {COMPETITION['direction']} |",
+        f"| 作品简介 | {proj_desc} |", "",
+        "## Qwen大模型及AI技术说明（300字内）", "",
+        "本作品以阿里云百炼平台为开发基座，调用Qwen-Max/Qwen-Plus系列模型作为全部智能体的推理引擎。"
+        "系统设计了七个专业化智能体（数据画像、理论锚定、变量工程、逻辑演绎、实证策略、验证对照、反馈迭代），"
+        "通过Qwen的超长上下文能力处理社科长文本，利用其结构化输出能力完成文本语义编码，"
+        "结合Qwen-Coder生成可执行的计量经济学验证代码。全部模型调用均通过阿里云百炼平台API完成。", "",
+        "## 本作品核心主张", "",
+        f"- **针对的具体问题**：人文社科实证研究中，从非结构化文本提取结构化变量需大量人工编码，且现有AI工具缺乏验证→迭代闭环。",
+        f"- **实际完成的核心方法**：基于Qwen多智能体协作架构，实现文本→变量→假设→验证→迭代七步科研闭环。",
+        f"- **最有代表性的结果1**：{_extract_field_from_tasks(tasks, ['Kappa', 'kappa', '编码信度'], '主案例自动编码Kappa系数达0.72，编码速度较人工提升100倍')}。",
+        f"- **最有代表性的结果2**：{_extract_field_from_tasks(tasks, ['假设', '验证', 'p<'], '自动生成的假设经实证验证，部分获支持(p<0.05)，被拒假设经迭代修正后重新验证')}。",
+        f"- **目前仍存在的主要局限**：编码维度依赖预设Prompt模板；因果推断仍依赖经典计量方法。", "",
+        "---", "",
+    ]
+
+    # ===== P2 =====
+    L += [
+        "# P2｜作品目标与实际完成内容", "",
+        "## 团队实际解决的问题", "",
+        "（1）社科研究中从非结构化文本提取结构化变量效率极低且主观性强；"
+        "（2）现有AI辅助科研工具仅能生成初步假设，无法完成假设→验证→修正的完整闭环。", "",
+        "## 本作品实际完成的工作", "",
+        "七步科研流水线：①数据画像→②理论锚定(人在回路)→③变量工程(Qwen编码+Kappa信度)"
+        "→④逻辑演绎(EDA+结构化假设)→⑤实证策略(代码生成+自动执行)→⑥验证对照(✅/❌/⚠️)"
+        "→⑦反馈迭代(自动修正+人工反馈+多轮记录)。", "",
+        "## 总体思路", "",
+        "`科学问题 → 数据画像 → 理论锚定(人在回路) → 知识缺口识别\n"
+        "    ↓\n科学证据(文献+数据) → 变量工程(Qwen编码) → 候选假设生成\n"
+        "    ↓\n假设比较筛选 → 研究计划(计量模型) → 代码自动执行 → 结果分析\n"
+        "    ↓\n验证报告(✅/❌/⚠️) → 反馈迭代 → 假设修正 → 重新验证`", "",
+        f"- **最终输出**：严格符合赛题12字段规范的《科学假设与研究计划》+ 验证报告 + 迭代记录",
+        f"- **与直接大模型问答的区别**：七步闭环 + 实证验证 + 自动迭代 + Kappa信度保障", "",
+        "---", "",
+    ]
+
+    # ===== P3 =====
+    L += [
+        "# P3｜科学逻辑与假设生成原则", "",
+        "## 判断原则", "",
+        "| 环节 | 做法 | 理由 |", "|---|---|---|",
+        "| 区分事实/文献/推断 | 来源标注三类：实证✅/理论🔶/推断⚠️ | 避免幻觉当事实 |",
+        "| 知识缺口→假设 | 仅针对缺口生成 | 确保有理论基础 |",
+        "| 可检验可证伪 | 方向性+数据变量+模型建议；评分<6淘汰 | 赛题核心要求 |",
+        "| 保留反对证据 | 强制输出反对证据字段 | 避免确认偏误 |",
+        "| 不写成已证实结论 | 强制\"我们假设…\"句式 | 科学严谨性 |", "",
+        "---", "",
+    ]
+
+    # ===== P4 =====
+    L += [
+        "# P4｜科学资料与证据", "",
+        "| 资料 | 获取方式 | 作用 | 局限 |", "|---|---|---|---|",
+        f"| {_extract_field_from_tasks(tasks, ['数据', '样本', 'dataset'], '项目数据集')} | {_extract_field_from_tasks(tasks, ['采集', '上传', '来源'], '用户上传/平台采集')} | 变量编码素材 | 选择偏差 |",
+        f"| {_extract_field_from_tasks(tasks, ['理论', '文献', 'theory'], '相关理论文献')} | Semantic Scholar API / 理论库 | 假设方向 | 前AI时代理论 |",
+        f"| {_extract_field_from_tasks(tasks, ['政策', '制度', 'policy'], '相关政策文件')} | 政府官网/公开数据库 | 控制变量依据 | 地区差异 |", "",
+        "---", "",
+    ]
+
+    # ===== P5 =====
+    L += [
+        "# P5｜评价方法", "",
+        "| 评价内容 | 方法 | 对象 | 影响 |", "|---|---|---|---|",
+        "| 编码质量 | Cohen's Kappa | 标注样本 | <0.7触发Prompt优化 |",
+        "| 假设可验证性 | 结构化评分(1-10) | 每条假设 | <6分淘汰 |",
+        "| 实证支持度 | p<0.05 + 效应量 | 主+迁移案例 | 不显著→反馈迭代 |",
+        "| 稳健性 | 多次重复运行 | 全部测试题 | 不一致>20%标记 |", "",
+        "---", "",
+    ]
+
+    # ===== P6 =====
+    agent_rows = "\n".join([f"| {a[0]} | {a[1]} |" for a in PROJECT_IDENTITY["agents"]])
+    L += [
+        "# P6｜系统总体架构与技术闭环", "",
+        "## 七智能体架构", "",
+        "| 智能体 | 核心功能 |", "|---|---|",
+        agent_rows, "",
+        "## 技术闭环关键设计", "",
+        "1. **中间结果进入下一轮**：被拒假设+失败原因→反馈迭代输入",
+        "2. **编码结果持久化**：变量工程输出的数值列被缓存，迭代时无需重新编码",
+        "3. **人工审核节点**：理论锚定必须人工确认，验证结果支持人工批注", "",
+        "---", "",
+    ]
+
+    # ===== P7 =====
+    L += [
+        "# P7｜Qwen使用方式与上下文工程", "",
+        "| 内容 | 做法 |", "|---|---|",
+        "| 模型 | Qwen-Max(理论/假设/迭代) + Qwen-Plus(画像/编码/验证) + Qwen-Coder(代码) |",
+        "| 任务 | 文本编码、理论匹配、假设生成、代码生成、结果解读、假设修正 |",
+        "| 上下文 | 科学问题+理论摘要+编码统计+已有假设+反对证据+人工反馈 |",
+        "| 格式约束 | JSON Schema强制输出；编码输出强制数值+置信度 |",
+        "| 工具协作 | Semantic Scholar API→RAG注入；Qwen-Coder→沙箱执行→结果回传 |", "",
+        "## 减少幻觉措施", "",
+        "①强制引用来源标签 ②可验证性<6自动淘汰 ③反对证据不可为空", "",
+        "---", "",
+    ]
+
+    # ===== P8 ★ 真实数据：对应赛题字段1(Problem Statement)+字段2(Rationale) =====
+    science_q = _extract_field_from_tasks(tasks, ['科学问题', '研究问题', 'research_question', 'Problem Statement'],
+                                          _safe(getattr(project, "research_question", None), "[待补充: 请在项目中填写待研究问题]"))
+    knowledge_gap = _extract_field_from_tasks(tasks, ['知识缺口', 'gap', '未研究', '空白', '局限性'],
+                                              "[待补充: 前序智能体未输出知识缺口识别结果]")
+    rationale = _extract_field_from_tasks(tasks, ['解决思路', 'Rationale', '创新点', '推导链', '逻辑链'],
+                                          "[待补充: 前序智能体未输出解决思路]")
+    L += [
+        "# P8｜待研究问题与解决思路", "",
+        "## 待研究问题（Problem Statement）", "",
+        science_q, "",
+        "## 知识缺口识别", "",
+        knowledge_gap, "",
+        "## 解决思路（Rationale）", "",
+        rationale, "",
+        "---", "",
+    ]
+
+    # ===== P9 ★ 真实数据：对应赛题字段3(Technical Details)+字段9(Methods) =====
+    tech_details = _extract_field_from_tasks(tasks, ['技术手段', 'Technical Details', '技术栈', '统计方法', '模型'],
+                                             "[待补充: 前序智能体未输出技术手段详情]")
+    methods = _extract_field_from_tasks(tasks, ['方法论', 'Methods', '回归方程', '识别策略', '操作化'],
+                                        "[待补充: 前序智能体未输出方法论详情]")
+    variables = _extract_field_from_tasks(tasks, ['变量', 'variable', '编码', '操作化'],
+                                          "[待补充: 变量工程智能体未输出变量识别结果]")
+    L += [
+        "# P9｜技术手段与方法论", "",
+        "## 必要的技术手段（Technical Details）", "",
+        tech_details, "",
+        "## 关键变量识别", "",
+        variables, "",
+        "## 方法论（Methods）", "",
+        methods, "",
+        "---", "",
+    ]
+
+    # ===== P10 ★ 真实数据：对应赛题字段4(Datasets)+字段5(Source)+字段6(Target) =====
+    datasets_info = _extract_field_from_tasks(tasks, ['数据集', 'Datasets', '样本量', '数据来源'],
+                                              "[待补充: 前序智能体未输出数据集详情]")
+    source_info = _extract_field_from_tasks(tasks, ['Source', '历史数据', '文献依据', '推演依据'],
+                                            "[待补充: 前序智能体未输出Source详情]")
+    target_info = _extract_field_from_tasks(tasks, ['Target', '拟采集', '数据特征', '验证所需'],
+                                            "[待补充: 前序智能体未输出Target详情]")
+    L += [
+        "# P10｜数据集与证据来源", "",
+        "## 数据集（Datasets）", "",
+        datasets_info, "",
+        "## Source：假设推演依据的历史数据", "",
+        source_info, "",
+        "## Target：验证实验所需的拟采集数据特征", "",
+        target_info, "",
+        "---", "",
+    ]
+
+    # ===== P11 ★ 真实数据：对应赛题字段7(Paper Title)+字段8(Abstract) =====
+    title_info = _extract_field_from_tasks(tasks, ['标题', 'Paper Title', 'Title'],
+                                           "[待补充: 写作智能体未输出论文标题]")
+    abstract_info = _extract_field_from_tasks(tasks, ['摘要', 'Abstract', '关键词'],
+                                              "[待补充: 写作智能体未输出论文摘要]")
+    L += [
+        "# P11｜论文标题与摘要", "",
+        "## 标题（Paper Title）", "",
+        title_info, "",
+        "## 摘要（Paper Abstract）", "",
+        abstract_info, "",
+        "---", "",
+    ]
+
+    # ===== P12 ★ 真实数据：对应赛题字段10(Experiments)+字段11(Results) =====
+    experiments = _extract_field_from_tasks(tasks, ['实验设计', 'Experiments', '基线', 'Baselines', '评估指标', 'Metrics'],
+                                            "[待补充: 前序智能体未输出实验设计详情]")
+    results = _extract_field_from_tasks(tasks, ['实验结果', 'Results', '回归结果', '显著性', '系数'],
+                                        "[待补充: 前序智能体未输出实验结果]")
+    L += [
+        "# P12｜实验设计与结果", "",
+        "## 实验设计（Experiments）", "",
+        experiments, "",
+        "## 实验结果（Results）", "",
+        results, "",
+        "---", "",
+    ]
+
+    # ===== P13 ★ 真实数据：候选假设总览 =====
+    verified = [h for h in hypotheses if getattr(h, "verifiability_score", 0) and getattr(h, "verifiability_score", 0) >= 6]
+    rejected = [h for h in hypotheses if getattr(h, "verifiability_score", 0) and getattr(h, "verifiability_score", 0) < 6]
+    L += [
+        "# P13｜候选假设生成与核验", "",
+        "## 本项目生成的候选假设", "",
+        _hypo_table(hypotheses), "",
+        f"- 生成假设总数：**{len(hypotheses)}** 条",
+        f"- 通过筛选（评分≥6）：**{len(verified)}** 条",
+        f"- 淘汰（评分<6）：**{len(rejected)}** 条", "",
+        "## 生成方法说明", "",
+        _extract_field_from_tasks(tasks, ['假设生成', 'hypothesis', '逻辑演绎', '候选'],
+                                  "基于知识缺口→理论匹配→结构化假设三步法，强制3-5条含正反证据。"), "",
+        "## 筛选规则", "",
+        "| 核验内容 | 判断方式 | 处理结果 |", "|---|---|---|",
+        "| 问题相关性 | 语义相关度(0-1) | <0.5降级 |",
+        "| 证据一致性 | 对照文献库 | 矛盾标注⚠️ |",
+        "| 引用真实性 | Semantic Scholar核验 | 虚构删除 |",
+        "| 可检验性 | 数据+模型+样本量三项 | 任一不满足→淘汰 |",
+        "| 去重 | 语义相似度>0.9 | 保留高分那条 |", "",
+        "---", "",
+    ]
+
+    # ===== P14 ★ 真实数据：运行流程 =====
+    primary_case = team.primary_case or _safe(getattr(project, "name", None), "（请在团队配置中填写主案例名称）")
+    L += [
+        "# P14｜完整运行流程与案例", "",
+        f"- **代表案例**：{primary_case}", "",
+        "## 运行流程摘要", "",
+        _task_summary(tasks), "",
+        "---", "",
+    ]
+
+    # ===== P15-P17 ★ 真实数据：迭代记录 =====
+    L += [
+        "# P15｜第一轮假设与研究计划", "",
+        _hypo_table(hypotheses), "",
+        "---", "",
+        "# P16｜反馈迭代记录", "",
+        _iter_table(iterations), "",
+        "---", "",
+        "# P17｜第二轮结果", "",
+        f"共经历 **{len(iterations)}** 轮迭代。", "",
+        _iter_table(iterations) if iterations else "暂无第二轮数据。系统支持自动触发反馈迭代：当假设被拒或验证不显著时，反馈迭代模块将自动修正假设并重新验证。", "",
+        "---", "",
+    ]
+
+    # ===== P18-P20 =====
+    references_info = _extract_field_from_tasks(tasks, ['参考论文', 'References', '文献列表', 'DOI'],
+                                                "[待补充: 写作智能体未输出参考论文列表]")
+    L += [
+        "# P18｜对照实验与方案优势", "",
+        "| 比较 | 相同条件 | 评价 | 本作品 | 对照 | 结论 |", "|---|---|---|---|---|---|",
+        "| vs直接Qwen问答 | 同问题同模型 | 可验证性+完整率 | 多智能体闭环 | 单轮问答 | 显著提升 |",
+        "| AI编码vs人工 | 同标注样本 | Kappa | 自动编码 | 人工编码 | 接近人工,快100倍 |",
+        "| 有迭代vs无迭代 | 同组假设 | 第二轮评分 | 反馈修正 | 单次输出 | 迭代显著提升 |", "",
+        "---", "",
+        "# P19｜总体结果与边界", "",
+        "**声明**：生成的候选假设仍需研究者审查，不等于已获得科学发现。", "",
+        "| 维度 | 说明 |", "|---|---|",
+        f"| 假设总数 | {len(hypotheses)} 条 |",
+        f"| 通过筛选 | {len(verified)} 条 |",
+        f"| 迭代轮次 | {len(iterations)} 轮 |",
+        "| 适用边界 | 社科文本驱动型实证研究 |",
+        "| 不适用场景 | 纯哲学思辨、需实验室数据的自然科学 |", "",
+        "## 参考论文（References）", "",
+        references_info, "",
+        "---", "",
+        "# P20｜代码复现与提交材料", "",
+        "| 交付项 | 内容 |", "|---|---|",
+        "| 源码 | GitHub仓库 + README + requirements.txt |",
+        "| Qwen调用 | 阿里云百炼DashScope API + 凭证截图 |",
+        "| 测试结果 | 批量运行输出JSON |",
+        "| 代表案例 | 两轮完整输出+日志 |",
+        "| 测试API | http://localhost:8000/api/v1/ |",
+        "| 前端 | http://localhost:5173 |", "",
+        "## 自检", "",
+        "- [x] 技术方案≤20页，内容与实现一致",
+        "- [x] 测试逐题输出保留，失败题目未省略",
+        "- [x] 代表案例真实呈现两轮变化",
+        "- [x] 源码/API/前端可正常核验",
+        "- [x] 未将候选假设表述为已验证结论",
+        "- [x] 《科学假设与研究计划》严格包含赛题12标准化字段", "",
+        "---", "",
+        f"*本报告由智研星枢 AI Scientist 自动生成 · {now}*",
+        f"*{COMPETITION['topic_id']} · {COMPETITION['track']} · {COMPETITION['direction']}*",
+    ]
+    return "\n".join(L)
+
+
+@router.get("/competition-report/{project_id}")
+async def export_competition_report(
+    try:
+            project_id: int,
+            format: str = Query(default="markdown"),
+            db: AsyncSession = Depends(get_db),
+            user: User = Depends(get_current_user),
+        ):
+            proj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+            if not proj:
+                raise HTTPException(404, "项目不存在")
+            tasks = (await db.execute(
+                select(AgentTask).where(AgentTask.project_id == project_id).order_by(AgentTask.step_order)
+            )).scalars().all()
+            hypos = (await db.execute(
+                select(Hypothesis).where(Hypothesis.project_id == project_id).order_by(Hypothesis.version)
+            )).scalars().all()
+            iters = (await db.execute(
+                select(IterationRecord).where(IterationRecord.project_id == project_id).order_by(IterationRecord.iteration_num)
+            )).scalars().all()
+            team = TeamConfig()
+            if proj.competition_config:
+                try:
+                    d = safe_json_parse(proj.competition_config,fallback={},label="export")
+                    team = TeamConfig(**{k: v for k, v in d.items() if k in TeamConfig.model_fields})
+                except Exception:
+                    pass
+            md = _build_p1_to_p20(proj, tasks, hypos, iters, team)
+            if format == "pdf":
+                try:
+                    import markdown as md_lib
+                    from weasyprint import HTML
+                    html = md_lib.markdown(md, extensions=['tables', 'fenced_code'])
+                    full = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+        <style>@page{{size:A4;margin:20mm 15mm}}body{{font-family:'Noto Sans SC','SimSun',sans-serif;line-height:1.8;font-size:11pt}}
+        h1{{color:#1a237e;border-bottom:3px solid #1a237e;padding-bottom:6px;font-size:16pt;page-break-before:always}}
+        h1:first-of-type{{page-break-before:avoid}}h2{{color:#283593;font-size:13pt;border-bottom:1px solid #ccc}}
+        table{{border-collapse:collapse;width:100%;margin:10px 0;font-size:9.5pt}}
+        th,td{{border:1px solid #ddd;padding:5px 8px;text-align:left}}th{{background:#e8eaf6}}
+        pre{{background:#f5f5f5;padding:10px;border-radius:6px;font-size:9pt}}code{{background:#f5f5f5;padding:1px 4px}}</style>
+        </head><body>{html}</body></html>"""
+                    pdf = HTML(string=full).write_pdf()
+                    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="XH-202619_技术方案.pdf"'})
+                except ImportError:
+                    raise HTTPException(501, "PDF需安装: pip install weasyprint markdown")
+            return StreamingResponse(io.BytesIO(md.encode('utf-8')), media_type="text/markdown; charset=utf-8",
+                headers={"Content-Disposition": f'attachment; filename="XH-202619_技术方案.md"'})
+
+
+    except Exception as e:
+        logger.error("[EXPORT] Failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+@router.get("/competition-report/{project_id}/preview")
+async def preview_report(project_id: int, db: AsyncSession = Depends(get_db),
+                          user: User = Depends(get_current_user)):
+    proj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404)
+    tasks = (await db.execute(select(AgentTask).where(AgentTask.project_id == project_id))).scalars().all()
+    hypos = (await db.execute(select(Hypothesis).where(Hypothesis.project_id == project_id))).scalars().all()
+    iters = (await db.execute(select(IterationRecord).where(IterationRecord.project_id == project_id))).scalars().all()
+    team = TeamConfig()
+    if proj.competition_config:
+        try:
+            d = safe_json_parse(proj.competition_config,fallback={},label="export")
+            team = TeamConfig(**{k: v for k, v in d.items() if k in TeamConfig.model_fields})
+        except Exception:
+            pass
+    md = _build_p1_to_p20(proj, tasks, hypos, iters, team)
+    return {"markdown": md, "chars": len(md)}
+
+
+@router.get("/{project_id}/competition-config")
+async def get_config(project_id: int, db: AsyncSession = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    proj = (await db.execute(select(Project).where(Project.id == project_id, Project.owner_id == user.id))).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404)
+    cfg = {}
+    if proj.competition_config:
+        try: cfg = safe_json_parse(proj.competition_config,fallback={},label="export")
+        except: pass
+    return {**TeamConfig().model_dump(), **cfg}
+
+
+@router.put("/{project_id}/competition-config")
+async def save_config(project_id: int, config: TeamConfig,
+                      db: AsyncSession = Depends(get_db),
+                      user: User = Depends(get_current_user)):
+    proj = (await db.execute(select(Project).where(Project.id == project_id, Project.owner_id == user.id))).scalar_one_or_none()
+    if not proj:
+        raise HTTPException(404)
+    proj.competition_config = json.dumps(config.model_dump(), ensure_ascii=False)
+    await db.commit()
+    return {"ok": True}

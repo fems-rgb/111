@@ -1,0 +1,20 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        @font-face {
+            font-family: 'Noto Sans CJK SC';
+            src: url('{{ font_path }}') format('truetype');
+        }
+        * { font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', 'SimHei', sans-serif; }
+        body { font-size: 12pt; line-height: 1.6; }
+        h1 { font-size: 18pt; color: #1a1a1a; }
+        h2 { font-size: 14pt; color: #333; }
+        pre { background: #f5f5f5; padding: 10pt; border-radius: 5pt; }
+    </style>
+</head>
+<body>
+    {{ content | safe }}
+</body>
+</html>

@@ -1,0 +1,545 @@
+"""智研星枢 - 自动化流水线API（数据库持久化版）"""
+import uuid
+import logging
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete as sa_delete
+from app.database.session import get_db
+from app.database.models import User, Pipeline, PipelineRun
+from app.api.deps import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/automation", tags=["自动化流水线"])
+
+
+# ── 预设模板 ──────────────────────────────────────────────────
+PIPELINE_TEMPLATES = [
+    {
+        "id": "tpl_full_research",
+        "name": "🔬 全流程科研",
+        "description": "从文献综述到论文撰写的完整科研流水线，适合启动一个新课题",
+        "icon": "🔬",
+        "params_schema": [
+            {"key": "topic", "label": "研究主题", "type": "text", "placeholder": "例如：大语言模型在医学诊断中的应用", "required": True},
+            {"key": "scope", "label": "研究范围", "type": "select", "options": [{"value": "narrow", "label": "聚焦细分领域"}, {"value": "broad", "label": "广泛综述"}], "default": "narrow"},
+            {"key": "language", "label": "输出语言", "type": "select", "options": [{"value": "zh", "label": "中文"}, {"value": "en", "label": "英文"}], "default": "zh"},
+        ],
+        "steps": [
+            {"agent_name": "literature", "name": "文献综述", "params": ""},
+            {"agent_name": "hypothesis", "name": "假设生成", "params": ""},
+            {"agent_name": "experiment", "name": "实验设计", "params": ""},
+            {"agent_name": "analysis", "name": "数据分析", "params": ""},
+            {"agent_name": "writing", "name": "论文撰写", "params": ""},
+            {"agent_name": "review", "name": "同行评审", "params": ""},
+        ],
+        "trigger": "manual",
+    },
+    {
+        "id": "tpl_literature_review",
+        "name": "📚 文献综述",
+        "description": "快速完成某个研究方向的文献调研和综述报告",
+        "icon": "📚",
+        "params_schema": [
+            {"key": "topic", "label": "研究方向", "type": "text", "placeholder": "例如：量子计算纠错算法", "required": True},
+            {"key": "depth", "label": "综述深度", "type": "select", "options": [{"value": "quick", "label": "快速概览"}, {"value": "standard", "label": "标准综述"}, {"value": "systematic", "label": "系统性综述"}], "default": "standard"},
+        ],
+        "steps": [
+            {"agent_name": "literature", "name": "文献检索与综述", "params": ""},
+            {"agent_name": "analysis", "name": "趋势分析", "params": ""},
+        ],
+        "trigger": "manual",
+    },
+    {
+        "id": "tpl_hypothesis_experiment",
+        "name": "💡 假设验证",
+        "description": "从假设生成到实验设计的快速验证流程",
+        "icon": "💡",
+        "params_schema": [
+            {"key": "hypothesis", "label": "初始假设", "type": "textarea", "placeholder": "描述你想要验证的假设...", "required": True},
+            {"key": "method", "label": "实验方法偏好", "type": "select", "options": [{"value": "quantitative", "label": "定量实验"}, {"value": "qualitative", "label": "定性分析"}, {"value": "mixed", "label": "混合方法"}], "default": "quantitative"},
+        ],
+        "steps": [
+            {"agent_name": "hypothesis", "name": "假设生成", "params": ""},
+            {"agent_name": "experiment", "name": "实验设计", "params": ""},
+            {"agent_name": "analysis", "name": "结果分析", "params": ""},
+        ],
+        "trigger": "manual",
+    },
+    {
+        "id": "tpl_paper_writing",
+        "name": "✍️ 论文撰写",
+        "description": "基于已有实验数据完成论文撰写和评审",
+        "icon": "✍️",
+        "params_schema": [
+            {"key": "data_summary", "label": "实验数据摘要", "type": "textarea", "placeholder": "简要描述你的实验数据和关键发现...", "required": True},
+            {"key": "target_journal", "label": "目标期刊/会议", "type": "text", "placeholder": "例如：Nature Machine Intelligence"},
+            {"key": "language", "label": "写作语言", "type": "select", "options": [{"value": "zh", "label": "中文"}, {"value": "en", "label": "英文"}], "default": "en"},
+        ],
+        "steps": [
+            {"agent_name": "writing", "name": "论文撰写", "params": ""},
+            {"agent_name": "review", "name": "同行评审", "params": ""},
+        ],
+        "trigger": "manual",
+    },
+    {
+        "id": "tpl_quick_scan",
+        "name": "⚡ 快速扫描",
+        "description": "单步文献快速扫描，了解某个领域的最新进展",
+        "icon": "⚡",
+        "params_schema": [
+            {"key": "topic", "label": "扫描主题", "type": "text", "placeholder": "例如：2024年AI Agent框架进展", "required": True},
+        ],
+        "steps": [
+            {"agent_name": "literature", "name": "快速文献扫描", "params": ""},
+        ],
+        "trigger": "manual",
+    },
+]
+
+
+class PipelineCreate(BaseModel):
+    name: str
+    description: str = ""
+    steps: list[dict] = []
+    trigger: str = "manual"
+    schedule_cron: str = ""
+    template_id: str | None = None
+
+
+class PipelineUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    steps: list[dict] | None = None
+    trigger: str | None = None
+    schedule_cron: str | None = None
+
+
+@router.get("/templates")
+async def list_templates(
+    user: User = Depends(get_current_user),
+):
+    """获取预设流水线模板列表"""
+    return {"templates": PIPELINE_TEMPLATES}
+
+
+class TemplateCreateRequest(BaseModel):
+    params: dict[str, str] = {}
+
+
+@router.post("/from-template/{template_id}")
+async def create_from_template(
+    template_id: str,
+    req: TemplateCreateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """从模板创建流水线（支持参数注入）"""
+    tpl = next((t for t in PIPELINE_TEMPLATES if t["id"] == template_id), None)
+    if not tpl:
+        raise HTTPException(status_code=404, detail="模板不存在")
+
+    schema = tpl.get("params_schema", [])
+    user_params = req.params or {}
+    for field in schema:
+        if field.get("required") and not user_params.get(field["key"], "").strip():
+            raise HTTPException(status_code=422, detail=f"缺少必填参数: {field['label']}")
+
+    import copy
+    steps = copy.deepcopy(tpl["steps"])
+    param_summary = "；".join(
+        f"{f['label']}: {user_params.get(f['key'], '')}"
+        for f in schema if user_params.get(f["key"])
+    )
+    for step in steps:
+        injected = param_summary if param_summary else (step.get("params", "") or "")
+        step["params"] = injected
+        step["research_question"] = injected
+
+    pid = uuid.uuid4().hex[:12]
+    pipeline = Pipeline(
+        id=pid, user_id=user.id, name=tpl["name"], description=tpl["description"],
+        steps=steps, trigger=tpl["trigger"], status="idle", run_count=0,
+    )
+    db.add(pipeline)
+    await db.commit()
+    await db.refresh(pipeline)
+    logger.info(f"[Automation] Pipeline created from template {template_id} with params {list(user_params.keys())}: {pid}")
+    return _pipeline_to_dict(pipeline)
+
+
+@router.get("")
+async def list_pipelines(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取当前用户的流水线列表"""
+    result = await db.execute(
+        select(Pipeline)
+        .where(Pipeline.user_id == user.id)
+        .order_by(Pipeline.created_at.desc())
+    )
+    pipelines = result.scalars().all()
+    return {"pipelines": [_pipeline_to_dict(p) for p in pipelines]}
+
+
+@router.post("")
+async def create_pipeline(
+    req: PipelineCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """创建新流水线"""
+    # 如果指定了模板，用模板数据填充
+    steps = req.steps
+    description = req.description
+    if req.template_id:
+        tpl = next((t for t in PIPELINE_TEMPLATES if t["id"] == req.template_id), None)
+        if tpl:
+            if not steps:
+                steps = tpl["steps"]
+            if not description:
+                description = tpl["description"]
+
+    pid = uuid.uuid4().hex[:12]
+    pipeline = Pipeline(
+        id=pid,
+        user_id=user.id,
+        name=req.name,
+        description=description,
+        steps=steps,
+        trigger=req.trigger,
+        schedule_cron=req.schedule_cron,
+        status="idle",
+        run_count=0,
+    )
+    db.add(pipeline)
+    await db.commit()
+    await db.refresh(pipeline)
+    logger.info(f"[Automation] Pipeline created: {pid} by user {user.id}")
+    return _pipeline_to_dict(pipeline)
+
+
+@router.get("/{pipeline_id}")
+async def get_pipeline(
+    pipeline_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    p = await _get_user_pipeline(pipeline_id, user.id, db)
+    return _pipeline_to_dict(p)
+
+
+@router.put("/{pipeline_id}")
+async def update_pipeline(
+    pipeline_id: str,
+    req: PipelineUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新流水线"""
+    p = await _get_user_pipeline(pipeline_id, user.id, db)
+    if req.name is not None:
+        p.name = req.name
+    if req.description is not None:
+        p.description = req.description
+    if req.steps is not None:
+        p.steps = req.steps
+    if req.trigger is not None:
+        p.trigger = req.trigger
+    if req.schedule_cron is not None:
+        p.schedule_cron = req.schedule_cron
+    await db.commit()
+    await db.refresh(p)
+    logger.info(f"[Automation] Pipeline {pipeline_id} updated, steps={len(p.steps)}")
+    return _pipeline_to_dict(p)
+
+
+@router.delete("/{pipeline_id}")
+async def delete_pipeline(
+    pipeline_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    p = await _get_user_pipeline(pipeline_id, user.id, db)
+    await db.execute(sa_delete(PipelineRun).where(PipelineRun.pipeline_id == p.id))
+    await db.delete(p)
+    await db.commit()
+    return {"ok": True}
+
+
+# ── 全局取消标志（进程内） ─────────────────────────────────────
+import asyncio as _asyncio
+_running_cancels: dict[str, _asyncio.Event] = {}
+
+
+@router.post("/{pipeline_id}/stop")
+async def stop_pipeline(
+    pipeline_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """停止正在运行的流水线"""
+    p = await _get_user_pipeline(pipeline_id, user.id, db)
+    if p.status != "running":
+        raise HTTPException(status_code=409, detail="流水线未在运行中")
+
+    cancel_event = _running_cancels.get(pipeline_id)
+    if cancel_event:
+        cancel_event.set()
+
+    p.status = "idle"
+    await db.commit()
+
+    result = await db.execute(
+        select(PipelineRun)
+        .where(PipelineRun.pipeline_id == pipeline_id, PipelineRun.status == "running")
+        .order_by(PipelineRun.started_at.desc())
+        .limit(1)
+    )
+    run = result.scalar_one_or_none()
+    if run:
+        run.status = "cancelled"
+        run.finished_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    logger.info(f"[Automation] Pipeline {pipeline_id} stop requested")
+    return {"message": "已发送停止信号", "pipeline_id": pipeline_id}
+
+
+@router.post("/{pipeline_id}/run")
+async def run_pipeline(
+    pipeline_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """触发流水线真实异步执行"""
+    import asyncio
+    from app.agents.orchestrator import AGENT_REGISTRY
+
+    p = await _get_user_pipeline(pipeline_id, user.id, db)
+    if p.status == "running":
+        raise HTTPException(status_code=409, detail="流水线正在执行中")
+
+    p.status = "running"
+    p.last_run = datetime.now(timezone.utc)
+    p.run_count += 1
+    await db.commit()
+
+    run_id = uuid.uuid4().hex[:8]
+    run_record = PipelineRun(
+        id=run_id,
+        pipeline_id=p.id,
+        status="running",
+        steps_log=[],
+    )
+    db.add(run_record)
+    await db.commit()
+    await db.refresh(run_record)
+
+    async def _execute():
+        from app.database.session import AsyncSessionLocal
+        cancel_event = _asyncio.Event()
+        _running_cancels[pipeline_id] = cancel_event
+        steps_log = []
+        run = None
+        try:
+            async with AsyncSessionLocal() as session:
+                steps = p.steps or []
+                all_ok = True
+                for i, step in enumerate(steps):
+                    agent_name = step.get("agent_name", "unknown")
+                    t0 = datetime.now(timezone.utc)
+                    step_log = {
+                        "step": i + 1,
+                        "agent": agent_name,
+                        "status": "running",
+                        "started_at": t0.isoformat(),
+                    }
+                    steps_log.append(step_log)
+
+                    # ── 检查取消信号 ──
+                    cancel_event = _running_cancels.get(pipeline_id)
+                    if cancel_event and cancel_event.is_set():
+                        step_log.update({
+                            "status": "cancelled",
+                            "duration_ms": int((datetime.now(timezone.utc) - t0).total_seconds() * 1000),
+                        })
+                        all_ok = False
+                        logger.info(f"[Automation] Pipeline {pipeline_id} cancelled at step {i+1}")
+                        break
+
+                    try:
+                        if agent_name in AGENT_REGISTRY:
+                            agent_cls = AGENT_REGISTRY[agent_name]
+                            agent = agent_cls()
+                            rq = step.get("research_question") or step.get("params") or p.description or p.name or "请基于已有知识完成本步骤的科研任务"
+                            prev_context = "\n\n".join(s.get("result_summary", "") for s in steps_log if s.get("result_summary"))
+                            result = await agent.execute(
+                                research_question=rq,
+                                context=prev_context[:8000],
+                                model=step.get("model", "qwen-plus"),
+                            )
+                            out = result.get("output", "") if isinstance(result, dict) else str(result)
+                            step_log.update({
+                                "status": "completed",
+                                "result_summary": out[:2000],
+                                "tokens": result.get("tokens", 0) if isinstance(result, dict) else 0,
+                                "cost_yuan": round(result.get("cost", 0.0), 4) if isinstance(result, dict) else 0.0,
+                                "duration_ms": int((datetime.now(timezone.utc) - t0).total_seconds() * 1000),
+                            })
+                        else:
+                            await asyncio.sleep(1.5 + i * 0.5)
+                            step_log.update({
+                                "status": "completed",
+                                "result_summary": f"[{agent_name}] 模拟执行完成",
+                                "duration_ms": int((datetime.now(timezone.utc) - t0).total_seconds() * 1000),
+                            })
+                    except Exception as e:
+                        step_log.update({
+                            "status": "failed",
+                            "error": str(e)[:500],
+                            "duration_ms": int((datetime.now(timezone.utc) - t0).total_seconds() * 1000),
+                        })
+                        all_ok = False
+                        logger.error(f"[Automation] Step {i+1} failed: {e}")
+                        run = await session.get(PipelineRun, run_id)
+                        if run:
+                            run.steps_log = steps_log
+                            await session.commit()
+                        break
+
+                    # ── 每步完成后实时写入 DB ──
+                    run = await session.get(PipelineRun, run_id)
+                    if run:
+                        run.steps_log = steps_log
+                        await session.commit()
+
+                # 更新运行记录
+                run = await session.get(PipelineRun, run_id)
+                if run:
+                    run.steps_log = steps_log
+                    run.status = "completed" if all_ok else "failed"
+                    run.finished_at = datetime.now(timezone.utc)
+                    await session.commit()
+
+                # 恢复流水线状态
+                pipe = await session.get(Pipeline, pipeline_id)
+                if pipe:
+                    pipe.status = "idle"
+                    await session.commit()
+
+        except Exception as e:
+            logger.error("[Automation] Pipeline %s run failed: %s", pipeline_id, e, exc_info=True)
+            try:
+                async with AsyncSessionLocal() as session:
+                    run = await session.get(PipelineRun, run_id)
+                    if run:
+                        run.status = "failed"
+                        run.finished_at = datetime.now(timezone.utc)
+                        await session.commit()
+                    pipe = await session.get(Pipeline, pipeline_id)
+                    if pipe:
+                        pipe.status = "idle"
+                        await session.commit()
+            except Exception as inner_e:
+                logger.error("[Automation] Failed to update error state: %s", inner_e)
+
+        finally:
+            _running_cancels.pop(pipeline_id, None)
+            logger.info(
+                f"[Automation] Pipeline {pipeline_id} run {run_id} finished: "
+                f"{run.status if run else 'unknown'}, {len(steps_log)}/{len(p.steps or [])} steps"
+            )
+
+    asyncio.create_task(_execute())
+    return {
+        "message": "流水线已启动",
+        "run_id": run_id,
+        "log": {
+            "run_id": run_id,
+            "started_at": run_record.started_at.isoformat() if run_record.started_at else None,
+            "status": "running",
+            "steps": [],
+        },
+    }
+
+
+@router.get("/{pipeline_id}/logs")
+async def get_pipeline_logs(
+    pipeline_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _get_user_pipeline(pipeline_id, user.id, db)
+    result = await db.execute(
+        select(PipelineRun)
+        .where(PipelineRun.pipeline_id == pipeline_id)
+        .order_by(PipelineRun.started_at.desc())
+    )
+    runs = result.scalars().all()
+    return {"logs": [_run_to_dict(r) for r in runs]}
+
+
+# ── 内部工具函数 ──────────────────────────────────────────────
+
+async def _get_user_pipeline(
+    pipeline_id: str, user_id: int, db: AsyncSession
+) -> Pipeline:
+    result = await db.execute(
+        select(Pipeline).where(
+            Pipeline.id == pipeline_id,
+            Pipeline.user_id == user_id,
+        )
+    )
+    p = result.scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=404, detail="流水线不存在")
+    return p
+
+
+def _pipeline_to_dict(p: Pipeline) -> dict:
+    return {
+        "id": p.id,
+        "user_id": p.user_id,
+        "name": p.name,
+        "description": p.description,
+        "steps": p.steps or [],
+        "trigger": p.trigger,
+        "schedule_cron": p.schedule_cron,
+        "status": p.status,
+        "run_count": p.run_count,
+        "last_run": p.last_run.isoformat() if p.last_run else None,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+def _run_to_dict(r: PipelineRun) -> dict:
+    return {
+        "run_id": r.id,
+        "pipeline_id": r.pipeline_id,
+        "status": r.status,
+        "steps": r.steps_log or [],
+        "started_at": r.started_at.isoformat() if r.started_at else None,
+        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+    }
+
+
+@router.put("/default-template")
+async def save_default_template(steps: list[dict],
+        db: AsyncSession = Depends(get_db),
+        user: User = Depends(get_current_user)):
+    """Agent中心保存全局默认研究流水线模板"""
+    row = (await db.execute(
+        select(Pipeline).where(Pipeline.is_default == True)
+    )).scalars().first()
+    if not row:
+        row = Pipeline(
+            id=uuid.uuid4().hex[:12], user_id=user.id,
+            name="🧩 全局默认研究流水线", is_default=True, status="idle"
+        )
+        db.add(row)
+    row.steps = steps
+    await db.commit()
+    return {"ok": True, "steps": steps}

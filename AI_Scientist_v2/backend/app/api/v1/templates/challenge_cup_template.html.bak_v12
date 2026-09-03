@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 20mm 16mm; }
+  * { font-family: "Microsoft YaHei","SimHei","Noto Sans CJK SC",sans-serif; }
+  body { font-size: 10.5pt; line-height: 1.7; color: #1a1a1a; }
+  h1 { font-size: 16pt; color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; }
+  h2 { font-size: 13pt; color: #283593; border-left: 4px solid #283593; padding-left: 8px; margin-top: 18px; }
+  h3 { font-size: 11pt; color: #3949ab; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+  th, td { border: 1px solid #bbb; padding: 5px 8px; vertical-align: top; }
+  th { background: #e8eaf6; }
+  .meta { font-size: 9pt; color: #555; }
+  .chart { max-width: 100%; margin: 8px 0; border: 1px solid #eee; }
+  .score { color: #c62828; font-weight: bold; }
+</style>
+</head>
+<body>
+<style>
+  table { page-break-inside: auto; border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  th, td { border: 1px solid #bbb; padding: 5px 8px; vertical-align: top; }
+  th { background: #e8eaf6; }
+  .chart { max-width: 100%; margin: 8px 0; border: 1px solid #eee; }
+  .chart-block { page-break-inside: avoid; margin: 14px 0; }
+  .chart-title { font-weight: bold; font-size: 10pt; margin-bottom: 4px; }
+  .score { color: #c62828; font-weight: bold; }
+  .note { font-size: 8.5pt; color: #666; margin: 4px 0; }
+  p { text-align: justify; line-height: 1.6; margin: 6px 0; }
+</style>
+{% set hyp_rows = hypotheses or [] %}
+{% set charts = charts or [] %}
+{% set references = references or [] %}
+{% set datasets = datasets or [] %}
+{% set results_rows = results_rows or [] %}
+{% set model_stats = model_stats or [] %}
+
+  <h1>{{ paper_title }}</h1>
+  <p class="meta">生成时间: {{ generated_at }} | 项目ID: {{ project.id if project else "-" }} | 依据: 挑战杯 XH-202619 赛题规范</p>
+
+  <h2>一、待研究问题 (Problem Statement)</h2>
+  {{ problem_statement_html|safe }}
+
+  <h2>二、解决思路 (Rationale)</h2>
+  {{ rationale_html|safe }}
+
+  <h2>三、必要的技术手段 (Technical Details)</h2>
+  <table>
+    <thead><tr><th>类别</th><th>技术</th><th>用途</th></tr></thead>
+    <tbody>
+    <tr><td>基座模型</td><td>Qwen（千问）开源系列（经阿里云百炼平台 API 调用）</td><td>科学文本理解 / 假设生成</td></tr>
+    <tr><td>多智能体</td><td>知识缺口 / 文献综述 / 假设生成 / 实验规划 / 数据分析 / 学术写作</td><td>科研灵感流水线</td></tr>
+    <tr><td>统计推断</td><td>线性回归、Pearson/Spearman 相关系数显著性检验（p&lt;0.05）、独立样本 t 检验、单因素 ANOVA</td><td>候选假设的统计检验</td></tr>
+    <tr><td>机器学习</td><td>贝叶斯参数估计、MCMC 后验采样（emcee）、高斯过程回归</td><td>CMB 功率谱拟合与参数约束</td></tr>
+    <tr><td>深度学习</td><td>图神经网络 GNN、变分自编码器 VAE、卷积神经网络 CNN</td><td>大尺度结构/宇宙网建模、CMB 图像特征提取</td></tr>
+    <tr><td>符号回归</td><td>PySR</td><td>从观测数据中发现解析关系</td></tr>
+    <tr><td>数值实验</td><td>NumPy / SciPy / Matplotlib</td><td>可验证假设的数值模拟与图表</td></tr>
+    <tr><td>PDF 生成</td><td>WeasyPrint + Jinja2</td><td>赛题规范 PDF 输出</td></tr>
+    </tbody>
+  </table>
+
+  {% if model_stats %}
+  <h3>3.1 模型调用与成本统计（Qwen API 真实调用记录）</h3>
+  <p>下表为各智能体调用 Qwen 大模型的真实记录，数据取自系统成本分析模块（agent_tasks 表）。</p>
+  <table>
+    <thead><tr><th>智能体</th><th>调用模型</th><th>Tokens</th><th>成本（元）</th></tr></thead>
+    <tbody>
+    {% for s in model_stats %}
+    <tr><td>{{ s.agent }}</td><td>{{ s.model }}</td><td>{{ s.tokens }}</td><td>{{ s.cost }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p><b>合计：</b>Tokens {{ total_tokens }}，成本 {{ total_cost }} 元。</p>
+  {% endif %}
+
+  <h2>四、候选假设 (Hypotheses)</h2>
+  {% for h in hyp_rows %}
+  <h3>假设 {{ h.hypo_id }}　可验证性: <span class="score">{{ h.testability_score }}/10</span></h3>
+  <p><b>内容：</b>{{ h.statement }}</p>
+  <p><b>变量：</b>{{ h.variables }}</p>
+  <p><b>建议验证方法：</b>{{ h.suggested_method }}</p>
+  <p><b>证据链：</b>{{ h.evidence_chain }}</p>
+  {% else %}<p>（暂无已生成假设）</p>{% endfor %}
+
+  <h2>五、数据集 (Datasets)</h2>
+  <p>以下数据集均为公开/合规的真实观测数据集。<b>Source</b> 为假设推演依据的历史观测数据，<b>Target</b> 为验证实验所需的拟采集数据特征。</p>
+  {% if datasets %}
+  <table>
+    <thead><tr><th>数据集</th><th>Source（历史数据）</th><th>Target（拟采集特征）</th></tr></thead>
+    <tbody>
+    {% for d in datasets %}
+    <tr><td>{{ d.name }}</td><td>{{ d.source }}</td><td>{{ d.target }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p>（待补充）</p>{% endif %}
+
+  <h2>六、方法论 (Methods)</h2>
+  {{ methods_html|safe }}
+
+  <h2>七、实验设计与结果 (Experiments &amp; Results)</h2>
+  <p><b>基线对比 (Baselines)：</b>{{ baselines }}</p>
+  <p><b>评估指标 (Metrics)：</b>{{ metrics }}</p>
+  <h3>7.1 实验结果明细</h3>
+  <p>下表为将第四节候选假设操作化为可统计检验命题后的分析结果（编号 A1–A4 为分析智能体输出序号，"对应假设"列标注其与第四节候选假设的映射关系）。</p>
+  {% if results_rows %}
+  <table>
+    <thead><tr><th>编号</th><th>对应假设</th><th>假设陈述</th><th>变量</th><th>可验证性</th><th>可证伪性</th><th>建议方法</th><th>反向证据</th></tr></thead>
+    <tbody>
+    {% for r in results_rows %}
+    <tr><td>{{ r.rid }}</td><td>{{ r.mapping }}</td><td>{{ r.statement }}</td><td>{{ r.variables }}</td><td>{{ r.testability_score }}</td><td>{{ r.falsifiability_score }}</td><td>{{ r.suggested_method }}</td><td>{{ r.counter_evidence }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">注：表中"可验证性/可证伪性"评分为数据分析智能体（analysis agent）自动评定的原始输出值，未经人工调整。</p>
+  {% else %}<p>（暂无执行结果）</p>{% endif %}
+  <h3>7.2 实验图表</h3>
+  {% for ch in charts %}
+  <div class="chart-block">
+    <div class="chart-title">图表 {{ loop.index }}：{{ ch.filename or '实验图表' }}</div>
+    <img class="chart" src="data:image/png;base64,{{ ch.b64 }}" alt="实验图表">
+  </div>
+  {% else %}<p>（暂无图表）</p>{% endfor %}
+
+  <h2>八、参考论文 (References)</h2>
+  {% if references %}
+  <ol>{% for r in references %}<li>{{ r }}</li>{% endfor %}</ol>
+  {% else %}<p>（暂无参考文献，需人工核验后补充）</p>{% endif %}
+
+  <h2>九、论文信息 (Paper)</h2>
+  <p><b>标题：</b>{{ paper_title }}</p>
+  <p><b>【背景】</b>{{ abstract_bg_html|safe }}</p>
+  <p><b>【方法】</b>{{ abstract_method }}</p>
+  <p><b>【预期结果】</b>{{ abstract_result }}</p>
+</body>
+</html>

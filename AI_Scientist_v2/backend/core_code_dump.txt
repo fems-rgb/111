@@ -1,0 +1,290 @@
+﻿
+========== Backend Main (D:\AI_Scientist\AI_Scientist\backend\app\main.py) ==========
+"""鏅虹爺鏄熸灑 v3.0 - FastAPI涓诲叆鍙?""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
+from app.database.init_db import init_database
+from app.observability.logger import setup_logging
+from app.core.exceptions import global_exception_handler, AppException
+from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    setup_logging(settings.DEBUG)
+    await init_database()
+    yield
+
+
+app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION, lifespan=lifespan,
+              description="鍩轰簬鍥戒骇寮€婧愬ぇ妯″瀷鐨勫鏅鸿兘浣撲汉鏂囩ぞ绉戠鐮斿钩鍙?)
+
+app.add_middleware(CORSMiddleware, allow_origins=settings.allowed_origins_list,
+                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+app.add_exception_handler(Exception, global_exception_handler)
+
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(projects.router, prefix="/api/v1")
+app.include_router(agents.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
+app.include_router(observability.router, prefix="/api/v1")
+app.include_router(admin.router, prefix="/api/v1")
+app.include_router(stream.router, prefix="/api/v1")
+app.include_router(multimodal.router, prefix="/api/v1")
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "version": settings.APP_VERSION, "name": settings.APP_NAME}
+
+========== Backend App (NOT FOUND: ) ==========
+
+========== Backend Logic: code_exec.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\tools\code_exec.py) ==========
+"""鏅虹爺鏄熸灑 - 瀹夊叏浠ｇ爜鎵ц娌欑"""
+import asyncio
+import tempfile
+import os
+import logging
+from app.observability.tracer import Tracer
+
+logger = logging.getLogger(__name__)
+FORBIDDEN = ["os.system", "subprocess", "shutil.rmtree", "__import__", "eval(", "exec("]
+FORBIDDEN_MODS = ["socket", "ctypes", "multiprocessing"]
+
+
+async def execute_python(code: str, timeout: int = 30, project_id: int = None) -> dict:
+    span = Tracer.create_span("tool_call", "浠ｇ爜鎵ц", project_id=project_id)
+    span.set_input({"code": code[:2000]})
+    for f in FORBIDDEN:
+        if f in code:
+            span.set_error(f"瀹夊叏鎷︽埅: {f}")
+            Tracer.finish_span(span)
+            return {"success": False, "output": "", "error": f"绂佹浣跨敤 {f}"}
+    for m in FORBIDDEN_MODS:
+        if f"import {m}" in code or f"from {m}" in code:
+            span.set_error(f"瀹夊叏鎷︽埅: {m}")
+            Tracer.finish_span(span)
+            return {"success": False, "output": "", "error": f"绂佹瀵煎叆 {m}"}
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+            f.write(code)
+            tmp = f.name
+        proc = await asyncio.create_subprocess_exec("python", tmp, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            result = {"success": proc.returncode == 0, "output": stdout.decode('utf-8', errors='replace')[:5000],
+                      "error": stderr.decode('utf-8', errors='replace')[:2000]}
+        except asyncio.TimeoutError:
+            proc.kill()
+            result = {"success": False, "output": "", "error": f"瓒呮椂({timeout}s)"}
+        os.unlink(tmp)
+        span.set_output(result)
+        Tracer.finish_span(span)
+        return result
+    except Exception as e:
+        span.set_error(str(e))
+        Tracer.finish_span(span)
+        return {"success": False, "output": "", "error": str(e)}
+
+========== Backend Logic: file_tools.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\tools\file_tools.py) ==========
+"""鏅虹爺鏄熸灑 - 鏂囦欢璇诲啓宸ュ叿"""
+import aiofiles
+import os
+import logging
+from app.config import settings
+from app.security.sanitizer import sanitize_filename
+from app.observability.tracer import Tracer
+
+logger = logging.getLogger(__name__)
+
+
+async def save_output(project_id: int, filename: str, content: str) -> dict:
+    span = Tracer.create_span("tool_call", "鏂囦欢淇濆瓨", project_id=project_id)
+    safe = sanitize_filename(filename)
+    d = os.path.join(settings.UPLOAD_DIR, f"project_{project_id}")
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, safe)
+    try:
+        async with aiofiles.open(path, 'w', encoding='utf-8') as f:
+            await f.write(content)
+        result = {"success": True, "path": path, "size": len(content)}
+        span.set_output(result)
+        Tracer.finish_span(span)
+        return result
+    except Exception as e:
+        span.set_error(str(e))
+        Tracer.finish_span(span)
+        return {"success": False, "error": str(e)}
+
+
+async def read_output(project_id: int, filename: str) -> dict:
+    safe = sanitize_filename(filename)
+    path = os.path.join(settings.UPLOAD_DIR, f"project_{project_id}", safe)
+    if not os.path.exists(path):
+        return {"success": False, "error": "鏂囦欢涓嶅瓨鍦?}
+    try:
+        async with aiofiles.open(path, 'r', encoding='utf-8') as f:
+            content = await f.read()
+        return {"success": True, "content": content}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+========== Backend Logic: search.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\tools\search.py) ==========
+"""鏅虹爺鏄熸灑 - 瀛︽湳鎼滅储宸ュ叿"""
+import httpx
+import logging
+from app.observability.tracer import Tracer
+
+logger = logging.getLogger(__name__)
+
+
+async def search_papers(query: str, limit: int = 10, project_id: int = None) -> dict:
+    span = Tracer.create_span("tool_call", "瀛︽湳鎼滅储", project_id=project_id)
+    span.set_input({"query": query, "limit": limit})
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get("https://api.semanticscholar.org/graph/v1/paper/search",
+                params={"query": query, "limit": limit, "fields": "title,authors,year,abstract,citationCount,url"})
+            resp.raise_for_status()
+            data = resp.json()
+        papers = [{"title": p.get("title",""), "authors": [a.get("name","") for a in p.get("authors",[])[:5]],
+                   "year": p.get("year"), "abstract": (p.get("abstract","") or "")[:500],
+                   "citations": p.get("citationCount",0)} for p in data.get("data",[])]
+        span.set_output({"count": len(papers)})
+        Tracer.finish_span(span)
+        return {"papers": papers, "total": len(papers)}
+    except Exception as e:
+        span.set_error(str(e))
+        Tracer.finish_span(span)
+        return {"papers": [], "total": 0, "error": str(e)}
+
+========== Backend Logic: __init__.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\tools\__init__.py) ==========
+from app.agents.tools.search import search_papers
+from app.agents.tools.code_exec import execute_python
+from app.agents.tools.file_tools import save_output, read_output
+
+========== Backend Logic: analysis.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\analysis.py) ==========
+"""鏅虹爺鏄熸灑 - 鏁版嵁鍒嗘瀽Agent"""
+from app.agents.base import BaseAgent
+
+
+class AnalysisAgent(BaseAgent):
+    name = "analysis"
+    display_name = "馃搳 鏁版嵁鍒嗘瀽Agent"
+    description = "鍒跺畾鏁版嵁鍒嗘瀽鏂规骞舵彁渚涘彲杩愯鐨勪唬鐮佹鏋?
+    system_prompt = """浣犳槸鏁版嵁绉戝瀹躲€傚埗瀹氳缁嗙殑鏁版嵁鍒嗘瀽鎵ц璁″垝锛屽寘鍚細
+1. 鏁版嵁鍑嗗锛堟竻娲楄鍒欍€佸彉閲忔瀯寤恒€佹弿杩版€х粺璁★級
+2. 涓诲洖褰掑垎鏋愪唬鐮侊紙pandas/statsmodels锛?3. 绋冲仴鎬ф楠屼唬鐮侊紙鈮?绉嶏級
+4. 鍙鍖栨柟妗堜唬鐮?5. 缁撴灉瑙ｈ妯℃澘
+Python浠ｇ爜锛屽彲杩愯锛屾湁璇︾粏娉ㄩ噴銆?""
+
+    def build_prompt(self, research_question: str, context: str, **kwargs) -> str:
+        return f"鍩轰簬鐮旂┒璁捐锛屽埗瀹氭暟鎹垎鏋愭墽琛岃鍒掞細\n\n## 鐮旂┒闂\n{research_question}\n\n## 鐮旂┒璁捐\n{context[:5000]}\n\n璇锋彁渚涘畬鏁碢ython鍒嗘瀽浠ｇ爜銆?
+
+========== Backend Logic: base.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\base.py) ==========
+"""鏅虹爺鏄熸灑 - Agent鍩虹被"""
+import asyncio
+import logging
+from abc import ABC, abstractmethod
+from app.agents.qwen_client import call_qwen
+from app.observability.tracer import Tracer
+from app.security.prompt_guard import prompt_guard
+
+logger = logging.getLogger(__name__)
+
+
+class BaseAgent(ABC):
+    name: str = "base"
+    display_name: str = "鍩虹Agent"
+    description: str = ""
+    system_prompt: str = ""
+    requires_review: bool = False
+    max_retries: int = 3
+    timeout_seconds: int = 120
+
+    @abstractmethod
+    def build_prompt(self, research_question: str, context: str, **kwargs) -> str:
+        pass
+
+    async def execute(self, research_question: str, context: str = "",
+                      model: str = None, project_id: int = None, task_id: int = None, **kwargs) -> dict:
+        span = Tracer.create_span("agent_step", self.display_name, project_id=project_id, task_id=task_id)
+        is_safe, reason = prompt_guard.check(research_question)
+        if not is_safe:
+            span.set_error(f"瀹夊叏鎷︽埅: {reason}")
+            Tracer.finish_span(span)
+            raise ValueError(f"杈撳叆瀹夊叏妫€娴嬫湭閫氳繃: {reason}")
+
+        user_prompt = prompt_guard.sanitize_for_llm(self.build_prompt(research_question, context, **kwargs))
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                result = await asyncio.wait_for(
+                    call_qwen(self.system_prompt, user_prompt, model=model, project_id=project_id, task_id=task_id),
+                    timeout=self.timeout_seconds
+                )
+                span.metadata["attempt"] = attempt + 1
+                span.metadata["requires_review"] = self.requires_review
+                Tracer.finish_span(span)
+                return {
+                    "output": result["content"],
+                    "tokens": result["tokens"]["input"] + result["tokens"]["output"],
+                    "cost": result["cost"], "model": result["model"],
+                    "requires_review": self.requires_review
+                }
+            except asyncio.TimeoutError:
+                last_error = f"瓒呮椂({self.timeout_seconds}s) 绗瑊attempt+1}娆?
+                logger.warning(f"{self.display_name} {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"{self.display_name} 绗瑊attempt+1}娆″け璐? {e}")
+            if attempt < self.max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+
+        span.set_error(f"鍏ㄩ儴{self.max_retries}娆￠噸璇曞け璐? {last_error}")
+        Tracer.finish_span(span)
+        raise RuntimeError(f"{self.display_name}鎵ц澶辫触: {last_error}")
+
+========== Backend Logic: design.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\design.py) ==========
+"""鏅虹爺鏄熸灑 - 鐮旂┒璁捐Agent"""
+from app.agents.base import BaseAgent
+
+
+class DesignAgent(BaseAgent):
+    name = "design"
+    display_name = "馃搻 鐮旂┒璁捐Agent"
+    description = "灏嗙爺绌堕棶棰樿浆鍖栦负鍙楠岀殑瀹炶瘉鐮旂┒鏂规"
+    requires_review = True
+    system_prompt = """浣犳槸瀹炶瘉鐮旂┒鏂规硶璁轰笓瀹躲€傚皢鐮旂┒闂杞寲涓轰弗璋ㄧ殑鐮旂┒璁捐锛屽寘鍚細
+1. 鐮旂┒鍋囪锛?-5涓紝鍏蜂綋鍙搷浣滃彲璇佷吉锛?2. 鐞嗚妗嗘灦涓庢蹇垫ā鍨?3. 鏁版嵁鏉ユ簮涓庢牱鏈?4. 鍙橀噺瀹氫箟琛?5. 璁￠噺妯″瀷锛堟暟瀛﹁〃杈惧紡锛?6. 璇嗗埆绛栫暐
+7. 绋冲仴鎬ф楠屾柟妗堬紙鈮?绉嶏級
+Markdown鏍煎紡銆?""
+
+    def build_prompt(self, research_question: str, context: str, **kwargs) -> str:
+        return f"鍩轰簬鐮旂┒闂鍜屾枃鐚患杩帮紝璁捐瀹炶瘉鐮旂┒鏂规锛歕n\n## 鐮旂┒闂\n{research_question}\n\n## 鏂囩尞缁艰堪\n{context[:5000]}\n\n璇疯璁″畬鏁寸爺绌舵柟妗堛€?
+
+========== Backend Logic: literature.py (D:\AI_Scientist\AI_Scientist\backend\app\agents\literature.py) ==========
+"""鏅虹爺鏄熸灑 - 鏂囩尞缁艰堪Agent"""
+from app.agents.base import BaseAgent
+
+
+class LiteratureAgent(BaseAgent):
+    name = "literature"
+    display_name = "馃摉 鏂囩尞缁艰堪Agent"
+    description = "绯荤粺姊崇悊鐮旂┒闂鐨勬枃鐚剦缁溿€佺悊璁哄熀纭€鍜岀爺绌剁┖鐧?
+    requires_review = True
+    system_prompt = """浣犳槸璧勬繁浜烘枃绀剧瀛﹁€呫€傚鐮旂┒闂杩涜绯荤粺鏂囩尞缁艰堪锛岃緭鍑哄寘鍚細
+1. 鏍稿績姒傚康鐣屽畾锛堜腑鑻辨枃瀵圭収锛?2. 鐞嗚鍩虹锛堣嚦灏?涓鏋讹紝鍚唬琛ㄥ鑰呭拰鏍稿績瑙傜偣锛?3. 鐮旂┒鑴夌粶锛堟寜鏃堕棿绾挎⒊鐞嗭級
+4. 鐮旂┒绌虹櫧鍒嗘瀽
+5. 鏈爺绌跺鏈畾浣?Markdown鏍煎紡锛屾瘡閮ㄥ垎300-500瀛椼€?""
+
+    def build_prompt(self, research_question: str, context: str, **kwargs) -> str:
+        p = f"璇峰浠ヤ笅鐮旂┒闂杩涜绯荤粺鏂囩尞缁艰堪锛歕n\n## 鐮旂┒闂\n{research_question}"
+        p += "\n\n## 杈撳嚭瑕佹眰\n1.鏍稿績姒傚康鐣屽畾 2.鐞嗚鍩虹(鈮?涓? 3.鐮旂┒鑴夌粶 4.鐮旂┒绌虹櫧 5.鏈爺绌跺畾浣?
+        if context:
+            p += f"\n\n## 宸叉湁涓婁笅鏂嘰n{context[:3000]}"
+        return p

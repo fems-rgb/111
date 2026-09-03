@@ -1,0 +1,44 @@
+import client from '../client'
+
+export interface ExperimentStatus {
+  run_id: number; status: string; title: string; output_text: string
+  charts: Array<{path: string; filename: string}>; video_path: string | null
+  data_table: {columns: string[]; rows: string[][]} | null
+  error_message: string; duration_ms: number
+  created_at?: string; completed_at?: string
+}
+
+export interface TemplateInfo {
+  id: number; name: string; description: string; category: string; is_builtin: boolean
+}
+
+export function runExperiment(data: {code: string; title?: string; project_id?: number; question_task_id?: number; generate_video?: boolean; timeout?: number}) {
+  return client.post<{run_id: number; status: string}>('/experiment-lab/run', data)
+}
+export function getExperimentStatus(id: number) {
+  return client.get<ExperimentStatus>(`/experiment-lab/status/${id}`)
+}
+export function getExperimentHistory(params: {page?: number; page_size?: number; project_id?: number}) {
+  return client.get<{total: number; items: any[]}>('/experiment-lab/history', {params})
+}
+export function getExperimentTemplates() {
+  return client.get<{templates: TemplateInfo[]}>('/experiment-lab/templates')
+}
+export function getTemplateCode(id: number) {
+  return client.get<{id: number; name: string; code: string; description: string; category: string}>(`/experiment-lab/templates/${id}`)
+}
+export function createTemplate(data: {name: string; description: string; code: string; category?: string}) {
+  return client.post<{id: number; name: string; message: string}>('/experiment-lab/templates', data)
+}
+export function updateTemplate(id: number, data: {name?: string; description?: string; code?: string; category?: string}) {
+  return client.put<{id: number; message: string}>(`/experiment-lab/templates/${id}`, data)
+}
+export function deleteTemplate(id: number) {
+  return client.delete<{message: string}>(`/experiment-lab/templates/${id}`)
+}
+export function getChartUrl(runId: number, filename: string) {
+  return `/api/v1/experiment-lab/chart/${runId}/${filename}`
+}
+export function getVideoUrl(runId: number) {
+  return `/api/v1/experiment-lab/video/${runId}`
+}

@@ -1,0 +1,92 @@
+﻿import { defineStore } from 'pinia'
+import { ref, watch } from 'vue'
+import client from '@/api/client'
+
+export const useAppStore = defineStore('app', () => {
+  const sidebarCollapsed = ref(false)
+  const darkMode = ref(localStorage.getItem('ai_dark_mode') === 'true')
+  const mode = ref<'quick' | 'expert'>((localStorage.getItem('ai_mode') as any) || 'quick')
+  const currentWorkspace = ref(localStorage.getItem('ai_workspace') || 'personal')
+// [stageA] 题库视图持久化状态（Pinia 单例，跨路由切换不丢失）
+const questionsView = ref({
+  activeTab: localStorage.getItem('ai_qbank_tab') || 'questions',
+  detailData: (() => { try { return JSON.parse(localStorage.getItem('ai_qbank_detail') || 'null') } catch (e) { return null } })(),
+  showGenDialog: false,
+  genTarget: null,
+  genMode: localStorage.getItem('ai_qbank_genmode') || 'pipeline',
+})
+  const toastMsg = ref('')
+  const toastType = ref<'success' | 'error' | 'info' | 'warning'>('info')
+
+  // ✅ 暗色模式：立即同步到 DOM
+  function applyDarkMode(val: boolean) {
+    if (val) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }
+  applyDarkMode(darkMode.value)
+
+  watch(darkMode, (val) => {
+    localStorage.setItem('ai_dark_mode', String(val))
+    applyDarkMode(val)
+  })
+
+  watch(mode, (val) => {
+    localStorage.setItem('ai_mode', val)
+  })
+
+  watch(currentWorkspace, (val) => {
+    localStorage.setItem('ai_workspace', val)
+  })
+  // [stageA] 题库视图状态持久化到 localStorage（跨刷新）
+  watch(() => questionsView.value.activeTab, (val) => {
+    localStorage.setItem('ai_qbank_tab', val)
+  })
+  watch(() => questionsView.value.detailData, (val) => {
+    try { localStorage.setItem('ai_qbank_detail', JSON.stringify(val)) } catch (e) {}
+  }, { deep: true })
+  watch(() => questionsView.value.genMode, (val) => {
+    localStorage.setItem('ai_qbank_genmode', val)
+  })
+
+  function toggleSidebar() { sidebarCollapsed.value = !sidebarCollapsed.value }
+  function toggleDarkMode() { darkMode.value = !darkMode.value }
+  function setMode(m: 'quick' | 'expert') { mode.value = m }
+  function setWorkspace(ws: string) { currentWorkspace.value = ws }
+
+  function showToast(msg: string, type: 'success' | 'error' | 'info' | 'warning' = 'info') {
+    toastMsg.value = msg
+    toastType.value = type
+    setTimeout(() => { toastMsg.value = '' }, 3000)
+  }
+
+  const toasts = ref<Array<{id:number;message:string;type:'success'|'error'|'info'|'warning'}>>([])
+  let toastId = 0
+  function showToastMulti(msg: string, type: 'success'|'error'|'info'|'warning' = 'info') {
+    const id = ++toastId
+    toasts.value.push({ id, message: msg, type })
+    setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id) }, 3000)
+  }
+
+  // ===== 生成进度状态（由 QuestionsView 的 activeTask 驱动）=====
+  // genMinimized 用于控制弹窗展开/收起
+  const genMinimized = ref(false)
+
+  function closeGenProgress() {
+    genMinimized.value = false
+  }
+
+  return {
+    sidebarCollapsed, darkMode, mode, currentWorkspace,
+    questionsView,
+    toastMsg, toastType, toasts,
+    toggleSidebar, toggleDarkMode, setMode, setWorkspace,
+    showToast, showToastMulti,
+    // 全局生成进度（仅保留 genMinimized）
+    genMinimized,
+    closeGenProgress
+  }
+})
+

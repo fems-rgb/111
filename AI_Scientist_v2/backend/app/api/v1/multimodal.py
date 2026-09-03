@@ -1,0 +1,430 @@
+"""智研星枢 - 多模态图片分析（Qwen-VL）"""
+import base64
+import os
+import uuid
+import logging
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database.session import get_db
+from app.database.models import User
+from app.config import settings
+from app.agents.qwen_client import call_qwen
+from app.security.sanitizer import sanitize_filename
+from app.security.prompt_guard import prompt_guard
+from app.api.deps import get_current_user
+from app.observability.tracer import Tracer
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/multimodal", tags=["多模态"])
+
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_SIZE = 10 * 1024 * 1024  # 10MB
+
+VL_SYSTEM_PROMPT = """你是智研星枢的多模态学术分析助手。用户上传了一张与研究相关的图片。
+请从学术研究角度分析这张图片，包括：
+1. 图片内容描述（客观、详细）
+2. 与人文社科研究的关联分析
+3. 可能的研究启示或数据价值
+4. 建议的研究方法
+用中文回答，学术严谨。"""
+
+
+@router.post("/analyze-image")
+async def analyze_image(
+    file: UploadFile = File(...),
+    question: str = Form(default="请分析这张图片的学术研究价值"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # 验证文件类型和大小
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的图片格式，仅支持: {', '.join(ALLOWED_TYPES)}")
+
+    content = await file.read()
+    if len(content) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail=f"图片过大，最大允许10MB")
+
+    # 安全检查
+    is_safe, reason = prompt_guard.check(question)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=f"安全检测未通过: {reason}")
+
+    # 保存图片
+    safe_name = sanitize_filename(file.filename or "upload.jpg")
+    ext = os.path.splitext(safe_name)[1] or ".jpg"
+    saved_name = f"{uuid.uuid4().hex[:12]}{ext}"
+    save_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, saved_name)
+
+    with open(save_path, "wb") as f:
+        f.write(content)
+    extracted = _extract_text(save_path, ext)
+
+    # ✅ 文件内容安全扫描
+    from app.security.sanitizer import scan_file_content
+    is_content_safe, scan_reason = scan_file_content(extracted, safe_name)
+    if not is_content_safe:
+        os.remove(save_path)
+        raise HTTPException(status_code=400, detail=f"文件安全扫描未通过: {scan_reason}")
+
+
+
+    # Base64编码用于API调用
+    b64 = base64.b64encode(content).decode("utf-8")
+    mime = file.content_type or "image/jpeg"
+
+    # 调用Qwen-VL
+    span = Tracer.create_span("llm_call", "qwen-vl:analyze", project_id=None)
+    try:
+        result = await call_qwen_vl(VL_SYSTEM_PROMPT, question, b64, mime)
+        span.set_output({"content": result["content"][:2000]})
+        Tracer.finish_span(span)
+
+        return {
+            "analysis": result["content"],
+            "image_url": f"/api/v1/multimodal/image/{saved_name}?user_id={user.id}",
+            "filename": safe_name,
+            "tokens": result["tokens"],
+            "model": result["model"],
+            "cost": result["cost"]
+        }
+    except Exception as e:
+        span.set_error(str(e))
+        Tracer.finish_span(span)
+        raise HTTPException(status_code=500, detail=f"图片分析失败: {str(e)}")
+
+
+@router.get("/image/{filename}")
+async def serve_image(filename: str, user_id: int, user: User = Depends(get_current_user)):
+    """提供已上传图片的访问"""
+    if user.id != user_id and user.role.value != "admin":
+        raise HTTPException(status_code=403, detail="无权访问")
+    path = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}", sanitize_filename(filename))
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="图片不存在")
+    from fastapi.responses import FileResponse
+    return FileResponse(path)
+
+
+async def call_qwen_vl(system_prompt: str, user_text: str, image_b64: str, mime: str) -> dict:
+    """调用Qwen-VL多模态API"""
+    import httpx
+    from app.config import settings
+    from app.observability.cost_tracker import cost_tracker
+
+    API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    model = settings.QWEN_VISION_MODEL or "qwen-vl-max"
+
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_b64}"}},
+                {"type": "text", "text": user_text}
+            ]}
+        ],
+        "max_tokens": 2048
+    }
+
+    async with httpx.AsyncClient(timeout=120.0, headers={"Accept-Encoding": "identity"}) as client:
+        resp = await client.post(API_URL, json=payload,
+            headers={"Authorization": f"Bearer {settings.QWEN_API_KEY}", "Content-Type": "application/json"})
+        resp.raise_for_status()
+        data = resp.json()
+
+    content = data["choices"][0]["message"]["content"]
+    usage = data.get("usage", {})
+    inp = usage.get("prompt_tokens", 1000)
+    out = usage.get("completion_tokens", 500)
+    cost = cost_tracker.calculate_cost(model, inp, out)
+
+    return {"content": content, "tokens": {"input": inp, "output": out}, "model": model, "cost": cost}
+
+# === 新增：科研文件上传与解析 ===
+RESEARCH_FILE_EXTS = {".pdf", ".csv", ".txt", ".md", ".py", ".json", ".xlsx", ".xls", ".docx"}
+MAX_RESEARCH_SIZE = 50 * 1024 * 1024  # 50MB
+
+@router.post("/upload-research-file")
+async def upload_research_file(
+    file: UploadFile = File(...),
+    description: str = Form(default=""),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """上传科研文件，含安全检查与权限校验"""
+    import os
+    from app.security.prompt_guard import validate_research_prompt
+
+    # 文件名安全检查
+    safe_name = os.path.basename(file.filename or "")
+    if ".." in safe_name or "/" in safe_name or "\\" in safe_name:
+        raise HTTPException(status_code=400, detail="非法文件名")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in RESEARCH_FILE_EXTS:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}")
+
+    content = await file.read()
+    if len(content) > MAX_RESEARCH_SIZE:
+        raise HTTPException(status_code=400, detail="文件过大，最大允许50MB")
+
+    is_safe, reason = prompt_guard.check(description)
+    if not is_safe:
+        raise HTTPException(status_code=400, detail=f"安全检测未通过: {reason}")
+
+    safe_name = sanitize_filename(file.filename or "research_file")
+    saved_name = f"{uuid.uuid4().hex[:12]}{ext}"
+    save_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}", "research")
+    os.makedirs(save_dir, exist_ok=True)
+    save_path = os.path.join(save_dir, saved_name)
+    with open(save_path, "wb") as f:
+        f.write(content)
+    extracted = _extract_text(save_path, ext)
+
+    # ✅ 文件内容安全扫描
+    from app.security.sanitizer import scan_file_content
+    is_content_safe, scan_reason = scan_file_content(extracted, safe_name)
+    if not is_content_safe:
+        os.remove(save_path)
+        raise HTTPException(status_code=400, detail=f"文件安全扫描未通过: {scan_reason}")
+
+    from app.services.file_parser import parse_research_file
+    parsed = await parse_research_file(save_path, file.content_type or "", description)
+
+    return {
+        "file_id": saved_name,
+        "filename": safe_name,
+        "summary": parsed["summary"],
+        "structured_data": parsed.get("data"),
+        "parse_status": parsed["status"],
+        "tokens_used": parsed.get("tokens", 0)
+    }
+
+def _extract_text(save_path: str, ext: str) -> str:
+    """根据文件类型提取文本内容"""
+    if ext in (".txt", ".md", ".csv", ".json", ".py"):
+        with open(save_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()[:50000]
+    elif ext in (".xlsx", ".xls"):
+        import openpyxl
+        wb = openpyxl.load_workbook(save_path, read_only=True, data_only=True)
+        rows = []
+        for ws in wb.worksheets[:3]:
+            for row in ws.iter_rows(max_row=200, values_only=True):
+                rows.append("\t".join(str(c) if c is not None else "" for c in row))
+        return "\n".join(rows)[:50000]
+    elif ext == ".docx":
+        from docx import Document
+        doc = Document(save_path)
+        return "\n".join(p.text for p in doc.paragraphs)[:50000]
+    elif ext == ".pdf":
+        import fitz
+        text = []
+        with fitz.open(save_path) as pdf:
+            for page in pdf[:20]:
+                text.append(page.get_text())
+        return "\n".join(text)[:50000]
+    return "[无法提取文本内容]"
+
+
+# ══════════════════════════════════════
+#  断点续传：分片上传 API
+# ══════════════════════════════════════
+
+import hashlib
+
+CHUNK_SIZE = 2 * 1024 * 1024  # 2MB per chunk
+
+@router.post("/upload/init")
+async def init_chunked_upload(
+    filename: str = Form(...),
+    total_size: int = Form(...),
+    content_type: str = Form(default="application/octet-stream"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """初始化分片上传，返回 upload_id"""
+    from app.database.models import UploadChunk
+    
+    safe_name = sanitize_filename(filename)
+    ext = os.path.splitext(safe_name)[1].lower()
+    
+    allowed_exts = {".pdf", ".csv", ".txt", ".md", ".py", ".json", ".xlsx", ".xls", 
+                    ".docx", ".doc", ".pptx", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}")
+    
+    if total_size > MAX_RESEARCH_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件过大，最大允许{MAX_RESEARCH_SIZE // (1024*1024)}MB")
+    
+    upload_id = uuid.uuid4().hex
+    save_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}", "chunks", upload_id)
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 写入元信息
+    meta = {"filename": safe_name, "total_size": total_size, "content_type": content_type}
+    with open(os.path.join(save_dir, "_meta.json"), "w", encoding="utf-8") as f:
+        import json
+        json.dump(meta, f)
+    
+    logger.info(f"[ChunkUpload] Init: upload_id={upload_id}, file={safe_name}, size={total_size}")
+    return {"upload_id": upload_id, "chunk_size": CHUNK_SIZE, "filename": safe_name}
+
+
+@router.post("/upload/chunk")
+async def upload_chunk(
+    upload_id: str = Form(...),
+    chunk_index: int = Form(...),
+    chunk_hash: str = Form(...),
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """上传单个分片，支持校验和去重"""
+    from app.database.models import UploadChunk
+    
+    chunk_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}", "chunks", upload_id)
+    meta_path = os.path.join(chunk_dir, "_meta.json")
+    
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="上传会话不存在或已过期")
+    
+    content = await file.read()
+    actual_hash = hashlib.sha256(content).hexdigest()
+    
+    if actual_hash != chunk_hash:
+        raise HTTPException(status_code=400, detail=f"分片校验失败: 期望{chunk_hash[:16]}..., 实际{actual_hash[:16]}...")
+    
+    chunk_path = os.path.join(chunk_dir, f"chunk_{chunk_index:06d}")
+    with open(chunk_path, "wb") as f:
+        f.write(content)
+    
+    # 记录到数据库
+    record = UploadChunk(
+        upload_id=upload_id, user_id=user.id,
+        filename=os.path.basename(chunk_path),
+        total_size=0, chunk_size=len(content),
+        chunk_index=chunk_index, chunk_hash=actual_hash,
+        saved_path=chunk_path
+    )
+    db.add(record)
+    await db.commit()
+    
+    logger.debug(f"[ChunkUpload] Chunk {chunk_index} saved for {upload_id}")
+    return {"chunk_index": chunk_index, "received": True}
+
+
+@router.post("/upload/complete")
+async def complete_chunked_upload(
+    upload_id: str = Form(...),
+    description: str = Form(default=""),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """合并所有分片，完成上传并解析文件"""
+    from app.database.models import UploadChunk
+    import json as _json
+    
+    chunk_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}", "chunks", upload_id)
+    meta_path = os.path.join(chunk_dir, "_meta.json")
+    
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=404, detail="上传会话不存在")
+    
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = _json.load(f)
+    
+    # 收集并按序号排序所有分片
+    chunk_files = sorted([f for f in os.listdir(chunk_dir) if f.startswith("chunk_")])
+    if not chunk_files:
+        raise HTTPException(status_code=400, detail="未找到任何分片")
+    
+    # 合并
+    ext = os.path.splitext(meta["filename"])[1] or ".bin"
+    saved_name = f"{uuid.uuid4().hex[:12]}{ext}"
+    final_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}", "research")
+    os.makedirs(final_dir, exist_ok=True)
+    final_path = os.path.join(final_dir, saved_name)
+    
+    total_bytes = 0
+    with open(final_path, "wb") as out:
+        for cf in chunk_files:
+            with open(os.path.join(chunk_dir, cf), "rb") as inp:
+                data = inp.read()
+                out.write(data)
+                total_bytes += len(data)
+    
+    # 清理分片目录
+    import shutil
+    shutil.rmtree(chunk_dir, ignore_errors=True)
+    
+    # 安全校验
+    is_safe, reason = prompt_guard.check(description)
+    if not is_safe:
+        os.remove(final_path)
+        raise HTTPException(status_code=400, detail=f"安全检测未通过: {reason}")
+    
+    # 解析文件
+    from app.services.file_parser import parse_research_file
+    parsed = await parse_research_file(final_path, meta.get("content_type", ""), description)
+    
+    # 清理数据库中该 upload_id 的分片记录
+    from sqlalchemy import delete
+    await db.execute(delete(UploadChunk).where(UploadChunk.upload_id == upload_id))
+    await db.commit()
+    
+    logger.info(f"[ChunkUpload] Complete: {saved_name}, {total_bytes} bytes, {len(chunk_files)} chunks")
+    return {
+        "file_id": saved_name,
+        "filename": meta["filename"],
+        "summary": parsed["summary"],
+        "structured_data": parsed.get("data"),
+        "parse_status": parsed["status"],
+        "tokens_used": parsed.get("tokens", 0),
+        "total_size": total_bytes
+    }
+
+
+@router.get("/upload/status/{upload_id}")
+async def get_upload_status(
+    upload_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """查询分片上传进度（用于断点续传恢复）"""
+    from app.database.models import UploadChunk
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(UploadChunk.chunk_index).where(
+            UploadChunk.upload_id == upload_id,
+            UploadChunk.user_id == user.id
+        ).order_by(UploadChunk.chunk_index)
+    )
+    uploaded_indices = [row[0] for row in result.all()]
+    
+    chunk_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user.id}", "chunks", upload_id)
+    meta_path = os.path.join(chunk_dir, "_meta.json")
+    
+    total_size = 0
+    filename = ""
+    if os.path.exists(meta_path):
+        import json as _json
+        with open(meta_path, "r") as f:
+            meta = _json.load(f)
+        total_size = meta.get("total_size", 0)
+        filename = meta.get("filename", "")
+    
+    return {
+        "upload_id": upload_id,
+        "filename": filename,
+        "total_size": total_size,
+        "uploaded_chunks": uploaded_indices,
+        "uploaded_count": len(uploaded_indices),
+        "chunk_size": CHUNK_SIZE
+    }
+
+
+

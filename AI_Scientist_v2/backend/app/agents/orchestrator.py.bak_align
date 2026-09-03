@@ -1,0 +1,501 @@
+"""智研星枢 - 多Agent编排器（断点恢复/人工审核/状态持久化）"""
+from app.utils.safe_json import safe_json_parse
+import asyncio
+import logging
+from datetime import datetime, timezone
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.models import Project, AgentTask, ProjectStatus, TaskStatus, Complexity, Pipeline, ExperimentRun
+from app.agents import AGENT_REGISTRY, DEFAULT_WORKFLOW
+from app.agents.task_router import route_task
+from app.observability.tracer import Tracer, save_spans_to_db
+from app.core.events import event_bus, Events
+
+logger = logging.getLogger(__name__)
+
+
+def _extract_experiment_code(text: str) -> str:
+    """[stageC] 从 Agent 输出中提取 python 代码块（支持 ```python / ```）"""
+    if not text:
+        return ""
+    import re
+    m = re.search(r"```(?:python|py)?\s*\n(.*?)```", text, re.S)
+    if m:
+        return m.group(1).strip()
+    return ""
+
+class Orchestrator:
+    # Production limits
+    GLOBAL_TIMEOUT_SECONDS = 3600  # 30 min hard cap per pipeline
+    TOKEN_BUDGET = 200000           # Max tokens per project run
+    MAX_CONTEXT_CHARS = 8000       # Per-task context window limit
+
+    def __init__(self):
+        self._running_projects: dict[int, bool] = {}
+
+    async def start_project(self, db: AsyncSession, project_id: int, user_id: int, custom_pipeline: list[str] | None = None, mode: str = "quick") -> dict:
+        result = await db.execute(select(Project).where(Project.id == project_id))
+        project = result.scalar_one_or_none()
+        if not project:
+            raise ValueError("项目不存在")
+        if project.status == ProjectStatus.RUNNING:
+            raise ValueError("项目正在运行中")
+
+        route_result = await route_task(project.research_question)
+        project.complexity = route_result["complexity"]
+        project.status = ProjectStatus.PLANNING
+
+        if custom_pipeline:
+            agent_sequence = [a for a in custom_pipeline if a in AGENT_REGISTRY]
+            if not agent_sequence:
+                raise ValueError("自定义流水线中的所有Agent均无效")
+        else:
+            # ① 优先读 is_default=True 的流水线（Agent中心保存的默认配置）
+            _pipe_r = await db.execute(
+                select(Pipeline).where(Pipeline.user_id == user_id, Pipeline.is_default == True)
+                .limit(1))
+            _pipe = _pipe_r.scalar_one_or_none()
+            # ①b 回退：读用户最新的流水线
+            if not _pipe:
+                _pipe_r = await db.execute(
+                    select(Pipeline).where(Pipeline.user_id == user_id)
+                    .order_by(Pipeline.created_at.desc()).limit(1))
+                _pipe = _pipe_r.scalar_one_or_none()
+            agent_sequence = []
+            if _pipe and _pipe.steps:
+                agent_sequence = [s["agent_name"] for s in _pipe.steps if s.get("agent_name") in AGENT_REGISTRY]
+            # ② 回退：完整科研闭环（赛道一 7 阶段：文献→假设→实验→分析→写作→评审→反思）
+            if not agent_sequence:
+                _FULL_CLOSURE = ["knowledge_gap","literature","hypothesis","design","experiment_plan","analysis","writing","review","reflection"]
+                agent_sequence = [a for a in _FULL_CLOSURE if a in AGENT_REGISTRY]
+
+        existing = await db.execute(select(AgentTask).where(AgentTask.project_id == project_id))
+        for t in existing.scalars().all():
+            await db.delete(t)
+        await db.flush()
+
+        tasks = []
+        for i, agent_name in enumerate(agent_sequence):
+            agent_cls = AGENT_REGISTRY.get(agent_name)
+            if not agent_cls:
+                continue
+            agent = agent_cls()
+            # 默认全自主一条龙: 除非 project.config.review_steps 明确列出该 agent, 否则不审核
+            _proj_cfg = (project.config or {}) if hasattr(project, "config") and project.config else {}
+            _review_steps = _proj_cfg.get("review_steps", []) if isinstance(_proj_cfg, dict) else []
+            _need_review = agent_name in _review_steps
+            task = AgentTask(project_id=project_id, agent_name=agent_name, step_order=i+1,
+                             status=TaskStatus.PENDING,
+                             requires_review=_need_review,
+                             max_retries=(3 if mode == "expert" else agent.max_retries),
+                             model_used=route_result["suggested_model"])
+            db.add(task)
+            tasks.append(task)
+
+        await db.commit()
+        project.status = ProjectStatus.RUNNING
+        await db.commit()
+        await event_bus.emit(Events.PROJECT_CREATED, {"project_id": project_id, "user_id": user_id})
+
+        self._running_projects[project_id] = True
+        asyncio.create_task(self._execute_pipeline(project_id, user_id, route_result["suggested_model"]))
+
+        return {"project_id": project_id, "complexity": route_result["complexity"].value,
+                "reason": route_result["reason"], "agent_sequence": [t.agent_name for t in tasks],
+                "suggested_model": route_result["suggested_model"]}
+
+    async def _execute_pipeline(self, project_id: int, user_id: int, model: str):
+        trace_id = Tracer.start_trace()
+        try:
+            from app.database.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(AgentTask).where(AgentTask.project_id == project_id).order_by(AgentTask.step_order))
+                tasks = result.scalars().all()
+                proj_result = await db.execute(select(Project).where(Project.id == project_id))
+                project = proj_result.scalar_one_or_none()
+                if not project:
+                    return
+
+                context = ""
+                pipeline_start = __import__('time').time()
+                total_tokens = 0
+                for task in tasks:
+                    # Global timeout check
+                    elapsed = __import__('time').time() - pipeline_start
+                    if elapsed > self.GLOBAL_TIMEOUT_SECONDS:
+                        logger.warning(f'[Orchestrator] Global timeout ({self.GLOBAL_TIMEOUT_SECONDS}s) reached for project {project_id}')
+                        project.status = ProjectStatus.PAUSED
+                        await db.commit()
+                        return
+                    # Token budget check
+                    if total_tokens > self.TOKEN_BUDGET:
+                        logger.warning(f'[Orchestrator] Token budget exceeded ({total_tokens}/{self.TOKEN_BUDGET}) for project {project_id}')
+                        project.status = ProjectStatus.PAUSED
+                        await db.commit()
+                        return
+                    if not self._running_projects.get(project_id, False):
+                        # 进程重启后内存字典丢失，回查数据库确认项目是否真的被用户暂停
+                        fresh_proj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+                        if fresh_proj and fresh_proj.status == ProjectStatus.RUNNING:
+                            # 项目仍在运行中（只是进程重启丢了内存标志），恢复执行
+                            self._running_projects[project_id] = True
+                            logger.info(f'[Orchestrator] Recovered running flag for project {project_id} after process restart')
+                        else:
+                            project.status = ProjectStatus.PAUSED
+                            await db.commit()
+                            return
+                    if task.status == TaskStatus.COMPLETED:
+                        context += f"\n\n### {task.agent_name}\n{task.output_data[:2000]}"
+                        continue
+
+                    agent_cls = AGENT_REGISTRY.get(task.agent_name)
+                    if not agent_cls:
+                        task.status = TaskStatus.SKIPPED
+                        await db.commit()
+                        continue
+
+                    agent = agent_cls()
+                    task.status = TaskStatus.RUNNING
+                    task.started_at = datetime.now(timezone.utc)
+                    task.input_data = context[:5000]
+                    await db.commit()
+
+                    await event_bus.emit(Events.AGENT_STEP_UPDATE, {
+                        "project_id": project_id,
+                        "task_id": task.id,
+                        "agent_name": task.agent_name,
+                        "step_order": task.step_order,
+                        "status": "running",
+                        "display_name": agent.display_name,
+                        "user_id": user_id
+                    })
+
+                    # === REFLECTION FEEDBACK INJECTION ===
+                    if task.agent_name == "writing":
+                        try:
+                            from app.contracts.reflection_writing import ReflectionFeedback
+                            import json
+                            # Find completed reflection task for this project
+                            ref_task = None
+                            for t in tasks:
+                                if t.agent_name == "reflection" and t.status == TaskStatus.COMPLETED:
+                                    ref_task = t
+                                    break
+                            if ref_task and ref_task.output_data:
+                                raw = ref_task.output_data
+                                if isinstance(raw, str):
+                                    try:
+                                        raw = safe_json_parse(raw,fallback=None,label="orchestrator")
+                                    except (json.JSONDecodeError, TypeError):
+                                        logger.warning(f"[Reflection] output_data is not valid JSON, skipping: {str(raw)[:100]}")
+                                        raw = None
+                                if raw and isinstance(raw, dict):
+                                    fb = ReflectionFeedback(**raw)
+                                else:
+                                    fb = None
+                                if fb:
+                                    parts = ["", "", "### Reflection Feedback (MUST incorporate)"]
+                                    for hr in fb.hypothesis_revisions:
+                                        parts.append(f"- **Hypothesis Revision**: {hr.original} -> {hr.revised} ({hr.rationale})")
+                                    for sr in fb.statistical_requirements:
+                                        parts.append(f"- **Stat Requirement**: {sr.test_name} p<{sr.p_value} (CL={sr.confidence_level})")
+                                    for pu in fb.protocol_updates:
+                                        parts.append(f"- **Protocol Update**: {pu.instrument}/{pu.model_name} v{pu.version}")
+                                    parts.append(f"- **Maturity Score**: {fb.maturity_score}")
+                                    context += chr(10).join(parts) + chr(10)
+                        except Exception as e:
+                            logger.warning(f"[Reflection] Failed to inject feedback: {e}")
+                    # === END INJECTION ===
+                    try:
+                        span = Tracer.create_span("agent_step", agent.display_name, project_id=project_id, task_id=task.id)
+                        # === 多Agent文档生成引擎（替代原writing单步） ===
+                        if task.agent_name in ("writing", "document_generate"):
+                            try:
+                                from app.agents.doc_integration import execute_document_generation
+                                result_data = await execute_document_generation(
+                                    research_question=project.research_question,
+                                    context=context,
+                                    model=model,
+                                    project_id=project_id,
+                                    task_id=task.id,
+                                    template_id="nh_202619_track1",
+                                )
+                                logger.info(f"[DocEngine] 文档生成完成, 质量分: {result_data.get('quality_score', 'N/A')}")
+                            except Exception as doc_e:
+                                logger.warning(f"[DocEngine] 文档引擎失败，回退到原WritingAgent: {doc_e}")
+                                result_data = await agent.execute(research_question=project.research_question, context=context,
+                                                                 model=model, project_id=project_id, task_id=task.id)
+                        else:
+                            result_data = await agent.execute(research_question=project.research_question, context=context,
+                                                             model=model, project_id=project_id, task_id=task.id)
+                        task.output_data = result_data["output"]
+                        task.tokens_used = result_data["tokens"]
+                        task.cost_yuan = result_data["cost"]
+                        
+                        # === 科学假设结构化提取（仅design/analysis Agent）===
+                        if task.agent_name in ("design", "analysis"):
+                            try:
+                                from app.agents.hypothesis_validator import extract_and_validate_hypothesis
+                                hypo_result = await extract_and_validate_hypothesis(
+                                    raw_output=task.output_data,
+                                    research_question=project.research_question,
+                                    model=model
+                                )
+                                task.output_data = hypo_result["structured_output"]
+                                context += f"\n\n### 假设验证结果\n{hypo_result['evidence_chain']}"
+                                await event_bus.emit(Events.AGENT_STEP_UPDATE, {
+                                    "project_id": project_id,
+                                    "task_id": task.id,
+                                    "agent_name": task.agent_name,
+                                    "step_order": task.step_order,
+                                    "status": "hypothesis_extracted",
+                                    "hypothesis_count": hypo_result["hypothesis_count"],
+                                    "avg_testability": hypo_result["avg_testability"],
+                                    "user_id": user_id
+                                })
+                            except Exception as e:
+                                logger.warning(f"假设提取失败，保留原始输出: {e}")
+                        # === 假设提取结束 ===
+                        task.model_used = result_data["model"]
+                        task.finished_at = datetime.now(timezone.utc)
+                        total_tokens += result_data.get("tokens", 0)
+                        ctx_snippet = result_data['output'][:self.MAX_CONTEXT_CHARS]
+                        context += f"\n\n### {agent.display_name}\n{ctx_snippet}"
+
+                        if task.requires_review:
+                            task.status = TaskStatus.WAITING_REVIEW
+                            project.status = ProjectStatus.WAITING_REVIEW
+                            await db.commit()
+                            Tracer.finish_span(span)
+                            await save_spans_to_db(db, Tracer.get_all_spans())
+                            await event_bus.emit(Events.AGENT_REVIEW_NEEDED, {"project_id": project_id, "task_id": task.id, "agent_name": task.agent_name})
+                            project.status = ProjectStatus.PAUSED
+                            await db.commit()
+                            return
+
+                        task.status = TaskStatus.COMPLETED
+                        # === [stageC] 实验模拟场执行：experiment_plan 产出代码后真实跑模拟 ===
+                        if task.agent_name == "experiment_plan":
+                            try:
+                                from app.services.experiment_engine import run_experiment
+                                _code = _extract_experiment_code(task.output_data or "")
+                                if _code:
+                                    _run = ExperimentRun()
+                                    for _k, _v in (("user_id", user_id), ("project_id", project_id),
+                                                   ("question_task_id", None),
+                                                   ("title", f"[pipeline] {str(project.research_question or '')[:50]}"),
+                                                   ("code", _code), ("status", "running")):
+                                        if hasattr(ExperimentRun, _k):
+                                            setattr(_run, _k, _v)
+                                    db.add(_run)
+                                    await db.commit()
+                                    await db.refresh(_run)
+                                    _res = await run_experiment(_code, _run.id, timeout=120, generate_video=True)
+                                    _charts = _res.get("charts") or []
+                                    for _k, _v in (("status", "completed" if _res.get("success") else "failed"),
+                                                   ("output_text", _res.get("output_text", "")),
+                                                   ("charts", _charts),
+                                                   ("video_path", _res.get("video_path")),
+                                                   ("data_table", _res.get("data_table")),
+                                                   ("error_message", _res.get("error", "") or ""),
+                                                   ("duration_ms", _res.get("duration_ms", 0)),
+                                                   ("completed_at", datetime.now(timezone.utc))):
+                                        if hasattr(ExperimentRun, _k):
+                                            setattr(_run, _k, _v)
+                                    await db.commit()
+                                    if _charts:
+                                        _pr = await db.execute(select(Project).where(Project.id == project_id))
+                                        _pj = _pr.scalar_one_or_none()
+                                        if _pj:
+                                            _ev = list(_pj.evidence_files or [])
+                                            for _c in _charts:
+                                                _pth = _c.get("path") if isinstance(_c, dict) else str(_c)
+                                                if _pth and _pth not in _ev:
+                                                    _ev.append(_pth)
+                                            if _res.get("video_path") and _res["video_path"] not in _ev:
+                                                _ev.append(_res["video_path"])
+                                            _pj.evidence_files = _ev
+                                            await db.commit()
+                                    logger.info("[stageC] 模拟场完成 run=%s charts=%s video=%s",
+                                                _run.id, len(_charts), bool(_res.get("video_path")))
+                                    try:
+                                        await event_bus.emit(Events.AGENT_STEP_UPDATE, {{
+                                            "project_id": project_id,
+                                            "task_id": task.id,
+                                            "agent_name": "experiment_sim",
+                                            "step_order": task.step_order,
+                                            "status": "experiment_done",
+                                            "charts_count": len(_charts),
+                                            "user_id": user_id,
+                                        }})
+                                    except Exception:
+                                        pass
+                                else:
+                                    logger.warning("[stageC] experiment_plan 输出未检测到 python 代码块，跳过模拟场")
+                            except Exception as _ce:
+                                logger.warning("[stageC] 模拟场执行失败（不阻塞）: %s", _ce)
+                        # === end stageC ===
+                        Tracer.finish_span(span)
+                        await event_bus.emit(Events.AGENT_COMPLETED, {"project_id": project_id, "task_id": task.id})
+                    except Exception as e:
+                        task.status = TaskStatus.FAILED
+                        task.error_message = str(e)
+                        task.retry_count += 1
+                        task.finished_at = datetime.now(timezone.utc)
+                        await db.commit()
+                        await event_bus.emit(Events.AGENT_FAILED, {"project_id": project_id, "error": str(e)})
+                        raise
+                    await db.commit()
+
+                project.status = ProjectStatus.COMPLETED
+                project.final_output = context
+                await db.commit()
+                await save_spans_to_db(db, Tracer.get_all_spans())
+                await event_bus.emit(Events.PROJECT_COMPLETED, {"project_id": project_id, "user_id": user_id})
+                logger.info(f"🎉 项目 {project_id} 全部完成")
+                # [auto-export] 流水线完成后自动生成赛题 PDF 到 output/pdf_reports
+                try:
+                    import asyncio as _asyncio
+                    from app.api.v1.export import generate_challenge_cup_pdf as _gen_pdf
+                    _pdf = await _asyncio.get_running_loop().run_in_executor(None, _gen_pdf, project_id)
+                    if _pdf:
+                        logger.info("📄 赛题 PDF 已自动生成: %s", _pdf)
+                except Exception as _pe:
+                    logger.warning("赛题 PDF 自动生成失败（不影响流水线）: %s", _pe)
+        except Exception as e:
+            logger.error(f"项目 {project_id} 执行异常: {e}", exc_info=True)
+            try:
+                from app.database.session import AsyncSessionLocal
+                async with AsyncSessionLocal() as db:
+                    r = await db.execute(select(Project).where(Project.id == project_id))
+                    p = r.scalar_one_or_none()
+                    if p:
+                        p.status = ProjectStatus.FAILED
+                        await db.commit()
+                        await event_bus.emit(Events.PROJECT_FAILED, {"project_id": project_id, "error": str(e)})
+            except Exception:
+                pass
+        finally:
+            self._running_projects.pop(project_id, None)
+
+    async def resume_from_review(self, db: AsyncSession, task_id: int, user_id: int,
+                                  comment: str = "", approved: bool = True) -> dict:
+        result = await db.execute(select(AgentTask).where(AgentTask.id == task_id))
+        task = result.scalar_one_or_none()
+        if not task:
+            raise ValueError("任务不存在")
+        if task.status != TaskStatus.WAITING_REVIEW:
+            raise ValueError("该任务当前不在审核状态")
+
+        task.review_comment = comment
+        task.reviewed_by = user_id
+        task.reviewed_at = datetime.now(timezone.utc)
+
+        if approved:
+            task.status = TaskStatus.COMPLETED
+            await db.commit()
+            proj_result = await db.execute(select(Project).where(Project.id == task.project_id))
+            project = proj_result.scalar_one_or_none()
+            if project:
+                project.status = ProjectStatus.RUNNING
+                await db.commit()
+                self._running_projects[task.project_id] = True
+                asyncio.create_task(self._execute_pipeline(task.project_id, user_id, task.model_used or "qwen-max"))
+            return {"status": "approved", "message": "已批准，流水线继续执行"}
+        else:
+            task.status = TaskStatus.FAILED
+            task.error_message = f"人工审核拒绝: {comment}"
+            await db.commit()
+            return {"status": "rejected", "message": f"已拒绝: {comment}"}
+
+    async def rerun_with_feedback(self, db: AsyncSession, project_id: int, user_id: int,
+                                   feedback: str, experiment_result: str = "", iteration_num: int = 1) -> dict:
+        from app.database.models import IterationRecord, Hypothesis
+        from sqlalchemy import select
+        hypo_rows = (await db.execute(
+            select(Hypothesis).where(Hypothesis.project_id == project_id)
+        )).scalars().all()
+        hypothesis_snapshot = [{"hypo_id": h.hypo_id, "statement": h.statement, "version": h.version} for h in hypo_rows]
+        score_before = sum(h.testability_score for h in hypo_rows) / max(len(hypo_rows), 1) if hypo_rows else 0.0
+        record = IterationRecord(project_id=project_id, iteration_num=iteration_num,
+            hypothesis_snapshot=hypothesis_snapshot, experiment_result=experiment_result,
+            feedback=feedback, score_before=score_before, score_after=score_before)
+        db.add(record)
+        proj = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if proj:
+            proj.closure_stage = 3
+            proj.status = ProjectStatus.PLANNING
+        await db.commit()
+        self._running_projects[project_id] = True
+        asyncio.create_task(self._execute_pipeline(project_id, user_id, "qwen-max"))
+        return {"message": f"iteration {iteration_num} submitted",
+                "iteration_num": iteration_num, "score_before": score_before,
+                "hypothesis_count": len(hypothesis_snapshot)}
+
+    async def cleanup_zombies(self, db: AsyncSession):
+        """启动时清理僵尸任务（后端重启后的残留running状态）"""
+        from sqlalchemy import update
+        zombie_tasks = await db.execute(
+            select(AgentTask).where(AgentTask.status == TaskStatus.RUNNING)
+        )
+        zombies = zombie_tasks.scalars().all()
+        if zombies:
+            project_ids = set(t.project_id for t in zombies)
+            for t in zombies:
+                t.status = TaskStatus.FAILED
+                t.error_message = "服务重启-僵尸清理"
+                t.finished_at = datetime.now(timezone.utc)
+            # 重置对应项目状态
+            for pid in project_ids:
+                proj = (await db.execute(select(Project).where(Project.id == pid))).scalar_one_or_none()
+                if proj and proj.status == ProjectStatus.RUNNING:
+                    proj.status = ProjectStatus.PAUSED
+            await db.commit()
+            logger.info(f"🧹 清理了 {len(zombies)} 个僵尸任务，涉及项目: {project_ids}")
+        # 清空内存中的运行标记
+        self._running_projects.clear()
+
+    def pause_project(self, project_id: int):
+        self._running_projects[project_id] = False
+
+    def is_running(self, project_id: int) -> bool:
+        return self._running_projects.get(project_id, False)
+
+
+orchestrator = Orchestrator()
+
+
+
+
+
+# ===== 科研闭环：迭代反馈记录器 =====
+import logging
+logger = logging.getLogger("ai_scientist.orchestrator")
+
+class IterationFeedbackTracker:
+    """记录假设→实验→反馈的完整闭环轨迹"""
+    
+    def __init__(self, project_id: str):
+        self.project_id = project_id
+        self.iterations: list[dict] = []
+    
+    def record_iteration(self, hypothesis: str, experiment_result: str, feedback: str, iteration_num: int):
+        entry = {
+            "iteration": iteration_num,
+            "hypothesis": hypothesis,
+            "result_summary": experiment_result[:500],
+            "feedback": feedback,
+            "timestamp": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()
+        }
+        self.iterations.append(entry)
+        logger.info(f"[Project:{self.project_id}] Iteration {iteration_num}: {feedback[:100]}")
+        return entry
+    
+    def get_closure_status(self) -> dict:
+        return {
+            "total_iterations": len(self.iterations),
+            "current_stage": "feedback" if self.iterations else "hypothesis",
+            "last_feedback": self.iterations[-1]["feedback"] if self.iterations else None
+        }
+
+

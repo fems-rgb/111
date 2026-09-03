@@ -1,0 +1,439 @@
+"""智研星枢 - 外部资料采集服务（自主搜索 + URL抓取 + 多线程并发）
+支持：
+1. Semantic Scholar 学术论文搜索
+2. arXiv 预印本搜索
+3. URL直接抓取（网页/PDF）
+4. 多线程并发采集（asyncio.Semaphore控制并发度）
+"""
+import asyncio
+import logging
+import re
+import uuid
+import os
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
+import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.models import User, Document
+from app.config import settings
+from app.services.file_parser import parse_research_file
+
+logger = logging.getLogger(__name__)
+
+# 并发控制：最多同时5个采集任务
+MAX_CONCURRENCY = 5
+_semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
+
+UA = "ZhiYanXingShu/3.0 (AI Research Platform; mailto:admin@zhixing.ai)"
+
+
+# ========== 1. Semantic Scholar 学术搜索 ==========
+async def search_semantic_scholar(query: str, limit: int = 10, year_from: int = None) -> List[Dict]:
+    """搜索Semantic Scholar学术论文"""
+    params = {
+        "query": query,
+        "limit": min(limit, 100),
+        "fields": "title,authors,year,abstract,citationCount,url,externalIds,openAccessPdf"
+    }
+    if year_from:
+        params["year"] = f"{year_from}-"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                "https://api.semanticscholar.org/graph/v1/paper/search",
+                params=params
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        papers = []
+        for p in data.get("data", []):
+            pdf_url = None
+            oa = p.get("openAccessPdf")
+            if oa and isinstance(oa, dict):
+                pdf_url = oa.get("url")
+            papers.append({
+                "title": p.get("title", ""),
+                "authors": [a.get("name", "") for a in (p.get("authors") or [])[:5]],
+                "year": p.get("year"),
+                "abstract": (p.get("abstract") or "")[:800],
+                "citations": p.get("citationCount", 0),
+                "url": p.get("url", ""),
+                "pdf_url": pdf_url,
+                "source": "semantic_scholar",
+                "external_id": p.get("externalIds", {}).get("DOI", ""),
+            })
+        return papers
+    except Exception as e:
+        logger.error(f"Semantic Scholar search failed: {e}")
+        return []
+
+
+# ========== 2. arXiv 预印本搜索 ==========
+async def search_arxiv(query: str, limit: int = 10, category: str = None) -> List[Dict]:
+    """搜索arXiv预印本"""
+    # 将空格替换为AND，避免被arXiv解析为OR
+    search_query = query.replace(" ", "+AND+")
+    if category:
+        search_query = f"cat:{category}+AND+{search_query}"
+    params = {
+        "search_query": f"all:{search_query}",
+        "start": 0,
+        "max_results": min(limit, 50),
+        "sortBy": "relevance",
+        "sortOrder": "descending"
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers={
+            "User-Agent": "ZhiYanXingShu/3.0 (AI Research Platform; mailto:admin@zhixing.ai)"
+        }) as client:
+            resp = await client.get("https://export.arxiv.org/api/query", params=params)
+            resp.raise_for_status()
+        text = resp.text
+        entries = []
+        # 兼容带/不带命名空间属性的entry标签
+        entry_blocks = re.findall(r'<entry[^>]*>(.*?)</entry>', text, re.DOTALL)
+        logger.info(f"arXiv raw response: {len(entry_blocks)} entries found for query '{query}'")
+        for block in entry_blocks[:limit]:
+            title_m = re.search(r'<title[^>]*>(.*?)</title>', block, re.DOTALL)
+            summary_m = re.search(r'<summary[^>]*>(.*?)</summary>', block, re.DOTALL)
+            published_m = re.search(r'<published[^>]*>(.*?)</published>', block)
+            author_ms = re.findall(r'<author[^>]*>.*?<name[^>]*>(.*?)</name>.*?</author>', block, re.DOTALL)
+            link_ms = re.findall(r'<link\s+href="([^"]*)"', block)
+            title = re.sub(r'\s+', ' ', title_m.group(1).strip()) if title_m else ""
+            abstract = re.sub(r'\s+', ' ', summary_m.group(1).strip())[:800] if summary_m else ""
+            pdf_url = next((l for l in link_ms if 'pdf' in l), None)
+            abs_url = next((l for l in link_ms if 'abs' in l), None)
+            entries.append({
+                "title": title,
+                "authors": author_ms[:5],
+                "year": published_m.group(1)[:4] if published_m else None,
+                "abstract": abstract,
+                "url": abs_url or "",
+                "pdf_url": pdf_url,
+                "source": "arxiv",
+                "external_id": abs_url.split("/abs/")[-1] if abs_url else "",
+            })
+        logger.info(f"arXiv search '{query}' returned {len(entries)} results")
+        return entries
+    except Exception as e:
+        logger.error(f"arXiv search failed: {e}")
+        return []
+
+# ========== 3. OpenAlex (4.74yi+) ==========
+def _invert_idx(idx: dict) -> str:
+    pw = [(p, w) for w, ps in idx.items() for p in ps]
+    return " ".join(w for _, w in sorted(pw))
+
+async def search_openalex(query: str, limit: int = 10) -> List[Dict]:
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": UA}) as c:
+            r = await c.get("https://api.openalex.org/works",
+                params={"search": query, "per_page": min(limit, 50),
+                        "mailto": "admin@zhixing.ai", "sort": "relevance_score:desc"})
+            r.raise_for_status(); data = r.json()
+        papers = []
+        for w in data.get("results", []):
+            ab = _invert_idx(w["abstract_inverted_index"])[:800] if w.get("abstract_inverted_index") else ""
+            loc = w.get("primary_location") or {}
+            papers.append({"title": w.get("title",""),
+                "authors": [a.get("author",{}).get("display_name","") for a in (w.get("authorships") or [])[:5]],
+                "year": w.get("publication_year"), "abstract": ab,
+                "citations": w.get("cited_by_count",0),
+                "url": loc.get("landing_page_url","") or w.get("doi",""),
+                "pdf_url": loc.get("pdf_url"),
+                "source": "openalex", "external_id": (w.get("doi") or "").replace("https://doi.org/","")})
+        return papers
+    except Exception as e:
+        logger.error(f"OpenAlex failed: {e}"); return []
+
+# ========== 4. CrossRef (1.5yi+) ==========
+async def search_crossref(query: str, limit: int = 10) -> List[Dict]:
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": UA}) as c:
+            r = await c.get("https://api.crossref.org/works",
+                params={"query": query, "rows": min(limit, 50), "sort": "relevance", "order": "desc"})
+            r.raise_for_status(); items = r.json().get("message",{}).get("items",[])
+        papers = []
+        for it in items:
+            title = (it.get("title") or [""])[0]
+            authors = []
+            for a in (it.get("author") or [])[:5]:
+                gn = a.get("given", "")
+                fn = a.get("family", "")
+                authors.append(f"{gn} {fn}".strip())
+            year = None
+            dp = it.get("published-print") or it.get("published-online") or it.get("created") or {}
+            parts = dp.get("date-parts", [[]])[0]
+            if parts:
+                year = parts[0]
+            doi = it.get("DOI", "")
+            papers.append({"title": title, "authors": authors, "year": year,
+                "abstract": (it.get("abstract", "") or "")[:800],
+                "citations": it.get("is-referenced-by-count", 0),
+                "url": f"https://doi.org/{doi}" if doi else it.get("URL", ""),
+                "pdf_url": None, "source": "crossref", "external_id": doi})
+        return papers
+    except Exception as e:
+        logger.error(f"CrossRef failed: {e}"); return []
+
+# ========== 5. EuropePMC (3600wan+) ==========
+async def search_europepmc(query: str, limit: int = 10) -> List[Dict]:
+    try:
+        async with httpx.AsyncClient(timeout=30.0, headers={"User-Agent": UA}) as c:
+            r = await c.get("https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+                params={"query": query, "pageSize": min(limit, 50), "format": "json", "sort": "RELEVANCE"})
+            r.raise_for_status(); data = r.json()
+        papers = []
+        for p in data.get("resultList", {}).get("result", []):
+            astr = p.get("authorString", "")
+            authors = [a.strip() for a in astr.split(",")[:5]] if astr else []
+            pmcid = p.get("pmcid", ""); pmid = p.get("pmid", "")
+            url = f"https://europepmc.org/article/PMC/{pmcid}" if pmcid else (f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "")
+            pdf = f"https://europepmc.org/backend/ptpmcrender.fcgi?accid={pmcid}&blobtype=pdf" if pmcid and p.get("isOpenAccess") == "Y" else None
+            papers.append({"title": p.get("title", ""), "authors": authors,
+                "year": int(p["pubYear"]) if p.get("pubYear", "").isdigit() else None,
+                "abstract": (p.get("abstractText") or "")[:800],
+                "citations": p.get("citedByCount", 0), "url": url, "pdf_url": pdf,
+                "source": "europepmc", "external_id": pmcid or pmid})
+        return papers
+    except Exception as e:
+        logger.error(f"EuropePMC failed: {e}"); return []
+
+
+# ========== 6. URL内容抓取 ==========
+async def fetch_url_content(url: str) -> Dict[str, Any]:
+    """抓取URL内容，自动识别PDF/HTML"""
+    async with _semaphore:
+        try:
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "")
+            result = {
+                "url": url,
+                "status_code": resp.status_code,
+                "content_type": content_type,
+                "size": len(resp.content),
+            }
+            if "pdf" in content_type or url.lower().endswith(".pdf"):
+                # 保存PDF到临时目录
+                saved_name = f"{uuid.uuid4().hex[:12]}.pdf"
+                save_dir = os.path.join(settings.UPLOAD_DIR, "_temp_external")
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, saved_name)
+                with open(save_path, "wb") as f:
+                    f.write(resp.content)
+                result["saved_path"] = save_path
+                result["saved_name"] = saved_name
+                result["type"] = "pdf"
+            elif "html" in content_type or "text" in content_type:
+                # 提取HTML文本
+                from html.parser import HTMLParser
+                class TextExtractor(HTMLParser):
+                    def __init__(self):
+                        super().__init__()
+                        self.texts = []
+                        self._skip = False
+                    def handle_starttag(self, tag, attrs):
+                        if tag in ('script', 'style', 'nav', 'footer'):
+                            self._skip = True
+                    def handle_endtag(self, tag):
+                        if tag in ('script', 'style', 'nav', 'footer'):
+                            self._skip = False
+                    def handle_data(self, data):
+                        if not self._skip:
+                            t = data.strip()
+                            if t:
+                                self.texts.append(t)
+                extractor = TextExtractor()
+                extractor.feed(resp.text[:200000])
+                text_content = "\n".join(extractor.texts)[:10000]
+                # 保存为txt
+                saved_name = f"{uuid.uuid4().hex[:12]}.txt"
+                save_dir = os.path.join(settings.UPLOAD_DIR, "_temp_external")
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, saved_name)
+                with open(save_path, "w", encoding="utf-8") as f:
+                    f.write(text_content)
+                result["saved_path"] = save_path
+                result["saved_name"] = saved_name
+                result["type"] = "html"
+                result["text_preview"] = text_content[:500]
+            else:
+                result["type"] = "binary"
+                result["message"] = f"不支持的内容类型: {content_type}"
+            return result
+        except Exception as e:
+            logger.error(f"URL fetch failed [{url}]: {e}")
+            return {"url": url, "error": str(e), "type": "error"}
+
+
+# ========== 7. 多线程并发采集入口 ==========
+async def batch_fetch_urls(urls: List[str]) -> List[Dict]:
+    """并发抓取多个URL"""
+    tasks = [fetch_url_content(url) for url in urls]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return [r if isinstance(r, dict) else {"error": str(r)} for r in results]
+
+
+def _is_mostly_chinese(text: str) -> bool:
+    """检测文本是否主要为中文"""
+    cn_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    return cn_chars > len(text) * 0.3 and cn_chars >= 2
+
+async def _translate_to_english(text: str) -> str:
+    """简单中文→英文学术关键词翻译（无需额外API）"""
+    # 常见学术术语映射
+    TERM_MAP = {
+        "人工智能": "artificial intelligence", "机器学习": "machine learning",
+        "深度学习": "deep learning", "自然语言处理": "natural language processing",
+        "大语言模型": "large language model", "强化学习": "reinforcement learning",
+        "计算机视觉": "computer vision", "知识图谱": "knowledge graph",
+        "推荐系统": "recommender system", "数据挖掘": "data mining",
+        "神经网络": "neural network", "注意力机制": "attention mechanism",
+        "生成对抗网络": "generative adversarial network", "迁移学习": "transfer learning",
+        "联邦学习": "federated learning", "图神经网络": "graph neural network",
+        "对比学习": "contrastive learning", "预训练模型": "pre-trained model",
+        "文本分类": "text classification", "情感分析": "sentiment analysis",
+        "机器翻译": "machine translation", "问答系统": "question answering",
+        "信息抽取": "information extraction", "命名实体识别": "named entity recognition",
+        "关系抽取": "relation extraction", "事件抽取": "event extraction",
+        "对话系统": "dialogue system", "语音识别": "speech recognition",
+        "目标检测": "object detection", "图像分割": "image segmentation",
+        "自动驾驶": "autonomous driving", "机器人": "robotics",
+        "量子计算": "quantum computing", "区块链": "blockchain",
+        "物联网": "internet of things", "云计算": "cloud computing",
+        "边缘计算": "edge computing", "数字孪生": "digital twin",
+        "元宇宙": "metaverse", "生成式AI": "generative AI",
+        "对齐": "alignment", "安全性": "safety", "可解释性": "interpretability",
+        "公平性": "fairness", "隐私保护": "privacy preserving",
+    }
+    lower = text.lower().strip()
+    # 精确匹配
+    if lower in TERM_MAP:
+        return TERM_MAP[lower]
+    # 部分匹配：找出所有包含的子串
+    matched = []
+    for cn, en in sorted(TERM_MAP.items(), key=lambda x: -len(x[0])):
+        if cn in lower:
+            matched.append(en)
+            lower = lower.replace(cn, "")
+    if matched:
+        return " ".join(matched)
+    # 无法翻译，返回原文（Semantic Scholar对部分中文也有少量结果）
+    return text
+
+
+async def multi_source_search(query: str, sources: List[str] = None, limit: int = 10) -> Dict:
+    """多源并发搜索（支持中文自动翻译回退）"""
+    if sources is None:
+        sources = ["semantic_scholar", "arxiv", "openalex", "crossref", "europepmc"]
+
+    search_query = query
+    translated = False
+    if _is_mostly_chinese(query):
+        eng_query = await _translate_to_english(query)
+        if eng_query != query:
+            search_query = eng_query
+            translated = True
+            logger.info(f"Translated Chinese query '{query}' -> '{eng_query}'")
+
+    tasks = {}
+    if "semantic_scholar" in sources:
+        tasks["semantic_scholar"] = search_semantic_scholar(search_query, limit)
+    if "arxiv" in sources:
+        tasks["arxiv"] = search_arxiv(search_query, limit)
+    if "openalex" in sources:
+        tasks["openalex"] = search_openalex(search_query, limit)
+    if "crossref" in sources:
+        tasks["crossref"] = search_crossref(search_query, limit)
+    if "europepmc" in sources:
+        tasks["europepmc"] = search_europepmc(search_query, limit)
+    results = {}
+    gathered = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    for key, val in zip(tasks.keys(), gathered):
+        results[key] = val if isinstance(val, list) else []
+    # 合并去重
+    all_papers = []
+    seen_titles = set()
+    for source_results in results.values():
+        for p in source_results:
+            norm_title = p.get("title", "").lower().strip()
+            if norm_title and norm_title not in seen_titles:
+                seen_titles.add(norm_title)
+                all_papers.append(p)
+    # 按引用数排序
+    all_papers.sort(key=lambda x: x.get("citations", 0), reverse=True)
+    resp = {
+        "total": len(all_papers),
+        "papers": all_papers[:limit * 2],
+        "source_counts": {k: len(v) for k, v in results.items()},
+    }
+    if translated and len(all_papers) == 0:
+        resp["hint"] = f"中文关键词「{query}」已自动翻译为「{search_query}」搜索，但未找到结果。建议尝试更具体的英文关键词。"
+    elif translated and len(all_papers) > 0:
+        resp["hint"] = f"已将中文关键词「{query}」翻译为「{search_query}」进行搜索。"
+    elif not translated and _is_mostly_chinese(query) and len(all_papers) == 0:
+        resp["hint"] = f"Semantic Scholar 和 arXiv 主要收录英文论文，中文关键词「{query}」可能无法匹配。建议使用英文关键词或改用CNKI/万方等中文数据源。"
+    return resp
+
+
+# ========== 8. 将外部资料导入知识库 ==========
+async def import_external_to_knowledge(
+    db: AsyncSession, user_id: int, paper: Dict, save_path: str = None
+) -> Dict:
+    """将搜索结果中的论文导入到用户知识库"""
+    filename = paper.get("title", "external_paper")[:100]
+    ext = ".pdf" if paper.get("type") == "pdf" or (save_path and save_path.endswith(".pdf")) else ".txt"
+    safe_name = re.sub(r'[^\w\s\-]', '', filename).strip()[:80] + ext
+
+    if save_path and os.path.exists(save_path):
+        # 已有本地文件（从URL抓取或PDF下载）
+        file_size = os.path.getsize(save_path)
+        # 移动到用户research目录
+        user_dir = os.path.join(settings.UPLOAD_DIR, f"user_{user_id}", "research")
+        os.makedirs(user_dir, exist_ok=True)
+        final_name = f"{uuid.uuid4().hex[:12]}{ext}"
+        final_path = os.path.join(user_dir, final_name)
+        os.rename(save_path, final_path)
+        # 解析文件
+        parsed = await parse_research_file(final_path, "", paper.get("abstract", ""))
+        doc = Document(
+            user_id=user_id, filename=safe_name, saved_name=final_name,
+            file_ext=ext, file_size=file_size,
+            description=f"[外部导入] {paper.get('source', 'unknown')}: {paper.get('url', '')}",
+            summary=parsed.get("summary", paper.get("abstract", "")[:500]),
+            structured_data=parsed.get("data", {}),
+            parse_status=parsed.get("status", "success"),
+            tokens_used=parsed.get("tokens", 0),
+            tags=["external", paper.get("source", "unknown")],
+        )
+    else:
+        # 仅有元数据，无全文
+        doc = Document(
+            user_id=user_id, filename=safe_name, saved_name="",
+            file_ext=".meta", file_size=0,
+            description=f"[外部元数据] {paper.get('source', 'unknown')}: {paper.get('url', '')}",
+            summary=paper.get("abstract", "")[:500],
+            structured_data={
+                "authors": paper.get("authors", []),
+                "year": paper.get("year"),
+                "citations": paper.get("citations", 0),
+                "url": paper.get("url", ""),
+                "pdf_url": paper.get("pdf_url", ""),
+                "source": paper.get("source", ""),
+            },
+            parse_status="metadata_only",
+            tags=["external", paper.get("source", "unknown"), "metadata"],
+        )
+
+    db.add(doc)
+    await db.commit()
+    await db.refresh(doc)
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "parse_status": doc.parse_status,
+        "summary": doc.summary[:200],
+    }

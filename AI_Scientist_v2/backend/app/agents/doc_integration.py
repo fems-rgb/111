@@ -1,0 +1,58 @@
+"""智研星瀚 - 文档生成集成模块
+在orchestrator pipeline中，当遇到writing步骤时，
+自动切换为多Agent协作文档生成引擎。
+"""
+import logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+
+async def execute_document_generation(
+    research_question: str,
+    context: str,
+    model: str = None,
+    project_id: int = None,
+    task_id: int = None,
+    template_id: str = "nh_202619_track1",
+    progress_callback=None,
+) -> dict:
+    """
+    替代原WritingAgent.execute()的文档生成入口。
+    在orchestrator中调用此函数即可启用多Agent协作引擎。
+
+    Returns:
+        {
+            "output": str,        # 完整文档
+            "tokens": int,
+            "cost": float,
+            "model": str,
+            "quality_score": float,
+            "metadata": dict
+        }
+    """
+    from app.agents.doc_orchestrator import DocumentOrchestrator
+
+    logger.info(
+        f"[DocumentEngine] 启动多Agent文档生成: template={template_id}, "
+        f"project={project_id}, task={task_id}"
+    )
+
+    engine = DocumentOrchestrator(template_id=template_id, model=model)
+    result = await engine.generate(
+        research_question=research_question,
+        context=context,
+        project_id=project_id,
+        task_id=task_id,
+        progress_callback=progress_callback,
+    )
+
+    return {
+        "output": result["document"],
+        "tokens": result["metadata"].get("total_tokens", 0),
+        "cost": result["metadata"].get("total_cost", 0.0),
+        "model": model or "qwen-max",
+        "quality_score": result["metadata"].get("final_score", 0),
+        "requires_review": True,
+        "metadata": result["metadata"],
+    }

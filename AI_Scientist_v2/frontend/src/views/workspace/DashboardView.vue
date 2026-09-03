@@ -1,0 +1,400 @@
+﻿<template>
+  <div class="space-y-6 animate-fade-in">
+    <!-- 顶部：工作空间选择器 + 模式指示 -->
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <select v-model="appStore.currentWorkspace" class="input-field w-48 text-sm py-1.5 dark:bg-surface-800 dark:text-surface-200 dark:border-surface-600">
+          <option value="personal">🏠 个人空间</option>
+          <option value="lab">🔬 实验室空间</option>
+          <option value="classroom">📚 课堂空间</option>
+          <option value="enterprise">🏢 企业研发</option>
+        </select>
+        <span class="text-xs px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 font-medium">
+          {{ appStore.mode === 'expert' ? '🔬 专家模式' : '⚡ 快速模式' }}
+        </span>
+      </div>
+      <div class="flex items-center gap-2 text-sm text-surface-500">
+        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+        SSE 实时连接中
+      </div>
+    </div>
+
+    <!-- 科研动态流（替代静态统计） -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="card flex items-center gap-4 hover:ring-2 ring-primary-200 transition-all cursor-pointer" @click="$router.push('/knowledge')">
+        <div class="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center text-2xl">📄</div>
+        <div><p class="text-2xl font-bold">{{ projectStore.stats.task_count ?? 0 }}</p><p class="text-sm text-surface-500">执行任务数</p></div>
+      </div>
+      <div class="card flex items-center gap-4 hover:ring-2 ring-accent-200 transition-all cursor-pointer" @click="$router.push('/automation')">
+        <div class="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center text-2xl">🔄</div>
+        <div><p class="text-2xl font-bold">{{ projectStore.stats.active_pipelines ?? 0 }}</p><p class="text-sm text-surface-500">运行中流水线</p></div>
+      </div>
+      <div class="card flex items-center gap-4 hover:ring-2 ring-green-200 transition-all cursor-pointer">
+        <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center text-2xl">💡</div>
+        <div><p class="text-2xl font-bold">{{ projectStore.stats.trace_count ?? 0 }}</p><p class="text-sm text-surface-500">推理轨迹数</p></div>
+      </div>
+      <div class="card flex items-center gap-4 hover:ring-2 ring-orange-200 transition-all cursor-pointer" @click="$router.push('/cost')">
+        <div class="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center text-2xl">💰</div>
+        <div><p class="text-2xl font-bold">¥{{ costSummary.total_cost_yuan?.toFixed(2) || '0.00' }}</p><p class="text-sm text-surface-500">总成本</p></div>
+      </div>
+    </div>
+
+    <!-- 核心：研究计划设计器（对标 DeepSeek Harness） -->
+    <div class="card border-l-4 border-l-primary-500">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold flex items-center gap-2">
+          🧬 科学假设与研究计划设计器
+          <span class="text-xs font-normal text-surface-400 ml-2">赛道一 · 科学问题→可验证方案</span>
+        </h2>
+        <button @click="showAdvanced = !showAdvanced" class="text-xs text-primary-600 hover:underline">
+          {{ showAdvanced ? '收起高级选项' : '展开完整科研字段' }}
+        </button>
+      </div>
+
+      <form @submit.prevent="handleCreate" class="space-y-4">
+        <!-- 快速模式：仅核心问题 -->
+        <div>
+          <label class="block text-sm font-medium text-surface-700 mb-1">🎯 核心科学问题</label>
+          <textarea v-model="newProject.research_question" class="input-field h-20 resize-none" 
+            placeholder="例如：大语言模型在低资源语言上的跨语言迁移能力是否存在涌现阈值？" required></textarea>
+        </div>
+
+        <!-- 专家模式：完整科研闭环字段 -->
+        <div v-if="appStore.mode === 'expert' || showAdvanced" class="space-y-4 p-4 bg-surface-50 rounded-lg border border-surface-100">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-surface-700 mb-1">💡 候选假设</label>
+              <textarea v-model="newProject.hypothesis" class="input-field h-16 resize-none" 
+                placeholder="基于XX理论/数据，我们假设..."></textarea>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-surface-700 mb-1">🔍 验证方法</label>
+              <textarea v-model="newProject.verification_method" class="input-field h-16 resize-none" 
+                placeholder="实验设计 / 数据分析方案 / 仿真环境..."></textarea>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-surface-700 mb-1">📎 证据材料（拖拽上传 PDF/CSV/代码仓库链接）</label>
+            <div class="border-2 border-dashed border-surface-200 rounded-lg p-6 text-center hover:border-primary-300 hover:bg-primary-50/30 transition-all cursor-pointer"
+                 @dragover.prevent @drop.prevent="handleDrop">
+              <p class="text-surface-400 text-sm">📁 拖拽文件到此处，或点击上传</p>
+              <p class="text-xs text-surface-300 mt-1">支持 PDF / Markdown / CSV / GitHub URL</p>
+              <div v-if="attachedFiles.length > 0" class="mt-3 flex flex-wrap gap-2 justify-center">
+                <span v-for="(f, i) in attachedFiles" :key="i" class="text-xs bg-primary-100 text-primary-700 px-2 py-1 rounded-full flex items-center gap-1">
+                  {{ f.name }} <button @click.stop="attachedFiles.splice(i, 1)" class="hover:text-red-600">×</button>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-surface-700 mb-1">项目标题</label>
+            <input v-model="newProject.title" class="input-field" placeholder="自动生成或手动填写" required />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-surface-700 mb-1">研究领域</label>
+            <select v-model="newProject.domain" class="input-field">
+              <option>人工智能</option><option>计算生物学</option><option>材料科学</option>
+              <option>人文社科</option><option>经济管理</option><option>教育学</option>
+              <option>临床医学</option><option>环境科学</option><option>自定义</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-surface-700 mb-1">默认权限</label>
+            <select v-model="newProject.visibility" class="input-field">
+              <option value="private">🔒 私有</option>
+              <option value="lab">👥 实验室可见</option>
+              <option value="public">🌐 公开</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3 pt-2">
+          <button type="submit" :disabled="creating" class="btn-primary flex items-center gap-2">
+            {{ creating ? '⏳ 生成研究计划...' : '🚀 生成假设并创建项目' }}
+          </button>
+          <span v-if="appStore.mode === 'quick'" class="text-xs text-surface-400">
+            💡 切换到专家模式可填写假设、验证方法和证据材料
+          </span>
+        </div>
+      </form>
+    </div>
+
+    <!-- 项目列表（增强版） -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold">📋 研究项目</h2>
+        <div class="flex gap-2">
+          <select v-model="filterStatus" class="input-field text-sm py-1 w-32">
+            <option value="">全部状态</option>
+            <option value="draft">草稿</option>
+            <option value="running">运行中</option>
+            <option value="completed">已完成</option>
+            <option value="iterating">迭代中</option>
+          </select>
+          <button @click="projectStore.fetchProjects({ workspace: appStore.currentWorkspace })" class="btn-secondary text-sm">刷新</button>
+        </div>
+      </div>
+      <!-- 批量操作栏 -->
+      <div v-if="selectedIds.size > 0" class="flex items-center gap-3 mb-3 px-4 py-2 rounded-lg bg-red-50 border border-red-200">
+        <span class="text-sm text-red-700 font-medium">已选 {{ selectedIds.size }} 项</span>
+        <button @click="handleBatchDelete" class="px-3 py-1 text-sm rounded-md bg-red-500 text-white hover:bg-red-600 transition-colors">🗑️ 批量删除</button>
+        <button @click="selectedIds.clear()" class="px-3 py-1 text-sm rounded-md border border-red-200 text-red-600 hover:bg-red-100 transition-colors">取消选择</button>
+      </div>
+      <div v-if="projectStore.loading" class="text-center py-8 text-surface-400">加载中...</div>
+      <div v-else-if="filteredProjects.length === 0" class="text-center py-8 text-surface-400">暂无项目，请使用上方设计器创建</div>
+      <div v-else class="space-y-3">
+        <label class="flex items-center gap-2 px-4 py-2 text-sm text-surface-500 cursor-pointer select-none hover:text-surface-700">
+          <input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" class="rounded border-surface-300 accent-primary-500" />
+          全选当前页
+        </label>
+        <div v-for="p in paginatedProjects" :key="p.id"
+             class="flex items-center gap-3 p-4 rounded-lg border transition-all cursor-pointer group"
+             :class="selectedIds.has(p.id) ? 'border-primary-400 bg-primary-50/40' : 'border-surface-100 hover:border-primary-200 hover:bg-primary-50/30'"
+             @click="$router.push(`/project/${p.id}`)">
+          <input type="checkbox" :checked="selectedIds.has(p.id)" @click.stop @change="toggleSelect(p.id)"
+                 class="shrink-0 w-4 h-4 rounded border-surface-300 accent-primary-500 cursor-pointer" />
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <h3 class="font-medium truncate">{{ p.title }}</h3>
+              <StatusBadge :status="p.status" />
+              <span v-if="p.hypothesis_count" class="text-xs bg-accent-100 text-accent-700 px-1.5 py-0.5 rounded">
+                💡 {{ p.hypothesis_count }} 假设
+              </span>
+            </div>
+            <p class="text-sm text-surface-500 mt-1">{{ p.domain }} · {{ new Date(p.created_at).toLocaleDateString('zh-CN') }}</p>
+            <!-- [stageB] 项目流水线进度条 -->
+            <div v-if="(p.total_steps || 0) > 0" class="mt-2 flex items-center gap-2">
+              <div class="flex-1 h-1.5 bg-surface-200 rounded-full overflow-hidden">
+                <div class="h-full bg-primary-500 rounded-full transition-all duration-500"
+                     :style="{ width: (p.progress || 0) + '%' }"></div>
+              </div>
+              <span class="text-xs text-surface-500 w-20 text-right">{{ p.completed_steps || 0 }}/{{ p.total_steps }} · {{ p.progress || 0 }}%</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 ml-4 shrink-0">
+            <button @click.stop="handleStart(p.id)" v-if="p.status === 'draft'" class="btn-primary text-sm py-1 px-3">▶ 启动</button>
+            <button @click.stop="handleDelete(p.id)" class="text-sm py-1 px-3 rounded-md border border-red-200 text-red-500 hover:bg-red-50 hover:border-red-300 transition-colors">🗑️ 删除</button>
+          </div>
+        </div>
+      </div>
+      <!-- 分页 -->
+      <div v-if="filteredProjects.length > pageSize" class="flex items-center justify-center gap-2 mt-4 pt-3 border-t border-surface-100">
+        <button @click="currentPage = Math.max(1, currentPage - 1)" :disabled="currentPage <= 1"
+                class="px-3 py-1 text-sm rounded-md border border-surface-200 hover:bg-surface-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">← 上一页</button>
+        <template v-for="pg in totalPages" :key="pg">
+          <button @click="currentPage = pg"
+                  class="w-8 h-8 text-sm rounded-md transition-colors"
+                  :class="pg === currentPage ? 'bg-primary-500 text-white' : 'border border-surface-200 hover:bg-surface-50'">{{ pg }}</button>
+        </template>
+        <button @click="currentPage = Math.min(totalPages, currentPage + 1)" :disabled="currentPage >= totalPages"
+                class="px-3 py-1 text-sm rounded-md border border-surface-200 hover:bg-surface-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">下一页 →</button>
+        <span class="text-xs text-surface-400 ml-2">共 {{ filteredProjects.length }} 项</span>
+      </div>
+    </div>
+
+    <!-- 多模态分析 -->
+
+    <!-- 🔬 科研闭环状态追踪（赛道一核心） -->
+    <div class="card border-l-4 border-l-accent-500">
+      <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+        🔄 科研闭环进度
+        <span class="text-xs font-normal text-surface-400 ml-2">假设 → 实验设计 → 执行 → 反馈迭代</span>
+      </h2>
+      <div class="grid grid-cols-4 gap-3">
+        <div v-for="(stage, idx) in ['假设生成', '实验设计', '任务执行', '结果反馈']" :key="idx"
+             class="relative p-3 rounded-lg border text-center transition-all"
+             :class="idx <= Math.max(0, Number(closureStage)) ? 'border-accent-400 bg-accent-50' : 'border-surface-100 bg-surface-50 opacity-50'">
+          <div class="text-2xl mb-1">{{ ['💡','🔬','⚙️','📊'][idx] }}</div>
+          <p class="text-sm font-medium">{{ stage }}</p>
+          <div v-if="idx < 3" class="absolute top-1/2 -right-3 w-6 h-0.5 bg-surface-200"></div>
+        </div>
+      </div>
+      <p class="text-xs text-surface-400 mt-3">💡 当前项目处于「{{ ['假设生成','实验设计','任务执行','结果反馈'][Math.max(0, Number(closureStage))] }}」阶段，完成后可进入下一环节</p>
+    </div>
+    <ImageAnalyzer />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useProjectStore } from '@/stores/project'
+import { useAppStore } from '@/stores/app'
+import { observabilityApi } from '@/api/modules/observability'
+import { uploadApi } from '@/api/modules/chat'
+import StatusBadge from '@/components/common/StatusBadge.vue'
+import ImageAnalyzer from '@/components/common/ImageAnalyzer.vue'
+import { useSSE } from '@/composables/useSSE'
+import type { CostSummary } from '@/types'
+
+const router = useRouter()
+const projectStore = useProjectStore()
+const appStore = useAppStore()
+
+// ✅ 使用 store 中的 currentWorkspace（全局联动）
+const showAdvanced = ref(false)
+const filterStatus = ref('')
+const attachedFiles = ref<{ name: string; file?: File }[]>([])
+const isDragging = ref(false)
+const closureStage = computed(() => {
+  const active = projectStore.projects.find(p => p.status === 'running' || p.status === 'draft')
+  return active?.closure_stage ?? 0
+})
+
+const stats = ref({ total: 0, running: 0, completed: 0, knowledgeCount: 0, activePipelines: 0, hypothesesGenerated: 0 })
+const costSummary = ref<CostSummary>({ total_cost_yuan: 0, total_tokens: 0, call_count: 0, model_breakdown: {} })
+const creating = ref(false)
+
+const { connect } = useSSE()
+
+// [fixA] 数据请求抽成独立函数，供 onMounted 与 watch 共用
+async function loadDashboard() {
+  try {
+    await projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
+  } catch (e) {
+    console.warn('[Dashboard] load failed', e)
+  }
+}
+
+onMounted(() => {
+  loadDashboard()  // 首次挂载拉数据
+  connect()        // SSE 连接（断了不影响主功能）
+})
+
+// [fixA] workspace 切换 / 路由切回时自动刷新（解决"要刷新才跳转"）
+watch(() => appStore.currentWorkspace, () => loadDashboard())
+
+const newProject = reactive({
+  title: '', research_question: '', description: '', domain: '人工智能',
+  hypothesis: '', verification_method: '', visibility: 'private' as string
+})
+
+const filteredProjects = computed(() => {
+  if (!filterStatus.value) return projectStore.projects
+  return projectStore.projects.filter(p => p.status === filterStatus.value)
+})
+
+// ===== 分页 =====
+const pageSize = ref(5)
+const currentPage = ref(1)
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredProjects.value.length / pageSize.value)))
+const paginatedProjects = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredProjects.value.slice(start, start + pageSize.value)
+})
+watch(filterStatus, () => { currentPage.value = 1 })
+
+// ===== 多选 + 批量删除 =====
+const selectedIds = ref(new Set<number>())
+const isAllSelected = computed(() =>
+  paginatedProjects.value.length > 0 && paginatedProjects.value.every(p => selectedIds.value.has(p.id))
+)
+function toggleSelect(id: number) {
+  const s = new Set(selectedIds.value)
+  s.has(id) ? s.delete(id) : s.add(id)
+  selectedIds.value = s
+}
+function toggleSelectAll() {
+  const s = new Set(selectedIds.value)
+  if (isAllSelected.value) {
+    paginatedProjects.value.forEach(p => s.delete(p.id))
+  } else {
+    paginatedProjects.value.forEach(p => s.add(p.id))
+  }
+  selectedIds.value = s
+}
+async function handleBatchDelete() {
+  const ids = Array.from(selectedIds.value)
+  if (!confirm(`确定要删除选中的  个项目吗？此操作不可恢复。`)) return
+  let ok = 0, fail = 0
+  for (const id of ids) {
+    try { await projectStore.deleteProject(id); ok++ } catch { fail++ }
+  }
+  selectedIds.value = new Set()
+  appStore.showToast(`批量删除完成：成功  个` + (fail ? `，失败  个` : ''), fail ? 'warning' : 'success')
+  projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
+}
+
+onMounted(async () => {
+  await Promise.all([
+    projectStore.fetchProjects({ workspace: appStore.currentWorkspace }),
+    projectStore.fetchStats(appStore.currentWorkspace),
+    observabilityApi.getCost().then(r => costSummary.value = r.data).catch(() => {})
+  ])
+  // ✅ 使用真实API数据，不再硬编码
+})
+
+function handleDrop(e: DragEvent) {
+  const files = e.dataTransfer?.files
+  if (files) {
+    for (let i = 0; i < files.length; i++) {
+      attachedFiles.value.push({ name: files[i].name, file: files[i] })
+    }
+  }
+}
+
+async function handleCreate() {
+  creating.value = true
+  try {
+    const payload: any = { ...newProject, workspace: appStore.currentWorkspace }
+    if (attachedFiles.value.length > 0) {
+      const uploadedIds: string[] = []
+      for (const f of attachedFiles.value) {
+        if (f.file) {
+          const res = await uploadApi.directUpload(f.file, f.name)
+          uploadedIds.push(res.data.file_id || res.data.id)
+        }
+      }
+      payload.evidence_file_ids = uploadedIds
+    }
+    const p = await projectStore.createProject(payload)
+    appStore.showToast('✅ 研究计划已生成，假设正在验证中', 'success')
+    Object.assign(newProject, { title: '', research_question: '', description: '', hypothesis: '', verification_method: '' })
+    attachedFiles.value = []
+    router.push(`/project/${p.id}`)
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '创建失败', 'error')
+  } finally { creating.value = false }
+}
+
+async function handleStart(id: number) {
+  try {
+    await projectStore.startProject(id)
+    appStore.showToast('项目已启动', 'success')
+    projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '启动失败', 'error')
+  }
+}
+
+async function handleDelete(id: number) {
+  if (!confirm('确定要删除该项目吗？')) return
+  try {
+    await projectStore.deleteProject(id)
+    appStore.showToast('项目已删除', 'success')
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '删除失败', 'error')
+  }
+}
+
+watch(() => appStore.currentWorkspace, async (ws) => {
+  await Promise.all([
+    projectStore.fetchProjects({ workspace: ws }),
+    projectStore.fetchStats(ws)
+  ])
+})
+
+async function handleShare(id: number) {
+  const targets = ['personal', 'lab', 'classroom', 'enterprise'].filter(w => w !== appStore.currentWorkspace)
+  const target = prompt(`共享到哪个空间？\n可选: ${targets.join(', ')}`)
+  if (target && targets.includes(target)) {
+    try { await projectStore.shareProject(id, target); appStore.showToast(`已共享到 ${target}`, 'success') }
+    catch (e: any) { appStore.showToast(e.response?.data?.detail || '共享失败', 'error') }
+  }
+}
+</script>
+
+

@@ -1,0 +1,876 @@
+<template>
+  <div class="p-6 max-w-7xl mx-auto space-y-6">
+    <!-- ═══ 顶部标题栏 ═══ -->
+    <div class="flex items-center justify-between flex-wrap gap-3">
+      <div>
+        <h1 class="text-2xl font-bold text-surface-800">🔬 科学问题题库</h1>
+        <p class="text-sm text-surface-500 mt-1">Science 125 · 探索前沿科学问题，AI 辅助生成研究文档</p>
+      </div>
+      <div class="flex gap-2">
+        <button @click="showAddDialog = true"
+                class="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors text-sm">
+          ✏️ 添加题目
+        </button>
+        <button @click="switchTab(activeTab === 'questions' ? 'tasks' : 'questions')"
+                class="px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors text-sm">
+          {{ activeTab === 'questions' ? '📋 我的任务' : '🔍 返回题库' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB: 题库列表 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div v-if="activeTab === 'questions'" class="space-y-4">
+
+      <!-- 筛选栏 -->
+      <div class="flex gap-3 flex-wrap items-center">
+        <select v-model="filterCategory" @change="loadQuestions(1)"
+                class="border border-surface-200 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">全部分类</option>
+          <option v-for="c in categories" :key="c.category" :value="c.category">
+            {{ c.category }} ({{ c.count }})
+          </option>
+        </select>
+        <select v-model="filterDifficulty" @change="loadQuestions(1)"
+                class="border border-surface-200 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">全部难度</option>
+          <option value="easy">简单</option>
+          <option value="medium">中等</option>
+          <option value="hard">困难</option>
+        </select>
+        <input v-model="keyword" @keyup.enter="loadQuestions(1)" placeholder="搜索题目标题 / 描述 / 关键词..."
+               class="border border-surface-200 rounded-lg px-3 py-2 text-sm flex-1 min-w-[200px]" />
+        <button @click="loadQuestions(1)" class="px-4 py-2 rounded-lg bg-surface-100 hover:bg-surface-200 text-sm transition-colors">
+          🔍 搜索
+        </button>
+      </div>
+
+      <!-- 批量操作栏 -->
+      <div v-if="questions.length > 0" class="flex items-center gap-3 flex-wrap bg-blue-50 border border-blue-200 rounded-lg px-4 py-2">
+        <label class="flex items-center gap-2 text-sm cursor-pointer">
+          <input type="checkbox" :checked="isAllSelected" :indeterminate="isPartialSelected"
+                 @change="toggleSelectAll" class="w-4 h-4 rounded" />
+          <span class="font-medium text-blue-700">全选</span>
+        </label>
+        <span class="text-sm text-blue-600">已选 {{ selectedIds.size }} / {{ questions.length }}</span>
+        <div class="flex-1"></div>
+        <button @click="openBatchGenerateDialog" :disabled="selectedIds.size === 0"
+                class="px-3 py-1.5 rounded-lg bg-accent-600 text-white hover:bg-accent-700 disabled:opacity-40 transition-colors text-sm">
+          🚀 批量生成 ({{ selectedIds.size }})
+        </button>
+      </div>
+
+      <!-- 题目列表 -->
+      <div v-if="loading" class="text-center py-12 text-surface-400">加载中...</div>
+      <div v-else-if="questions.length === 0" class="text-center py-12 text-surface-400">暂无题目</div>
+      <div v-else class="grid gap-3">
+        <div v-for="q in questions" :key="q.question_id"
+             class="bg-white border rounded-xl p-4 hover:shadow-md transition-all flex items-start gap-3"
+             :class="selectedIds.has(q.question_id) ? 'border-blue-400 bg-blue-50/30' : 'border-surface-200'">
+          <!-- Checkbox -->
+          <input type="checkbox" :checked="selectedIds.has(q.question_id)"
+                 @change="toggleSelect(q.question_id)"
+                 class="mt-1 w-4 h-4 rounded shrink-0 cursor-pointer" />
+          <!-- 内容（可点击查看详情） -->
+          <div class="flex-1 min-w-0 cursor-pointer" @click="openDetailDialog(q)">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">{{ q.category }}</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-medium" :class="difficultyClass(q.difficulty)">
+                {{ difficultyLabel(q.difficulty) }}
+              </span>
+              <span v-if="q.source === 'user_custom'" class="px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-700">自定义</span>
+              <span class="text-xs text-surface-400 ml-auto">#{{ q.question_id }}</span>
+            </div>
+            <h3 class="font-semibold text-surface-800">{{ q.title }}</h3>
+            <p v-if="q.title_en" class="text-xs text-surface-400 mt-0.5">{{ q.title_en }}</p>
+            <p v-if="q.description" class="text-sm text-surface-500 mt-1.5 line-clamp-2">{{ q.description }}</p>
+            <div v-if="q.keywords?.length" class="flex flex-wrap gap-1 mt-2">
+              <span v-for="kw in q.keywords.slice(0, 6)" :key="kw"
+                    class="px-1.5 py-0.5 rounded text-xs bg-surface-100 text-surface-500">#{{ kw }}</span>
+            </div>
+          </div>
+          <!-- 操作按钮 -->
+          <div class="shrink-0 flex flex-col gap-2">
+            <button @click.stop="openGenerateDialog(q)"
+                    class="px-3 py-1.5 rounded-lg bg-accent-600 text-white hover:bg-accent-700 transition-colors text-xs whitespace-nowrap">
+              🚀 生成
+            </button>
+            <button @click.stop="openDetailDialog(q)"
+                    class="px-3 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200 transition-colors text-xs whitespace-nowrap">
+              📄 详情
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分页 -->
+      <div v-if="totalPages > 1" class="flex justify-center gap-2 pt-2">
+        <button @click="loadQuestions(page - 1)" :disabled="page <= 1"
+                class="px-3 py-1.5 rounded border text-sm disabled:opacity-40 hover:bg-surface-50">上一页</button>
+        <span class="px-3 py-1.5 text-sm text-surface-500">{{ page }} / {{ totalPages }}（共 {{ total }} 题）</span>
+        <button @click="loadQuestions(page + 1)" :disabled="page >= totalPages"
+                class="px-3 py-1.5 rounded border text-sm disabled:opacity-40 hover:bg-surface-50">下一页</button>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- TAB: 我的任务 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div v-if="activeTab === 'tasks'" class="space-y-4">
+      <div class="flex gap-2 items-center">
+        <select v-model="taskStatusFilter" @change="loadMyTasks"
+                class="border border-surface-200 rounded-lg px-3 py-2 text-sm bg-white">
+          <option value="">全部状态</option>
+          <option value="pending">等待中</option>
+          <option value="running">运行中</option>
+          <option value="completed">已完成</option>
+          <option value="failed">失败</option>
+        </select>
+        <button @click="loadMyTasks" class="px-3 py-2 rounded-lg bg-surface-100 hover:bg-surface-200 text-sm">🔄 刷新</button>
+      </div>
+
+      <div v-if="tasksLoading" class="text-center py-12 text-surface-400">加载中...</div>
+      <div v-else-if="myTasks.length === 0" class="text-center py-12 text-surface-400">暂无任务记录</div>
+      <div v-else class="bg-white border border-surface-200 rounded-xl overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-surface-50 border-b border-surface-200">
+            <tr>
+              <th class="text-left px-4 py-3 font-medium text-surface-600">任务ID</th>
+              <th class="text-left px-4 py-3 font-medium text-surface-600">题目</th>
+              <th class="text-left px-4 py-3 font-medium text-surface-600">状态</th>
+              <th class="text-left px-4 py-3 font-medium text-surface-600">进度</th>
+
+              <th class="text-left px-4 py-3 font-medium text-surface-600">版本</th>
+              <th class="text-left px-4 py-3 font-medium text-surface-600">创建时间</th>
+              <th class="text-left px-4 py-3 font-medium text-surface-600">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in myTasks" :key="t.task_id" class="border-b border-surface-100 hover:bg-surface-50">
+              <td class="px-4 py-3 text-surface-500">#{{ t.task_id }}</td>
+              <td class="px-4 py-3 max-w-[200px] truncate">{{ t.question_title || ('题目#' + t.question_id) }}</td>
+              <td class="px-4 py-3">
+                <span :class="statusClass(t.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">
+                  {{ statusLabel(t.status) }}
+                </span>
+              </td>
+              <td class="px-4 py-3">
+                <div v-if="t.status === 'running'" class="w-24">
+                  <div class="h-2 bg-surface-200 rounded-full overflow-hidden">
+                    <div class="h-full bg-blue-500 transition-all duration-500" :style="{ width: (t.progress || 0) + '%' }"></div>
+                  </div>
+                  <span class="text-xs text-surface-400">{{ t.progress || 0 }}%</span>
+                </div>
+                <span v-else-if="t.status === 'completed'" class="text-green-600 text-xs">✓ 100%</span>
+                <span v-else-if="t.status === 'failed'" class="text-red-500 text-xs">✗</span>
+                <span v-else class="text-surface-400 text-xs">-</span>
+              </td>
+              <td class="px-4 py-3">v{{ t.version }}</td>
+              <td class="px-4 py-3 text-surface-500 text-xs">{{ formatDate(t.created_at) }}</td>
+              <td class="px-4 py-3">
+                <div class="flex gap-2">
+                  <button @click="viewTaskDetail(t.task_id)" class="text-primary-600 hover:underline text-xs">详情</button>
+                  <button v-if="t.status === 'completed'" @click="viewDocument(t.task_id)"
+                          class="text-green-600 hover:underline text-xs">📄 查看文档</button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 弹窗: 题目详情 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <div v-if="detailData" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="detailData = null">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold text-surface-800">📋 题目详情 #{{ detailData.question_id }}</h2>
+            <button @click="detailData = null" class="text-surface-400 hover:text-surface-600 text-xl">✕</button>
+          </div>
+          <div class="space-y-3">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">{{ detailData.category }}</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-medium" :class="difficultyClass(detailData.difficulty)">
+                {{ difficultyLabel(detailData.difficulty) }}
+              </span>
+              <span v-if="detailData.source" class="text-xs text-surface-400">来源: {{ detailData.source }}</span>
+            </div>
+            <h3 class="text-lg font-semibold text-surface-800">{{ detailData.title }}</h3>
+            <p v-if="detailData.title_en" class="text-sm text-surface-400 italic">{{ detailData.title_en }}</p>
+            <div v-if="detailData.description" class="p-3 bg-surface-50 rounded-lg text-sm text-surface-700 whitespace-pre-wrap">
+              {{ detailData.description }}
+            </div>
+            <div v-if="detailData.keywords?.length" class="flex flex-wrap gap-1.5">
+              <span v-for="kw in detailData.keywords" :key="kw"
+                    class="px-2 py-0.5 rounded-full text-xs bg-blue-50 text-blue-600 border border-blue-200">#{{ kw }}</span>
+            </div>
+          </div>
+
+          <!-- 该题目的任务历史 -->
+          <div v-if="detailData.task_history?.length" class="pt-3 border-t border-surface-100">
+            <h3 class="text-sm font-semibold text-surface-600 mb-2">📝 我的生成历史</h3>
+            <div class="space-y-2">
+              <div v-for="th in detailData.task_history" :key="th.task_id"
+                   class="flex items-center justify-between p-2 bg-surface-50 rounded-lg text-sm">
+                <div class="flex items-center gap-2">
+                  <span :class="statusClass(th.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ statusLabel(th.status) }}</span>
+                  <span class="text-surface-500">v{{ th.version }}</span>
+                  <span class="text-surface-400 text-xs">{{ formatDate(th.created_at) }}</span>
+                </div>
+                <div class="flex gap-2">
+                  <button @click="detailData = null; viewTaskDetail(th.task_id); switchTab('tasks')"
+                          class="text-primary-600 hover:underline text-xs">详情</button>
+                  <button v-if="th.status === 'completed'" @click="detailData = null; viewDocument(th.task_id)"
+                          class="text-green-600 hover:underline text-xs">📄 文档</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="pt-3 border-t border-surface-100 text-sm text-surface-400">
+            暂无生成记录
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="detailData = null; openGenerateDialogFromDetail()"
+                    class="px-4 py-2 rounded-lg bg-accent-600 text-white hover:bg-accent-700 text-sm">
+              🚀 生成文档
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 弹窗: 生成文档（单个） -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <div v-if="showGenDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="showGenDialog = false">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
+          <h2 class="text-lg font-bold text-surface-800">🚀 生成研究文档</h2>
+          <p class="text-sm text-surface-600">题目：<strong>{{ genTarget?.title }}</strong></p>
+
+          <!-- 生成方式选择 -->
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-surface-600">生成方式</label>
+            <div class="flex gap-3">
+              <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer flex-1 transition-colors"
+                     :class="genMode === 'direct' ? 'border-accent-400 bg-accent-50' : 'border-surface-200 hover:bg-surface-50'">
+                <input type="radio" v-model="genMode" value="direct" class="sr-only" />
+                <div>
+                  <div class="text-sm font-medium">⚡ 直接生成</div>
+                  <div class="text-xs text-surface-400">快速生成文档</div>
+                </div>
+              </label>
+              <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer flex-1 transition-colors"
+                     :class="genMode === 'pipeline' ? 'border-accent-400 bg-accent-50' : 'border-surface-200 hover:bg-surface-50'">
+                <input type="radio" v-model="genMode" value="pipeline" class="sr-only" />
+                <div>
+                  <div class="text-sm font-medium">🔗 流水线生成</div>
+                  <div class="text-xs text-surface-400">通过 Agent 流水线</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- 流水线选择 -->
+          <div v-if="genMode === 'pipeline'" class="space-y-1">
+            <label class="text-sm font-medium text-surface-600">选择流水线</label>
+            <select v-model="genPipelineId" class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm bg-white">
+              <option value="">-- 请选择 --</option>
+              <option v-for="p in pipelines" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
+
+          <textarea v-model="genPrompt" rows="3" placeholder="可选：输入自定义提示词，引导 AI 生成方向..."
+                    class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-primary-300 outline-none"></textarea>
+
+          <div class="flex justify-end gap-3">
+            <button @click="showGenDialog = false" class="px-4 py-2 rounded-lg text-sm text-surface-500 hover:bg-surface-100">取消</button>
+            <button @click="submitSingleGenerate" :disabled="generating || (genMode === 'pipeline' && !genPipelineId)"
+                    class="px-4 py-2 rounded-lg text-sm bg-accent-600 text-white hover:bg-accent-700 disabled:opacity-50 transition-colors">
+              {{ generating ? '提交中...' : '确认生成' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 弹窗: 批量生成 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <div v-if="showBatchDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="showBatchDialog = false">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4">
+          <h2 class="text-lg font-bold text-surface-800">🚀 批量生成文档</h2>
+          <p class="text-sm text-surface-600">已选择 <strong>{{ selectedIds.size }}</strong> 个题目</p>
+
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-surface-600">生成方式</label>
+            <div class="flex gap-3">
+              <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer flex-1 transition-colors"
+                     :class="batchMode === 'direct' ? 'border-accent-400 bg-accent-50' : 'border-surface-200 hover:bg-surface-50'">
+                <input type="radio" v-model="batchMode" value="direct" class="sr-only" />
+                <div class="text-sm font-medium">⚡ 直接生成</div>
+              </label>
+              <label class="flex items-center gap-2 p-3 border rounded-lg cursor-pointer flex-1 transition-colors"
+                     :class="batchMode === 'pipeline' ? 'border-accent-400 bg-accent-50' : 'border-surface-200 hover:bg-surface-50'">
+                <input type="radio" v-model="batchMode" value="pipeline" class="sr-only" />
+                <div class="text-sm font-medium">🔗 流水线</div>
+              </label>
+            </div>
+          </div>
+
+          <div v-if="batchMode === 'pipeline'" class="space-y-1">
+            <select v-model="batchPipelineId" class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm bg-white">
+              <option value="">-- 选择流水线 --</option>
+              <option v-for="p in pipelines" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
+
+          <textarea v-model="batchPrompt" rows="2" placeholder="可选：统一自定义提示词..."
+                    class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-primary-300 outline-none"></textarea>
+
+          <div class="flex justify-end gap-3">
+            <button @click="showBatchDialog = false" class="px-4 py-2 rounded-lg text-sm text-surface-500 hover:bg-surface-100">取消</button>
+            <button @click="submitBatchGenerate" :disabled="batchGenerating || (batchMode === 'pipeline' && !batchPipelineId)"
+                    class="px-4 py-2 rounded-lg text-sm bg-accent-600 text-white hover:bg-accent-700 disabled:opacity-50 transition-colors">
+              {{ batchGenerating ? '提交中...' : `批量生成 (${selectedIds.size})` }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 弹窗: 添加自定义题目 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <div v-if="showAddDialog" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="showAddDialog = false">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+          <h2 class="text-lg font-bold text-surface-800">✏️ 添加自定义题目</h2>
+          <div class="space-y-3">
+            <div>
+              <label class="text-sm font-medium text-surface-600 block mb-1">题目标题 *</label>
+              <input v-model="addForm.title" placeholder="输入科学问题标题..."
+                     class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 outline-none" />
+            </div>
+            <div>
+              <label class="text-sm font-medium text-surface-600 block mb-1">英文标题</label>
+              <input v-model="addForm.title_en" placeholder="English title (optional)"
+                     class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 outline-none" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="text-sm font-medium text-surface-600 block mb-1">分类 *</label>
+                <input v-model="addForm.category" placeholder="如：宇宙学、生命科学..."
+                       class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 outline-none" />
+              </div>
+              <div>
+                <label class="text-sm font-medium text-surface-600 block mb-1">难度</label>
+                <select v-model="addForm.difficulty" class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm bg-white">
+                  <option value="easy">简单</option>
+                  <option value="medium">中等</option>
+                  <option value="hard">困难</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label class="text-sm font-medium text-surface-600 block mb-1">详细描述</label>
+              <textarea v-model="addForm.description" rows="3" placeholder="描述这个科学问题的背景和意义..."
+                        class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-primary-300 outline-none"></textarea>
+            </div>
+            <div>
+              <label class="text-sm font-medium text-surface-600 block mb-1">关键词（逗号分隔）</label>
+              <input v-model="addForm.keywordsStr" placeholder="如：暗物质, 宇宙膨胀, 引力波"
+                     class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-300 outline-none" />
+            </div>
+          </div>
+          <div class="flex justify-end gap-3 pt-2">
+            <button @click="showAddDialog = false" class="px-4 py-2 rounded-lg text-sm text-surface-500 hover:bg-surface-100">取消</button>
+            <button @click="submitAddQuestion" :disabled="addingQuestion || !addForm.title.trim() || !addForm.category.trim()"
+                    class="px-4 py-2 rounded-lg text-sm bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-colors">
+              {{ addingQuestion ? '添加中...' : '确认添加' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 弹窗: 任务详情 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <div v-if="taskDetail" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="taskDetail = null">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl p-6 space-y-4 max-h-[85vh] overflow-y-auto">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold text-surface-800">📄 任务详情 #{{ taskDetail.task_id }}</h2>
+            <button @click="taskDetail = null" class="text-surface-400 hover:text-surface-600 text-xl">✕</button>
+          </div>
+          <p v-if="taskDetail.question_title" class="text-sm text-surface-600">
+            题目：<strong>{{ taskDetail.question_title }}</strong>
+          </p>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <div><span class="text-surface-400">状态：</span>
+              <span :class="statusClass(taskDetail.status)" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ statusLabel(taskDetail.status) }}</span>
+            </div>
+            <div><span class="text-surface-400">版本：</span>v{{ taskDetail.version }}</div>
+            <div><span class="text-surface-400">创建：</span>{{ formatDate(taskDetail.created_at) }}</div>
+            <div><span class="text-surface-400">完成：</span>{{ formatDate(taskDetail.completed_at) }}</div>
+          </div>
+          <div v-if="taskDetail.result?.generation_mode" class="text-xs text-surface-400">
+            生成方式：{{ taskDetail.result.generation_mode }}
+            <span v-if="taskDetail.result.pipeline_id"> · 流水线 {{ taskDetail.result.pipeline_id }}</span>
+          </div>
+          <div v-if="taskDetail.document_path" class="p-3 bg-green-50 rounded-lg text-sm text-green-700 flex items-center justify-between">
+            <span>📁 {{ taskDetail.document_path }}</span>
+            <button @click="viewDocument(taskDetail.task_id)" class="text-green-600 hover:underline text-xs font-medium">查看内容 →</button>
+          </div>
+          <div v-if="taskDetail.error_message" class="p-3 bg-red-50 rounded-lg text-sm text-red-700">
+            ❌ {{ taskDetail.error_message }}
+          </div>
+          <div v-if="taskDetail.result && Object.keys(taskDetail.result).length > 0" class="space-y-2">
+            <p class="text-sm font-medium text-surface-600">生成元数据：</p>
+            <pre class="p-3 bg-surface-50 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap">{{ JSON.stringify(taskDetail.result, null, 2) }}</pre>
+          </div>
+
+          <!-- 反馈区 -->
+          <div class="space-y-2 pt-2 border-t border-surface-100">
+            <p class="text-sm font-medium text-surface-600">💬 提交反馈 / 迭代优化</p>
+            <textarea v-model="feedbackText" rows="3" placeholder="输入您的反馈意见..."
+                      class="w-full border border-surface-200 rounded-lg px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-primary-300 outline-none"></textarea>
+            <button @click="submitTaskFeedback" :disabled="!feedbackText.trim() || submittingFeedback"
+                    class="px-4 py-2 rounded-lg text-sm bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50 transition-colors">
+              {{ submittingFeedback ? '提交中...' : '提交反馈' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- 弹窗: 文档内容预览 -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <Teleport to="body">
+      <div v-if="docContent" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="docContent = null">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-bold text-surface-800">📄 文档预览</h2>
+            <button @click="docContent = null" class="text-surface-400 hover:text-surface-600 text-xl">✕</button>
+          </div>
+          <div class="prose prose-sm max-w-none p-4 bg-surface-50 rounded-lg whitespace-pre-wrap text-sm leading-relaxed border border-surface-200"
+               style="max-height: 60vh; overflow-y: auto;">{{ docContent.content }}</div>
+          <div class="text-xs text-surface-400">来源: {{ docContent.source }}{{ docContent.path ? ' · ' + docContent.path : '' }}</div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ═══ Toast 消息 ═══ -->
+    <Teleport to="body">
+      <Transition name="toast">
+        <div v-if="toastMsg" class="fixed top-6 right-6 z-[100] px-5 py-3 rounded-xl shadow-lg text-sm font-medium"
+             :class="toastType === 'success' ? 'bg-green-600 text-white' : toastType === 'error' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'">
+          {{ toastMsg }}
+        </div>
+      </Transition>
+    </Teleport>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import {
+  getQuestions, getQuestionDetail, getCategories, createQuestion,
+  generateQuestionDoc, batchGenerateDocs,
+  getTaskStatus, getTaskDocument, submitFeedback, getMyTasks,
+  type QuestionItem, type QuestionDetail, type CategoryStat,
+  type TaskStatus, type MyTaskItem, type DocumentContent
+} from '@/api/modules/questions'
+import { automationApi, type Pipeline } from '@/api/modules/automation'
+
+// ─── Toast ───
+const toastMsg = ref('')
+const toastType = ref<'success' | 'error' | 'info'>('info')
+let toastTimer: ReturnType<typeof setTimeout> | null = null
+
+function showToast(msg: string, type: 'success' | 'error' | 'info' = 'info', duration = 3000) {
+  if (toastTimer) clearTimeout(toastTimer)
+  toastMsg.value = msg
+  toastType.value = type
+  toastTimer = setTimeout(() => { toastMsg.value = '' }, duration)
+}
+
+// ─── 任务轮询 ───
+const taskPollTimer = ref<ReturnType<typeof setInterval> | null>(null)
+const POLL_INTERVAL = 5000
+
+function startTaskPolling() {
+  if (taskPollTimer.value) return
+  taskPollTimer.value = setInterval(async () => {
+    const hasActive = myTasks.value.some(
+      t => t.status === 'pending' || t.status === 'running'
+    )
+    if (!hasActive) { stopTaskPolling(); return }
+    await loadMyTasks()
+  }, POLL_INTERVAL)
+}
+
+function stopTaskPolling() {
+  if (taskPollTimer.value) {
+    clearInterval(taskPollTimer.value)
+    taskPollTimer.value = null
+  }
+}
+// ─── Tab ───
+const activeTab = ref<'questions' | 'tasks'>('questions')
+
+function switchTab(tab: 'questions' | 'tasks') {
+  activeTab.value = tab
+  if (tab === 'tasks') loadMyTasks()
+}
+
+// ─── 题库列表 ───
+const questions = ref<QuestionItem[]>([])
+const categories = ref<CategoryStat[]>([])
+const loading = ref(false)
+const filterCategory = ref('')
+const filterDifficulty = ref('')
+const keyword = ref('')
+const page = ref(1)
+const pageSize = 20
+const total = ref(0)
+const totalPages = computed(() => Math.ceil(total.value / pageSize) || 1)
+
+async function loadQuestions(p = 1) {
+  page.value = p
+  loading.value = true
+  try {
+    const res = await getQuestions({
+      category: filterCategory.value || undefined,
+      keyword: keyword.value || undefined,
+      difficulty: filterDifficulty.value || undefined,
+      page: p,
+      page_size: pageSize,
+    })
+    questions.value = res.data.items
+    total.value = res.data.total
+  } catch (e: any) {
+    showToast('加载题目失败: ' + (e.message || ''), 'error')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadCategories() {
+  try {
+    const res = await getCategories()
+    categories.value = res.data
+  } catch (e) {
+    console.error('load categories failed', e)
+  }
+}
+
+// ─── 批量选择 ───
+const selectedIds = ref<Set<number>>(new Set())
+
+const isAllSelected = computed(() =>
+  questions.value.length > 0 && questions.value.every(q => selectedIds.value.has(q.question_id))
+)
+const isPartialSelected = computed(() =>
+  selectedIds.value.size > 0 && !isAllSelected.value
+)
+
+function toggleSelect(qid: number) {
+  const s = new Set(selectedIds.value)
+  if (s.has(qid)) s.delete(qid)
+  else s.add(qid)
+  selectedIds.value = s
+}
+
+function toggleSelectAll() {
+  if (isAllSelected.value) {
+    selectedIds.value = new Set()
+  } else {
+    selectedIds.value = new Set(questions.value.map(q => q.question_id))
+  }
+}
+
+// 翻页时清空选择
+watch(page, () => { selectedIds.value = new Set() })
+
+// ─── 题目详情弹窗 ───
+const detailData = ref<QuestionDetail | null>(null)
+const detailSourceQuestion = ref<QuestionItem | null>(null)
+
+async function openDetailDialog(q: QuestionItem) {
+  detailSourceQuestion.value = q
+  try {
+    const res = await getQuestionDetail(q.question_id)
+    detailData.value = res.data
+  } catch (e: any) {
+    // fallback: 用列表数据
+    detailData.value = {
+      ...q,
+      task_history: [],
+    } as QuestionDetail
+  }
+}
+
+function openGenerateDialogFromDetail() {
+  if (detailSourceQuestion.value) {
+    openGenerateDialog(detailSourceQuestion.value)
+  }
+}
+
+// ─── 单个生成弹窗 ───
+const showGenDialog = ref(false)
+const genTarget = ref<QuestionItem | null>(null)
+const genPrompt = ref('')
+const genMode = ref<'direct' | 'pipeline'>('direct')
+const genPipelineId = ref('')
+const generating = ref(false)
+
+function openGenerateDialog(q: QuestionItem) {
+  genTarget.value = q
+  genPrompt.value = ''
+  genMode.value = 'direct'
+  genPipelineId.value = ''
+  showGenDialog.value = true
+}
+
+async function submitSingleGenerate() {
+  if (!genTarget.value) return
+  generating.value = true
+  try {
+    const pid = genMode.value === 'pipeline' ? genPipelineId.value : undefined
+    await generateQuestionDoc(genTarget.value.question_id, genPrompt.value, pid)
+    showGenDialog.value = false
+    showToast('✅ 生成任务已提交！可在"我的任务"中查看进度', 'success')
+    loadMyTasks()
+    startTaskPolling()
+  } catch (e: any) {
+    showToast('提交失败: ' + (e.message || ''), 'error')
+  } finally {
+    generating.value = false
+  }
+}
+
+// ─── 批量生成弹窗 ───
+const showBatchDialog = ref(false)
+const batchPrompt = ref('')
+const batchMode = ref<'direct' | 'pipeline'>('direct')
+const batchPipelineId = ref('')
+const batchGenerating = ref(false)
+
+function openBatchGenerateDialog() {
+  if (selectedIds.value.size === 0) return
+  batchPrompt.value = ''
+  batchMode.value = 'direct'
+  batchPipelineId.value = ''
+  showBatchDialog.value = true
+}
+
+async function submitBatchGenerate() {
+  if (selectedIds.value.size === 0) return
+  batchGenerating.value = true
+  try {
+    const pid = batchMode.value === 'pipeline' ? batchPipelineId.value : undefined
+    const res = await batchGenerateDocs([...selectedIds.value], batchPrompt.value, pid)
+    showBatchDialog.value = false
+    const d = res.data
+    showToast(`✅ ${d.message}${d.errors.length > 0 ? `，${d.errors.length} 个失败` : ''}`, d.errors.length > 0 ? 'info' : 'success')
+    startTaskPolling()
+    selectedIds.value = new Set()
+    loadMyTasks()
+  } catch (e: any) {
+    showToast('批量提交失败: ' + (e.message || ''), 'error')
+  } finally {
+    batchGenerating.value = false
+  }
+}
+
+// ─── 添加题目弹窗 ───
+const showAddDialog = ref(false)
+const addForm = ref({
+  title: '',
+  title_en: '',
+  category: '',
+  description: '',
+  keywordsStr: '',
+  difficulty: 'medium',
+})
+const addingQuestion = ref(false)
+
+async function submitAddQuestion() {
+  if (!addForm.value.title.trim() || !addForm.value.category.trim()) return
+  addingQuestion.value = true
+  try {
+    const kws = addForm.value.keywordsStr
+      .split(/[,，]/)
+      .map(s => s.trim())
+      .filter(Boolean)
+    await createQuestion({
+      title: addForm.value.title.trim(),
+      title_en: addForm.value.title_en.trim() || undefined,
+      category: addForm.value.category.trim(),
+      description: addForm.value.description.trim(),
+      keywords: kws,
+      difficulty: addForm.value.difficulty,
+    })
+    showAddDialog.value = false
+    addForm.value = { title: '', title_en: '', category: '', description: '', keywordsStr: '', difficulty: 'medium' }
+    showToast('✅ 题目添加成功！', 'success')
+    loadQuestions(page.value)
+    loadCategories()
+  } catch (e: any) {
+    showToast('添加失败: ' + (e.message || ''), 'error')
+  } finally {
+    addingQuestion.value = false
+  }
+}
+
+// ─── 流水线列表 ───
+const pipelines = ref<Pipeline[]>([])
+
+async function loadPipelines() {
+  try {
+    const res = await automationApi.list()
+    pipelines.value = res.data.pipelines || []
+  } catch (e) {
+    console.error('load pipelines failed', e)
+  }
+}
+
+// ─── 我的任务 ───
+const myTasks = ref<MyTaskItem[]>([])
+const tasksLoading = ref(false)
+const taskStatusFilter = ref('')
+
+async function loadMyTasks() {
+  tasksLoading.value = true
+  try {
+    const res = await getMyTasks({
+      page: 1,
+      page_size: 50,
+      status: taskStatusFilter.value || undefined,
+    })
+    myTasks.value = res.data.items
+  } catch (e: any) {
+    console.error('load tasks failed', e)
+  } finally {
+    tasksLoading.value = false
+  }
+}
+
+// ─── 任务详情弹窗 ───
+const taskDetail = ref<TaskStatus | null>(null)
+const feedbackText = ref('')
+const submittingFeedback = ref(false)
+
+async function viewTaskDetail(taskId: number) {
+  try {
+    const res = await getTaskStatus(taskId)
+    taskDetail.value = res.data
+    feedbackText.value = ''
+  } catch (e: any) {
+    showToast('加载任务详情失败', 'error')
+  }
+}
+
+async function submitTaskFeedback() {
+  if (!taskDetail.value || !feedbackText.value.trim()) return
+  submittingFeedback.value = true
+  try {
+    await submitFeedback(taskDetail.value.task_id, feedbackText.value)
+    feedbackText.value = ''
+    showToast('✅ 反馈已提交', 'success')
+    await viewTaskDetail(taskDetail.value.task_id)
+  } catch (e: any) {
+    showToast('提交反馈失败', 'error')
+  } finally {
+    submittingFeedback.value = false
+  }
+}
+
+// ─── 文档预览 ───
+const docContent = ref<DocumentContent | null>(null)
+
+async function viewDocument(taskId: number) {
+  try {
+    const res = await getTaskDocument(taskId)
+    docContent.value = res.data
+  } catch (e: any) {
+    showToast('文档尚未生成或无法读取', 'error')
+  }
+}
+
+// ─── 工具函数 ───
+function difficultyClass(d: string) {
+  const map: Record<string, string> = {
+    easy: 'bg-green-100 text-green-700',
+    medium: 'bg-yellow-100 text-yellow-700',
+    hard: 'bg-red-100 text-red-700',
+  }
+  return map[d] || 'bg-surface-100 text-surface-600'
+}
+
+function difficultyLabel(d: string) {
+  const map: Record<string, string> = { easy: '简单', medium: '中等', hard: '困难' }
+  return map[d] || d
+}
+
+function statusClass(s: string) {
+  const map: Record<string, string> = {
+    pending: 'bg-yellow-100 text-yellow-700',
+    running: 'bg-blue-100 text-blue-700',
+    completed: 'bg-green-100 text-green-700',
+    failed: 'bg-red-100 text-red-700',
+  }
+  return map[s] || 'bg-surface-100 text-surface-600'
+}
+
+function statusLabel(s: string) {
+  const map: Record<string, string> = {
+    pending: '等待中', running: '运行中', completed: '已完成', failed: '失败',
+  }
+  return map[s] || s
+}
+
+function formatDate(iso?: string | null) {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString('zh-CN')
+}
+
+// ─── 初始化 ───
+onMounted(() => {
+  loadCategories()
+  loadQuestions()
+  loadMyTasks()
+  loadPipelines()
+  startTaskPolling()
+})
+
+onUnmounted(() => {
+  stopTaskPolling()
+})
+</script>
+
+<style scoped>
+.toast-enter-active, .toast-leave-active {
+  transition: all 0.3s ease;
+}
+.toast-enter-from, .toast-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+</style>
+

@@ -1,0 +1,63 @@
+"""智研星枢 - Agent基类"""
+import asyncio
+import logging
+from abc import ABC, abstractmethod
+from app.agents.qwen_client import call_qwen
+from app.observability.tracer import Tracer
+from app.security.prompt_guard import prompt_guard
+
+logger = logging.getLogger(__name__)
+
+
+class BaseAgent(ABC):
+    name: str = "base"
+    display_name: str = "基础Agent"
+    description: str = ""
+    system_prompt: str = ""
+    requires_review: bool = False
+    max_retries: int = 3
+    timeout_seconds: int = 1200
+
+    @abstractmethod
+    def build_prompt(self, research_question: str, context: str, **kwargs) -> str:
+        pass
+
+    async def execute(self, research_question: str, context: str = "",
+                      model: str = None, project_id: int = None, task_id: int = None, **kwargs) -> dict:
+        span = Tracer.create_span("agent_step", self.display_name, project_id=project_id, task_id=task_id)
+        is_safe, reason = prompt_guard.check(research_question)
+        if not is_safe:
+            span.set_error(f"安全拦截: {reason}")
+            Tracer.finish_span(span)
+            raise ValueError(f"输入安全检测未通过: {reason}")
+
+        user_prompt = prompt_guard.sanitize_for_llm(self.build_prompt(research_question, context, **kwargs))
+        last_error = None
+
+        for attempt in range(self.max_retries):
+            try:
+                result = await asyncio.wait_for(
+                    call_qwen(self.system_prompt, user_prompt, model=model, project_id=project_id, task_id=task_id),
+                    timeout=self.timeout_seconds
+                )
+                span.metadata["attempt"] = attempt + 1
+                span.metadata["requires_review"] = self.requires_review
+                Tracer.finish_span(span)
+                return {
+                    "output": result["content"],
+                    "tokens": result["tokens"]["input"] + result["tokens"]["output"],
+                    "cost": result["cost"], "model": result["model"],
+                    "requires_review": self.requires_review
+                }
+            except asyncio.TimeoutError:
+                last_error = f"超时({self.timeout_seconds}s) 第{attempt+1}次"
+                logger.warning(f"{self.display_name} {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"{self.display_name} 第{attempt+1}次失败: {e}")
+            if attempt < self.max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+
+        span.set_error(f"全部{self.max_retries}次重试失败: {last_error}")
+        Tracer.finish_span(span)
+        raise RuntimeError(f"{self.display_name}执行失败: {last_error}")

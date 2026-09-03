@@ -1,0 +1,88 @@
+import client from '../client'
+
+export interface QuestionItem {
+  question_id: number
+  title: string
+  title_en?: string
+  category: string
+  description?: string
+  keywords: string[]
+  difficulty: string
+}
+
+export interface QuestionListResponse {
+  total: number
+  page: number
+  page_size: number
+  items: QuestionItem[]
+}
+
+export interface CategoryStat {
+  category: string
+  count: number
+}
+
+export interface TaskStatus {
+  task_id: number
+  question_id: number
+  status: string
+  result?: Record<string, any>
+  document_path?: string
+  version: number
+  feedback?: string
+  error_message?: string
+  created_at?: string
+  completed_at?: string
+}
+
+export interface MyTaskItem {
+  task_id: number
+  question_id: number
+  status: string
+  version: number
+  created_at?: string
+}
+
+// 获取题目列表
+export function getQuestions(params: {
+  category?: string
+  keyword?: string
+  page?: number
+  page_size?: number
+}) {
+  return client.get<QuestionListResponse>('/questions/', { params })
+}
+
+// 获取分类统计
+export function getCategories() {
+  return client.get<CategoryStat[]>('/questions/categories')
+}
+
+// 提交生成任务
+export function generateQuestionDoc(questionId: number, customPrompt = '') {
+  return client.post<{ task_id: number; status: string; message: string }>(
+    '/questions/generate',
+    { question_id: questionId, custom_prompt: customPrompt }
+  )
+}
+
+// 查询任务状态
+export function getTaskStatus(taskId: number) {
+  return client.get<TaskStatus>(`/questions/tasks/${taskId}`)
+}
+
+// 提交反馈
+export function submitFeedback(taskId: number, feedback: string) {
+  return client.post<{ message: string; task_id: number }>(
+    '/questions/feedback',
+    { task_id: taskId, feedback }
+  )
+}
+
+// 我的任务历史
+export function getMyTasks(params: { page?: number; page_size?: number }) {
+  return client.get<{ total: number; page: number; page_size: number; items: MyTaskItem[] }>(
+    '/questions/my-tasks',
+    { params }
+  )
+}

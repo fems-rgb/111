@@ -1,0 +1,404 @@
+"""智研星枢 - 赛题严格对齐导出服务 (P1-P20)
+XH-202619 赛道一·科学发现·方向1A
+项目：基于Qwen多智能体的AI Scientist——面向天文大数据的科学假设自动生成系统
+"""
+from urllib.parse import quote
+from app.utils.safe_json import safe_json_parse
+import io, json, logging, os
+from pathlib import Path
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.models import Project, AgentTask, Hypothesis, IterationRecord, User
+from app.database.session import get_db
+from app.api.deps import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/export", tags=["赛题文档导出"])
+
+# ===== 自动PDF导出配置 =====
+AUTO_EXPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "output" / "pdf_reports"
+
+
+def md_to_pdf(md_content: str, pdf_path: str, title: str = "Report") -> bool:
+    """将 Markdown 内容转换为 PDF 文件（同步函数，供 questions.py 等直接调用）
+    优先使用 WeasyPrint（更好的中文支持），失败则回退到 xhtml2pdf"""
+    # 唯一文件名：避免多任务并发写同一路径导致 PermissionError
+    import os as _os, time as _time, random as _random, string as _string
+    if pdf_path and pdf_path.endswith("report.pdf"):
+        _base = pdf_path[:-len("report.pdf")]
+        _stamp = _time.strftime("%Y%m%d_%H%M%S")
+        _suf = ''.join(_random.choices(_string.ascii_lowercase + _string.digits, k=6))
+        pdf_path = f"{_base}report_{_stamp}_{_suf}.pdf"
+    """将 Markdown 内容转换为 PDF 文件（同步函数，供 questions.py 等直接调用）
+    优先使用 WeasyPrint（更好的中文支持），失败则回退到 xhtml2pdf"""
+    # 方案1: WeasyPrint (推荐，中文支持好)
+    try:
+        import weasyprint
+        import markdown as md_lib
+        html_body = md_lib.markdown(md_content, extensions=['tables', 'fenced_code'])
+        full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+@page {{ size: a4 portrait; margin: 20mm 15mm; }}
+body {{ font-family: 'Microsoft YaHei', 'SimHei', sans-serif; line-height: 1.8; font-size: 11pt; }}
+h1 {{ color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; font-size: 16pt; page-break-before: always; }}
+h2 {{ color: #283593; font-size: 13pt; border-bottom: 1px solid #ccc; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+th, td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; }}
+th {{ background-color: #f5f5f5; }}
+pre {{ background: #f5f5f5; padding: 8px; border-radius: 4px; overflow-x: auto; }}
+code {{ font-family: 'Courier New', monospace; font-size: 9pt; }}
+</style>
+</head><body>{html_body}</body></html>"""
+        doc = weasyprint.HTML(string=full_html)
+        doc.write_pdf(pdf_path)
+        logger.info(f"[WeasyPrint] PDF 生成成功: {pdf_path}")
+        return True
+    except Exception as e:
+        logger.warning(f"[WeasyPrint] 失败，回退到 xhtml2pdf: {e}")
+    # 方案2: xhtml2pdf (回退)
+    try:
+        from xhtml2pdf import pisa
+        import markdown as md_lib
+    except ImportError:
+        logger.warning("xhtml2pdf/markdown 未安装，无法生成PDF")
+        return False
+
+    html_body = md_lib.markdown(md_content, extensions=['tables', 'fenced_code'])
+    full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+@page {{ size: a4 portrait; margin: 20mm 15mm; }}
+body {{ font-family: 'Microsoft YaHei', 'SimHei', 'Noto Sans CJK SC', STSong-Light, sans-serif; line-height: 1.8; font-size: 11pt; }}
+h1 {{ color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; font-size: 16pt; -pdf-keep-with-next: true; page-break-before: always; }}
+h2 {{ color: #283593; font-size: 13pt; border-bottom: 1px solid #ccc; -pdf-keep-with-next: true; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+th, td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; }}
+th {{ background-color: #e8eaf6; }}
+pre {{ background-color: #f5f5f5; padding: 10px; font-size: 9pt; }}
+code {{ background-color: #f5f5f5; padding: 1px 4px; }}
+</style></head><body>{html_body}</body></html>"""
+
+    Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    status = pisa.CreatePDF(full_html, dest=buf, encoding='utf-8')
+    if status.err:
+        logger.error(f"md_to_pdf xhtml2pdf errors: {status.err}")
+        return False
+
+    Path(pdf_path).write_bytes(buf.getvalue())
+    logger.info(f"✅ md_to_pdf 成功: {pdf_path} ({len(buf.getvalue())} bytes)")
+    return True
+
+
+
+async def auto_export_pdf(project_id: int, db: AsyncSession) -> str | None:
+    """自动生成PDF并保存到 output/pdf_reports/ 目录，返回文件路径"""
+    try:
+        from xhtml2pdf import pisa
+        import markdown as md_lib
+    except ImportError:
+        logger.warning("xhtml2pdf/markdown 未安装，跳过自动PDF导出")
+        return None
+
+    proj = (await db.execute(
+        select(Project).where(Project.id == project_id)
+    )).scalar_one_or_none()
+    if not proj:
+        logger.error(f"auto_export_pdf: project {project_id} not found")
+        return None
+
+    tasks_r = await db.execute(select(AgentTask).where(AgentTask.project_id == project_id))
+    hypos_r = await db.execute(select(Hypothesis).where(Hypothesis.project_id == project_id))
+    iters_r = await db.execute(select(IterationRecord).where(IterationRecord.project_id == project_id))
+    tasks = tasks_r.scalars().all()
+    hypos = hypos_r.scalars().all()
+    iters = iters_r.scalars().all()
+
+    team = TeamConfig()
+    if proj.competition_config:
+        try:
+            d = safe_json_parse(proj.competition_config, fallback={}, label="auto_export")
+            team = TeamConfig(**{k: v for k, v in d.items() if k in TeamConfig.model_fields})
+        except Exception:
+            pass
+
+    md_text = _build_p1_to_p20(proj, tasks, hypos, iters, team)
+    html_body = md_lib.markdown(md_text, extensions=['tables', 'fenced_code'])
+    full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+@page {{ size: a4 portrait; margin: 20mm 15mm; }}
+body {{ font-family: 'Microsoft YaHei', 'SimHei', 'Noto Sans CJK SC', STSong-Light, sans-serif; line-height: 1.8; font-size: 11pt; }}
+h1 {{ color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; font-size: 16pt; -pdf-keep-with-next: true; page-break-before: always; }}
+h2 {{ color: #283593; font-size: 13pt; border-bottom: 1px solid #ccc; -pdf-keep-with-next: true; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+th, td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; }}
+th {{ background-color: #e8eaf6; }}
+pre {{ background-color: #f5f5f5; padding: 10px; font-size: 9pt; }}
+code {{ background-color: #f5f5f5; padding: 1px 4px; }}
+</style></head><body>{html_body}</body></html>"""
+
+    AUTO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (proj.name or f"project_{project_id}"))[:60]
+    filename = f"{COMPETITION['topic_id']}_{safe_name}_{ts}.pdf"
+    filepath = AUTO_EXPORT_DIR / filename
+
+    buf = io.BytesIO()
+    status = pisa.CreatePDF(full_html, dest=buf, encoding='utf-8')
+    if status.err:
+        logger.error(f"auto_export_pdf xhtml2pdf errors: {status.err}")
+        return None
+
+    filepath.write_bytes(buf.getvalue())
+    logger.info(f"✅ PDF自动导出成功: {filepath} ({len(buf.getvalue())} bytes)")
+    return str(filepath)
+
+
+COMPETITION = {
+    "topic_id": "XH-202619",
+    "name": "2026年度中国青年科技创新“揭榜挂帅”擂台赛",
+    "track": "赛道一·科学发现",
+    "direction": "方向1A｜基于国产开源大模型的AI Scientist研发与应用",
+    "issuer": "阿里云 / 中国科学院国家天文台 / 国家天文科学数据中心",
+    "co_organizer": "中国科学院大学他山学科交叉创新协会 / 集思谱平台",
+    "core_task": "基于国产开源大模型（Qwen）研发面向科学假设生成的AI Scientist系统，实现从数据理解→文献综述→假设生成→实验设计→验证迭代的完整科研闭环",
+}
+
+PROJECT_IDENTITY = {
+    "name": "基于Qwen多智能体的AI Scientist：面向天文大数据的科学假设自动生成系统",
+    "core_claim": "基于Qwen系列国产开源大模型，构建七智能体协作的AI Scientist系统，面向国家天文台科学数据，自动完成数据画像→文献锚定→知识缺口识别→科学假设生成→验证方案设计→实证检验→反馈迭代的完整AI for Science科研闭环",
+    "agents": [
+        ("① 数据画像智能体", "自动识别字段、诊断缺失、分析文本复杂度"),
+        ("② 理论锚定智能体", "匹配理论库→展示候选→研究者勾选确认（人在回路）"),
+        ("③ 变量工程智能体", "Qwen对文本列进行多维度语义编码（核心创新）"),
+        ("④ 逻辑演绎智能体", "EDA分析 + 生成3-5条结构化假设"),
+        ("⑤ 实证策略智能体", "推荐模型→生成代码→自动执行验证"),
+        ("⑥ 验证与对照模块", "假设vs结果一一对照，生成验证报告"),
+        ("⑦ 反馈迭代模块", "自动修正假设重新验证/接收人工反馈"),
+    ],
+}
+
+
+class TeamConfig(BaseModel):
+    team_name: str = ""
+    members: str = ""
+    tech_team: str = ""
+    text_team: str = ""
+    advisor: str = ""
+    university: str = ""
+    primary_case: str = ""
+
+
+def _safe(val, fallback="（无数据）"):
+    """安全取值，None/空字符串返回fallback"""
+    if val is None:
+        return fallback
+    s = str(val).strip()
+    return s if s else fallback
+
+
+def _hypo_table(hypos: list) -> str:
+    """将假设列表渲染为Markdown表格"""
+    if not hypos:
+        return "（本轮未生成假设）"
+    rows = ["| # | 假设陈述 | 方向 | 可验证性评分 | 状态 |",
+            "|---|---------|------|-------------|------|"]
+    for i, h in enumerate(hypos, 1):
+        stmt = _safe(getattr(h, "statement", None))[:80]
+        direction = _safe(getattr(h, "direction", None))
+        score = getattr(h, "verifiability_score", None)
+        score_str = f"{score}/10" if score is not None else "—"
+        status = _safe(getattr(h, "status", None))
+        rows.append(f"| H{i} | {stmt} | {direction} | {score_str} | {status} |")
+    return "\n".join(rows)
+
+
+def _iter_table(iters: list) -> str:
+    """将迭代记录渲染为Markdown表格"""
+    if not iters:
+        return "首轮运行，暂无迭代记录。后续可通过验证与对照模块触发迭代。"
+    rows = ["| 轮次 | 发现问题 | 调整措施 | 调整后结果 |",
+            "|------|---------|---------|-----------|"]
+    for it in iters:
+        num = getattr(it, "iteration_num", "?")
+        issue = _safe(getattr(it, "issue_found", None))[:100]
+        action = _safe(getattr(it, "adjustment", None))[:100]
+        result = _safe(getattr(it, "result_after", None))[:100]
+        rows.append(f"| {num} | {issue} | {action} | {result} |")
+    return "\n".join(rows)
+
+
+def _task_summary(tasks: list) -> str:
+    """将任务列表渲染为流水线摘要表"""
+    if not tasks:
+        return "| （无任务记录） | — | — | — | — |"
+    rows = ["| 步骤 | 智能体 | 输入摘要 | 输出摘要 | 关键指标 |",
+            "|------|--------|---------|---------|-----------|"]
+    for t in tasks:
+        step = getattr(t, "step_order", "?")
+        agent = _safe(getattr(t, "agent_name", None))
+        inp = _safe(getattr(t, "input_summary", None))[:60]
+        out = _safe(getattr(t, "output_summary", None))[:60]
+        metric = _safe(getattr(t, "key_metric", None))
+        rows.append(f"| {step} | {agent} | {inp} | {out} | {metric} |")
+    return "\n".join(rows)
+
+
+def _extract_structured_field(tasks: list, field_name: str, fallback: str = "[待补充]") -> str:
+    """优先从任务result中的结构化JSON提取字段，失败则回退到关键词提取"""
+    import json as _json
+    for t in tasks:
+        result = getattr(t, "result", None)
+        if not result:
+            continue
+        # result可能是dict或str
+        data = result if isinstance(result, dict) else None
+        if data is None:
+            try:
+                data = _json.loads(str(result))
+            except Exception:
+                continue
+        # 递归查找field_name
+        if isinstance(data, dict) and field_name in data:
+            val = data[field_name]
+            if isinstance(val, list):
+                return chr(10).join(str(v) for v in val) if val else fallback
+            return str(val) if val else fallback
+        # 嵌套在output字段中
+        output = data.get("output", {}) if isinstance(data, dict) else {}
+        if isinstance(output, dict) and field_name in output:
+            val = output[field_name]
+            if isinstance(val, list):
+                return chr(10).join(str(v) for v in val) if val else fallback
+            return str(val) if val else fallback
+    return fallback
+
+
+def _extract_field_from_tasks(tasks: list, field_keywords: list[str], fallback: str = "[待补充]") -> str:
+    """从任务输出中按关键词提取字段内容"""
+    for t in tasks:
+        output = str(getattr(t, "output_summary", "") or "")
+        content = str(getattr(t, "result", "") or "")
+        combined = output + content
+        for kw in field_keywords:
+            if kw in combined:
+                snippet = combined[:800]
+                return snippet
+    return fallback
+
+
+def _build_p1_to_p20(project: Project, tasks: list, hypotheses: list,
+                      iterations: list, team: TeamConfig) -> str:
+    """生成符合 XH-202619 12字段标准的 Markdown 报告"""
+    # 1. 优先使用 WritingAgent 的完整输出
+    for t in tasks:
+        if getattr(t, 'agent_name', '') == 'writing':
+            out = getattr(t, 'output_data', '')
+            if out and out.strip():
+                # 检查是否包含12字段标识
+                if '## 1. 待研究问题' in out or '## 1. 待研究问题（Problem Statement）' in out:
+                    return out
+                else:
+                    return out
+
+    # 2. 尝试使用 project.final_output
+    if project.final_output and project.final_output.strip():
+        return project.final_output
+
+    # 3. 回退：生成占位报告
+    return """# 科研假设与研究计划（XH-202619）
+
+## 1. 待研究问题（Problem Statement）
+（当前项目尚未生成完整报告，请确保 WritingAgent 已执行）
+
+## 2. 解决思路（Rationale）
+（待补充）
+
+## 3. 必要的技术手段（Technical Details）
+（待补充）
+
+## 4. 数据集（Datasets）
+### Source
+（待补充）
+### Target
+（待补充）
+
+## 5. 标题（Paper Title）
+（待补充）
+
+## 6. 摘要（Paper Abstract）
+（待补充）
+
+## 7. 方法论（Methods）
+（待补充）
+
+## 8. 实验设计（Experiments）
+（待补充）
+
+## 9. 实验结果（Results）
+（待补充）
+
+## 10. 参考论文（References）
+（待补充）
+"""
+
+def generate_challenge_cup_pdf(project_id: int) -> str | None:
+    """为指定项目生成对标'挑战杯'赛题规范的 PDF，返回 pdf 路径或 None"""
+    try:
+        import weasyprint
+        from jinja2 import Environment, FileSystemLoader
+        from app.database.session import AsyncSessionLocal
+        from app.database.models import Project, Hypothesis, ScienceQuestion
+        import asyncio
+        async def _gather():
+            async with AsyncSessionLocal() as _db:
+                proj = (await _db.execute(
+                    select(Project).where(Project.id == project_id))).scalar_one_or_none()
+                if not proj:
+                    return None
+                hyps = (await _db.execute(
+                    select(Hypothesis).where(Hypothesis.project_id == project_id)
+                    .order_by(Hypothesis.id.desc()).limit(5))).scalars().all()
+                qs = (await _db.execute(
+                    select(ScienceQuestion).where(ScienceQuestion.project_id == project_id)
+                    .order_by(ScienceQuestion.question_id.desc()).limit(10))).scalars().all()
+                return proj, hyps, qs
+        result = asyncio.run(_gather())
+        if result is None:
+            return None
+        proj, hyps, qs = result
+
+        # 收集图表
+        chart_files = []
+        for h in hyps:
+            r = h.result or {} if hasattr(h,'result') else {}
+            exp = r.get('experiment', {}) if isinstance(r, dict) else {}
+            for c in exp.get('charts', []):
+                p = c.get('path','') if isinstance(c,dict) else c
+                if p and os.path.exists(p):
+                    chart_files.append(p)
+        # 去重保序
+        seen, uniq = set(), []
+        for c in chart_files:
+            if c not in seen:
+                seen.add(c); uniq.append(c)
+        chart_files = uniq[:8]
+
+        env = Environment(loader=FileSystemLoader(os.path.join(os.path.dirname(__file__),'templates')))
+        tpl = env.get_template('challenge_cup_template.html')
+        html = tpl.render(
+            project=proj, hypotheses=hyps, questions=qs, charts=chart_files,
+            generated_at=datetime.now().strftime('%Y-%m-%d %H:%M')
+        )
+        out_dir = AUTO_EXPORT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = out_dir / f"challenge_cup_project_{project_id}.pdf"
+        weasyprint.HTML(string=html).write_pdf(str(pdf_path))
+        logger.info(f"[ChallengeCupPDF] 已生成: {pdf_path}")
+        return str(pdf_path)
+    except Exception as e:
+        logger.error(f"[ChallengeCupPDF] 生成失败: {e}")
+        return None

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 20mm 16mm; }
+  * { font-family: "Microsoft YaHei","SimHei","Noto Sans CJK SC",sans-serif; }
+  body { font-size: 10.5pt; line-height: 1.7; color: #1a1a1a; }
+  h1 { font-size: 16pt; color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; }
+  h2 { font-size: 13pt; color: #283593; border-left: 4px solid #283593; padding-left: 8px; margin-top: 18px; }
+  h3 { font-size: 11pt; color: #3949ab; }
+  table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 9.5pt; }
+  th, td { border: 1px solid #bbb; padding: 5px 8px; vertical-align: top; }
+  th { background: #e8eaf6; }
+  .meta { font-size: 9pt; color: #555; }
+  .chart { max-width: 100%; margin: 8px 0; border: 1px solid #eee; }
+  .score { color: #c62828; font-weight: bold; }
+</style>
+</head>
+<body>
+{% set hypotheses = hypotheses or [] %}
+{% set charts = charts or [] %}
+{% set references = references or [] %}
+
+  <h1>{{ project.title if project else "科学假设与研究计划" }}</h1>
+  <p class="meta">生成时间: {{ generated_at }} | 项目ID: {{ project.id if project else "-" }} | 依据: 挑战杯 XH-202619 赛题规范</p>
+
+  <h2>一、待研究问题 (Problem Statement)</h2>
+  <p>{{ problem_statement or project.research_question or project.description or "（项目描述）" }}</p>
+
+  <h2>二、解决思路 (Rationale)</h2>
+  <p>基于国产开源大模型(Qwen)多智能体架构，自动完成"文献挖掘→知识缺口识别→假设生成→实验模拟→结果验证"的智能闭环。
+     本系统对生成的假设进行可验证性评分，并自动运行数值实验以产出可视化证据。</p>
+
+  <h2>三、必要的技术手段 (Technical Details)</h2>
+  <table>
+    <tr><th>类别</th><th>技术</th><th>用途</th></tr>
+    <tr><td>基座模型</td><td>Qwen (千问) 开源系列</td><td>科学文本理解 / 假设生成</td></tr>
+    <tr><td>多智能体</td><td>知识缺口 / 文献综述 / 假设生成 / 实验规划 / 数据分析 / 学术写作</td><td>科研灵感流水线</td></tr>
+    <tr><td>数值实验</td><td>NumPy / SciPy / Matplotlib (+ WeasyPrint)</td><td>可验证假设的数值模拟与图表</td></tr>
+    <tr><td>PDF 生成</td><td>WeasyPrint + Jinja2</td><td>赛题规范 PDF 输出</td></tr>
+  </table>
+
+  <h2>四、候选假设 (Hypotheses)</h2>
+  {% for h in hypotheses %}
+  <h3>假设 #{{ loop.index }} — {{ h.hypo_id or ('H' ~ loop.index) }} (可验证性: <span class="score">{{ h.testability_score or "-" }}/10</span>)</h3>
+  <p><b>内容:</b> {{ h.statement or h.content or h.title }}</p>
+  {% if h.variables %}<p><b>变量:</b> {{ h.variables }}</p>{% endif %}
+  {% if h.suggested_method %}<p><b>建议验证方法:</b> {{ h.suggested_method }}</p>{% endif %}
+  {% if h.evidence_chain %}<p><b>证据链:</b> {{ h.evidence_chain }}</p>{% endif %}
+{% else %}
+  <p>（暂无已生成假设）</p>
+{% endfor %}
+
+  <h2>五、实验设计与结果 (Experiments & Results)</h2>
+  <p>系统为每个假设自动运行内置数值实验模板（线性回归 / 蒙特卡洛 / 中心极限定理演示等），
+     下图为本项目关联实验产出的可视化图表:</p>
+  {% for ch in charts %}
+    <div><img class="chart" src="data:image/png;base64,{{ ch.b64 }}" alt="实验图表"></div>
+  {% else %}
+    <p>（暂无实验图表，运行"实验模拟场"后将自动插入此处）</p>
+  {% endfor %}
+
+  <h2>六、论文信息 (Paper)</h2>
+  <p><b>标题:</b> {{ project.title or "-" }}</p>
+  <p><b>摘要:</b> 本文基于国产开源大模型 Qwen 构建多智能体 AI Scientist 系统，针对"{{ project.title or '' }}"问题，
+     自动识别知识缺口、生成可验证科学假设并运行数值实验验证，形成从"数据/文献输入"到"可验证假设输出"的智能闭环。</p>
+  <p><b>方法:</b> 多智能体协作 (Multi-Agent) + 归纳/演绎推理 + 数值模拟 + 可视化证据。</p>
+  <p><b>评估指标:</b> 假设可验证性评分 (1-10)；实验图表产出；赛题字段完整度。</p>
+
+  <h2>七、参考论文 (References)</h2>
+  <ol>
+    <li>Planck Collaboration. Planck 2018 results. VI. Cosmological parameters. A&A, 2020.</li>
+    <li>Rubin V. et al. Rotational properties of 21 SC galaxies. ApJ, 1980.</li>
+    <li>Zwicky F. Die Rotverschiebung von extragalaktischen Nebeln. Helv. Phys. Acta, 1933.</li>
+    <li>Milgrom M. A modification of Newtonian dynamics. ApJ, 1983.</li>
+  </ol>
+  <p class="meta">注: 参考文献为示例条目，正式提交前请替换为系统实际引用的真实文献。</p>
+
+  {% if charts %}
+  <h2>五（补）、实验图表 (Experimental Figures)</h2>
+  {% for c in charts %}
+    <div style="text-align:center;margin:1em 0;">
+      <h3>{{ c.name }}</h3>
+      <img src="data:image/png;base64,{{ c.b64 }}" style="max-width:100%;border:1px solid #eee;">
+    </div>
+  {% endfor %}
+  {% endif %}
+
+  {% if references %}
+  <h2>七（补）、参考文献 (References)</h2>
+  <ol>
+  {% for r in references %}
+    <li>{{ r.authors }} ({{ r.year }}). <strong>{{ r.title }}</strong>.
+      {% if r.doi %}DOI: {{ r.doi }}{% elif r.url %}<a href="{{ r.url }}">{{ r.url }}</a>{% endif %}
+    </li>
+  {% endfor %}
+  </ol>
+  {% else %}
+  <h2>七（补）、参考文献 (References)</h2>
+  <p><em>本项目运行环境未联网检索，暂未附加参考文献。</em></p>
+  {% endif %}
+
+  <h2>数据集 (Datasets)</h2>
+  {% if datasets %}
+  <table>
+    <tr><th>数据集</th><th>Source（来源）</th><th>Target（推演依据/拟采集特征）</th></tr>
+    {% for d in datasets %}
+    <tr><td>{{ d.name }}</td><td>{{ d.source }}</td><td>{{ d.target }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}<p>（待补充）</p>{% endif %}
+
+  <h2>基线对比与评估指标 (Baselines & Metrics)</h2>
+  <p><b>基线对比 (Baselines):</b> {{ baselines or "（待补充）" }}</p>
+  <p><b>评估指标 (Metrics):</b> {{ metrics or "（待补充）" }}</p>
+
+  <h2>实验结果 (Results)</h2>
+  <p>{{ results or "（暂无执行结果）" }}</p>
+
+</body>
+</html>

@@ -1,0 +1,213 @@
+# -*- coding: utf-8 -*-
+"""实验模拟场 API - 动态模板 + 沙箱执行"""
+import logging, os
+from typing import Optional
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+from datetime import datetime, timezone
+from app.database.session import get_db
+from app.database.models import User, ExperimentRun, Project, ExperimentTemplate
+from app.api.deps import get_current_user
+from app.services.experiment_engine import run_experiment, BUILTIN_TEMPLATES
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix='/experiment-lab', tags=['实验模拟场'])
+
+
+async def seed_builtin_templates(db: AsyncSession):
+    """启动时自动写入内置模板（幂等）"""
+    existing = (await db.execute(select(func.count()).select_from(ExperimentTemplate).where(
+        ExperimentTemplate.is_builtin == True))).scalar() or 0
+    if existing >= len(BUILTIN_TEMPLATES):
+        return
+    # 清除旧内置模板重新写入
+    from sqlalchemy import delete
+    await db.execute(delete(ExperimentTemplate).where(ExperimentTemplate.is_builtin == True))
+    for t in BUILTIN_TEMPLATES:
+        db.add(ExperimentTemplate(
+            name=t['name'], description=t['description'],
+            code=t['code'], category=t.get('category', '通用'),
+            is_builtin=True))
+    await db.commit()
+    logger.info(f'已写入 {len(BUILTIN_TEMPLATES)} 个内置实验模板')
+
+
+class RunRequest(BaseModel):
+    code: str = Field(..., min_length=10, max_length=50000)
+    title: str = Field('', max_length=200)
+    project_id: Optional[int] = None
+    question_task_id: Optional[int] = None
+    generate_video: bool = True
+    timeout: int = Field(60, ge=10, le=300)
+
+
+class TemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = Field('', max_length=1000)
+    code: str = Field(..., min_length=10, max_length=50000)
+    category: str = Field('自定义', max_length=100)
+
+
+class TemplateUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=200)
+    description: Optional[str] = Field(None, max_length=1000)
+    code: Optional[str] = Field(None, min_length=10, max_length=50000)
+    category: Optional[str] = Field(None, max_length=100)
+
+
+@router.post('/run')
+async def run_exp(req: RunRequest, bg: BackgroundTasks,
+                  db: AsyncSession = Depends(get_db),
+                  user: User = Depends(get_current_user)):
+    run = ExperimentRun(user_id=user.id, project_id=req.project_id,
+                        question_task_id=req.question_task_id,
+                        title=req.title or '未命名实验', code=req.code, status='running')
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+    bg.add_task(_exec, run.id, req.code, req.timeout, req.generate_video)
+    return {'run_id': run.id, 'status': 'running'}
+
+
+async def _exec(run_id, code, timeout, gen_video):
+    from app.database.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        try:
+            run = (await db.execute(select(ExperimentRun).where(ExperimentRun.id == run_id))).scalar_one_or_none()
+            if not run: return
+            res = await run_experiment(code, run_id, timeout, gen_video)
+            run.status = 'completed' if res['success'] else 'failed'
+            run.output_text = res.get('output_text', '')
+            run.charts = res.get('charts', [])
+            run.video_path = res.get('video_path')
+            run.data_table = res.get('data_table')
+            run.error_message = res.get('error', '') or ''
+            run.duration_ms = res.get('duration_ms', 0)
+            run.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+            if run.project_id and res['charts']:
+                proj = (await db.execute(select(Project).where(Project.id == run.project_id))).scalar_one_or_none()
+                if proj:
+                    ev = list(proj.evidence_files or [])
+                    for c in res['charts']:
+                        if c.get('path') and c['path'] not in ev: ev.append(c['path'])
+                    if res.get('video_path'): ev.append(res['video_path'])
+                    proj.evidence_files = ev
+                    await db.commit()
+        except Exception as e:
+            logger.error(f'实验执行异常: {e}', exc_info=True)
+
+
+@router.get('/status/{run_id}')
+async def status(run_id: int, db: AsyncSession = Depends(get_db),
+                 user: User = Depends(get_current_user)):
+    run = (await db.execute(select(ExperimentRun).where(
+        ExperimentRun.id == run_id, ExperimentRun.user_id == user.id))).scalar_one_or_none()
+    if not run: raise HTTPException(404, '实验记录不存在')
+    return {'run_id': run.id, 'status': run.status, 'title': run.title,
+            'output_text': run.output_text, 'charts': run.charts or [],
+            'video_path': run.video_path, 'data_table': run.data_table,
+            'error_message': run.error_message, 'duration_ms': run.duration_ms,
+            'created_at': run.created_at.isoformat() if run.created_at else None,
+            'completed_at': run.completed_at.isoformat() if run.completed_at else None}
+
+
+@router.get('/history')
+async def history(page: int = 1, page_size: int = 20, project_id: Optional[int] = None,
+                  db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    base = select(ExperimentRun).where(ExperimentRun.user_id == user.id)
+    if project_id: base = base.where(ExperimentRun.project_id == project_id)
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar() or 0
+    rows = (await db.execute(base.order_by(ExperimentRun.created_at.desc())
+                             .offset((page-1)*page_size).limit(page_size))).scalars().all()
+    return {'total': total, 'items': [{'run_id': r.id, 'title': r.title, 'status': r.status,
+            'charts_count': len(r.charts or []), 'has_video': bool(r.video_path),
+            'duration_ms': r.duration_ms,
+            'created_at': r.created_at.isoformat() if r.created_at else None} for r in rows]}
+
+
+# ── 模板 CRUD（动态，从数据库读写）──
+
+@router.get('/templates')
+async def list_templates(db: AsyncSession = Depends(get_db),
+                         user: User = Depends(get_current_user)):
+    await seed_builtin_templates(db)
+    rows = (await db.execute(
+        select(ExperimentTemplate).order_by(ExperimentTemplate.is_builtin.desc(), ExperimentTemplate.id)
+    )).scalars().all()
+    return {'templates': [{'id': r.id, 'name': r.name, 'description': r.description,
+                           'category': r.category, 'is_builtin': r.is_builtin} for r in rows]}
+
+
+@router.get('/templates/{tid}')
+async def get_template(tid: int, db: AsyncSession = Depends(get_db),
+                       user: User = Depends(get_current_user)):
+    t = (await db.execute(select(ExperimentTemplate).where(ExperimentTemplate.id == tid))).scalar_one_or_none()
+    if not t: raise HTTPException(404, '模板不存在')
+    return {'id': t.id, 'name': t.name, 'description': t.description,
+            'code': t.code, 'category': t.category, 'is_builtin': t.is_builtin}
+
+
+@router.post('/templates')
+async def create_template(req: TemplateCreate, db: AsyncSession = Depends(get_db),
+                          user: User = Depends(get_current_user)):
+    t = ExperimentTemplate(name=req.name, description=req.description,
+                           code=req.code, category=req.category,
+                           is_builtin=False, user_id=user.id)
+    db.add(t)
+    await db.commit()
+    await db.refresh(t)
+    return {'id': t.id, 'name': t.name, 'message': '模板创建成功'}
+
+
+@router.put('/templates/{tid}')
+async def update_template(tid: int, req: TemplateUpdate, db: AsyncSession = Depends(get_db),
+                          user: User = Depends(get_current_user)):
+    t = (await db.execute(select(ExperimentTemplate).where(ExperimentTemplate.id == tid))).scalar_one_or_none()
+    if not t: raise HTTPException(404, '模板不存在')
+    if t.is_builtin: raise HTTPException(403, '内置模板不可修改')
+    if req.name is not None: t.name = req.name
+    if req.description is not None: t.description = req.description
+    if req.code is not None: t.code = req.code
+    if req.category is not None: t.category = req.category
+    await db.commit()
+    return {'id': t.id, 'message': '模板更新成功'}
+
+
+@router.delete('/templates/{tid}')
+async def delete_template(tid: int, db: AsyncSession = Depends(get_db),
+                          user: User = Depends(get_current_user)):
+    t = (await db.execute(select(ExperimentTemplate).where(ExperimentTemplate.id == tid))).scalar_one_or_none()
+    if not t: raise HTTPException(404, '模板不存在')
+    if t.is_builtin: raise HTTPException(403, '内置模板不可删除')
+    await db.delete(t)
+    await db.commit()
+    return {'message': '模板已删除'}
+
+
+@router.get('/chart/{run_id}/{filename}')
+async def chart_file(run_id: int, filename: str,
+                     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    from app.services.experiment_engine import OUTPUT_ROOT
+    # 防止路径穿越
+    safe_name = os.path.basename(filename)
+    p = os.path.join(OUTPUT_ROOT, str(run_id), 'charts', safe_name)
+    real_p = os.path.realpath(p)
+    real_root = os.path.realpath(os.path.join(OUTPUT_ROOT, str(run_id), 'charts'))
+    if not real_p.startswith(real_root) or not os.path.exists(real_p):
+        raise HTTPException(404, '图表文件不存在')
+    media = 'image/png' if safe_name.endswith('.png') else 'image/jpeg' if safe_name.endswith(('.jpg','.jpeg')) else 'image/svg+xml'
+    return FileResponse(real_p, media_type=media, headers={'Cache-Control': 'no-cache'})
+
+
+@router.get('/video/{run_id}')
+async def video_file(run_id: int, db: AsyncSession = Depends(get_db),
+                     user: User = Depends(get_current_user)):
+    run = (await db.execute(select(ExperimentRun).where(
+        ExperimentRun.id == run_id, ExperimentRun.user_id == user.id))).scalar_one_or_none()
+    if not run or not run.video_path or not os.path.exists(run.video_path):
+        raise HTTPException(404, '视频文件不存在')
+    return FileResponse(run.video_path, media_type='image/gif', headers={'Cache-Control': 'no-cache'})

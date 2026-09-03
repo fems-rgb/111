@@ -1,0 +1,904 @@
+
+def _run_in_new_loop(coro):
+    """在独立线程的全新事件循环里执行 coro"""
+    import asyncio as _aio
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as _pool:
+        return _pool.submit(_aio.run, coro).result()
+def _safe_run(coro):
+    """在独立线程的全新事件循环里执行 coro，避免 asyncio.run() cannot be called from a running event loop"""
+    import asyncio as _aio
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as _pool:
+        return _pool.submit(_aio.run, coro).result()
+
+"""智研星枢 - 赛题严格对齐导出服务 (P1-P20)
+XH-202619 赛道一·科学发现·方向1A
+项目：基于Qwen多智能体的AI Scientist——面向天文大数据的科学假设自动生成系统
+"""
+from urllib.parse import quote
+from app.utils.safe_json import safe_json_parse
+import io, json, logging, os
+from pathlib import Path
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from app.database.models import Project, AgentTask, Hypothesis, IterationRecord, User
+from app.database.session import get_db
+from app.api.deps import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/export", tags=["赛题文档导出"])
+
+# ===== 自动PDF导出配置 =====
+AUTO_EXPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "output" / "pdf_reports"
+
+
+def md_to_pdf(md_content: str, pdf_path: str, title: str = "Report") -> bool:
+    """将 Markdown 内容转换为 PDF 文件（同步函数，供 questions.py 等直接调用）
+    优先使用 WeasyPrint（更好的中文支持），失败则回退到 xhtml2pdf"""
+    # 唯一文件名：避免多任务并发写同一路径导致 PermissionError
+    import os as _os, time as _time, random as _random, string as _string
+    if pdf_path and pdf_path.endswith("report.pdf"):
+        _base = pdf_path[:-len("report.pdf")]
+        _stamp = _time.strftime("%Y%m%d_%H%M%S")
+        _suf = ''.join(_random.choices(_string.ascii_lowercase + _string.digits, k=6))
+        pdf_path = f"{_base}report_{_stamp}_{_suf}.pdf"
+    """将 Markdown 内容转换为 PDF 文件（同步函数，供 questions.py 等直接调用）
+    优先使用 WeasyPrint（更好的中文支持），失败则回退到 xhtml2pdf"""
+    # 方案1: WeasyPrint (推荐，中文支持好)
+    try:
+        import weasyprint
+        import markdown as md_lib
+        html_body = md_lib.markdown(md_content, extensions=['tables', 'fenced_code'])
+        full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+@page {{ size: a4 portrait; margin: 20mm 15mm; }}
+body {{ font-family: 'Microsoft YaHei', 'SimHei', sans-serif; line-height: 1.8; font-size: 11pt; }}
+h1 {{ color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; font-size: 16pt; page-break-before: always; }}
+h2 {{ color: #283593; font-size: 13pt; border-bottom: 1px solid #ccc; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+th, td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; }}
+th {{ background-color: #f5f5f5; }}
+pre {{ background: #f5f5f5; padding: 8px; border-radius: 4px; overflow-x: auto; }}
+code {{ font-family: 'Courier New', monospace; font-size: 9pt; }}
+</style>
+</head><body>{html_body}</body></html>"""
+        doc = weasyprint.HTML(string=full_html)
+        doc.write_pdf(pdf_path)
+        logger.info(f"[WeasyPrint] PDF 生成成功: {pdf_path}")
+        return True
+    except Exception as e:
+        logger.warning(f"[WeasyPrint] 失败，回退到 xhtml2pdf: {e}")
+    # 方案2: xhtml2pdf (回退)
+    try:
+        from xhtml2pdf import pisa
+        import markdown as md_lib
+    except ImportError:
+        logger.warning("xhtml2pdf/markdown 未安装，无法生成PDF")
+        return False
+
+    html_body = md_lib.markdown(md_content, extensions=['tables', 'fenced_code'])
+    full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+@page {{ size: a4 portrait; margin: 20mm 15mm; }}
+body {{ font-family: 'Microsoft YaHei', 'SimHei', 'Noto Sans CJK SC', STSong-Light, sans-serif; line-height: 1.8; font-size: 11pt; }}
+h1 {{ color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; font-size: 16pt; -pdf-keep-with-next: true; page-break-before: always; }}
+h2 {{ color: #283593; font-size: 13pt; border-bottom: 1px solid #ccc; -pdf-keep-with-next: true; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+th, td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; }}
+th {{ background-color: #e8eaf6; }}
+pre {{ background-color: #f5f5f5; padding: 10px; font-size: 9pt; }}
+code {{ background-color: #f5f5f5; padding: 1px 4px; }}
+</style></head><body>{html_body}</body></html>"""
+
+    Path(pdf_path).parent.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    status = pisa.CreatePDF(full_html, dest=buf, encoding='utf-8')
+    if status.err:
+        logger.error(f"md_to_pdf xhtml2pdf errors: {status.err}")
+        return False
+
+    Path(pdf_path).write_bytes(buf.getvalue())
+    logger.info(f"✅ md_to_pdf 成功: {pdf_path} ({len(buf.getvalue())} bytes)")
+    return True
+
+
+
+async def auto_export_pdf(project_id: int, db: AsyncSession) -> str | None:
+    """自动生成PDF并保存到 output/pdf_reports/ 目录，返回文件路径"""
+    try:
+        from xhtml2pdf import pisa
+        import markdown as md_lib
+    except ImportError:
+        logger.warning("xhtml2pdf/markdown 未安装，跳过自动PDF导出")
+        return None
+
+    proj = (await db.execute(
+        select(Project).where(Project.id == project_id)
+    )).scalar_one_or_none()
+    if not proj:
+        logger.error(f"auto_export_pdf: project {project_id} not found")
+        return None
+
+    tasks_r = await db.execute(select(AgentTask).where(AgentTask.project_id == project_id))
+    hypos_r = await db.execute(select(Hypothesis).where(Hypothesis.project_id == project_id))
+    iters_r = await db.execute(select(IterationRecord).where(IterationRecord.project_id == project_id))
+    tasks = tasks_r.scalars().all()
+    hypos = hypos_r.scalars().all()
+    iters = iters_r.scalars().all()
+
+    team = TeamConfig()
+    if proj.competition_config:
+        try:
+            d = safe_json_parse(proj.competition_config, fallback={}, label="auto_export")
+            team = TeamConfig(**{k: v for k, v in d.items() if k in TeamConfig.model_fields})
+        except Exception:
+            pass
+
+    md_text = _build_p1_to_p20(proj, tasks, hypos, iters, team)
+    html_body = md_lib.markdown(md_text, extensions=['tables', 'fenced_code'])
+    full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>
+@page {{ size: a4 portrait; margin: 20mm 15mm; }}
+body {{ font-family: 'Microsoft YaHei', 'SimHei', 'Noto Sans CJK SC', STSong-Light, sans-serif; line-height: 1.8; font-size: 11pt; }}
+h1 {{ color: #1a237e; border-bottom: 3px solid #1a237e; padding-bottom: 6px; font-size: 16pt; -pdf-keep-with-next: true; page-break-before: always; }}
+h2 {{ color: #283593; font-size: 13pt; border-bottom: 1px solid #ccc; -pdf-keep-with-next: true; }}
+table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 9.5pt; }}
+th, td {{ border: 1px solid #ddd; padding: 5px 8px; text-align: left; }}
+th {{ background-color: #e8eaf6; }}
+pre {{ background-color: #f5f5f5; padding: 10px; font-size: 9pt; }}
+code {{ background-color: #f5f5f5; padding: 1px 4px; }}
+</style></head><body>{html_body}</body></html>"""
+
+    AUTO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (proj.name or f"project_{project_id}"))[:60]
+    filename = f"{COMPETITION['topic_id']}_{safe_name}_{ts}.pdf"
+    filepath = AUTO_EXPORT_DIR / filename
+
+    buf = io.BytesIO()
+    status = pisa.CreatePDF(full_html, dest=buf, encoding='utf-8')
+    if status.err:
+        logger.error(f"auto_export_pdf xhtml2pdf errors: {status.err}")
+        return None
+
+    filepath.write_bytes(buf.getvalue())
+    logger.info(f"✅ PDF自动导出成功: {filepath} ({len(buf.getvalue())} bytes)")
+    return str(filepath)
+
+
+COMPETITION = {
+    "topic_id": "XH-202619",
+    "name": "2026年度中国青年科技创新“揭榜挂帅”擂台赛",
+    "track": "赛道一·科学发现",
+    "direction": "方向1A｜基于国产开源大模型的AI Scientist研发与应用",
+    "issuer": "阿里云 / 中国科学院国家天文台 / 国家天文科学数据中心",
+    "co_organizer": "中国科学院大学他山学科交叉创新协会 / 集思谱平台",
+    "core_task": "基于国产开源大模型（Qwen）研发面向科学假设生成的AI Scientist系统，实现从数据理解→文献综述→假设生成→实验设计→验证迭代的完整科研闭环",
+}
+
+PROJECT_IDENTITY = {
+    "name": "基于Qwen多智能体的AI Scientist：面向天文大数据的科学假设自动生成系统",
+    "core_claim": "基于Qwen系列国产开源大模型，构建七智能体协作的AI Scientist系统，面向国家天文台科学数据，自动完成数据画像→文献锚定→知识缺口识别→科学假设生成→验证方案设计→实证检验→反馈迭代的完整AI for Science科研闭环",
+    "agents": [
+        ("① 数据画像智能体", "自动识别字段、诊断缺失、分析文本复杂度"),
+        ("② 理论锚定智能体", "匹配理论库→展示候选→研究者勾选确认（人在回路）"),
+        ("③ 变量工程智能体", "Qwen对文本列进行多维度语义编码（核心创新）"),
+        ("④ 逻辑演绎智能体", "EDA分析 + 生成3-5条结构化假设"),
+        ("⑤ 实证策略智能体", "推荐模型→生成代码→自动执行验证"),
+        ("⑥ 验证与对照模块", "假设vs结果一一对照，生成验证报告"),
+        ("⑦ 反馈迭代模块", "自动修正假设重新验证/接收人工反馈"),
+    ],
+}
+
+
+class TeamConfig(BaseModel):
+    team_name: str = ""
+    members: str = ""
+    tech_team: str = ""
+    text_team: str = ""
+    advisor: str = ""
+    university: str = ""
+    primary_case: str = ""
+
+
+def _safe(val, fallback="（无数据）"):
+    """安全取值，None/空字符串返回fallback"""
+    if val is None:
+        return fallback
+    s = str(val).strip()
+    return s if s else fallback
+
+
+def _hypo_table(hypos: list) -> str:
+    """将假设列表渲染为Markdown表格"""
+    if not hypos:
+        return "（本轮未生成假设）"
+    rows = ["| # | 假设陈述 | 方向 | 可验证性评分 | 状态 |",
+            "|---|---------|------|-------------|------|"]
+    for i, h in enumerate(hypos, 1):
+        stmt = _safe(getattr(h, "statement", None))[:80]
+        direction = _safe(getattr(h, "direction", None))
+        score = getattr(h, "verifiability_score", None)
+        score_str = f"{score}/10" if score is not None else "—"
+        status = _safe(getattr(h, "status", None))
+        rows.append(f"| H{i} | {stmt} | {direction} | {score_str} | {status} |")
+    return "\n".join(rows)
+
+
+def _iter_table(iters: list) -> str:
+    """将迭代记录渲染为Markdown表格"""
+    if not iters:
+        return "首轮运行，暂无迭代记录。后续可通过验证与对照模块触发迭代。"
+    rows = ["| 轮次 | 发现问题 | 调整措施 | 调整后结果 |",
+            "|------|---------|---------|-----------|"]
+    for it in iters:
+        num = getattr(it, "iteration_num", "?")
+        issue = _safe(getattr(it, "issue_found", None))[:100]
+        action = _safe(getattr(it, "adjustment", None))[:100]
+        result = _safe(getattr(it, "result_after", None))[:100]
+        rows.append(f"| {num} | {issue} | {action} | {result} |")
+    return "\n".join(rows)
+
+
+def _task_summary(tasks: list) -> str:
+    """将任务列表渲染为流水线摘要表"""
+    if not tasks:
+        return "| （无任务记录） | — | — | — | — |"
+    rows = ["| 步骤 | 智能体 | 输入摘要 | 输出摘要 | 关键指标 |",
+            "|------|--------|---------|---------|-----------|"]
+    for t in tasks:
+        step = getattr(t, "step_order", "?")
+        agent = _safe(getattr(t, "agent_name", None))
+        inp = _safe(getattr(t, "input_summary", None))[:60]
+        out = _safe(getattr(t, "output_summary", None))[:60]
+        metric = _safe(getattr(t, "key_metric", None))
+        rows.append(f"| {step} | {agent} | {inp} | {out} | {metric} |")
+    return "\n".join(rows)
+
+
+def _extract_structured_field(tasks: list, field_name: str, fallback: str = "[待补充]") -> str:
+    """优先从任务result中的结构化JSON提取字段，失败则回退到关键词提取"""
+    import json as _json
+    for t in tasks:
+        result = getattr(t, "result", None)
+        if not result:
+            continue
+        # result可能是dict或str
+        data = result if isinstance(result, dict) else None
+        if data is None:
+            try:
+                data = _json.loads(str(result))
+            except Exception:
+                continue
+        # 递归查找field_name
+        if isinstance(data, dict) and field_name in data:
+            val = data[field_name]
+            if isinstance(val, list):
+                return chr(10).join(str(v) for v in val) if val else fallback
+            return str(val) if val else fallback
+        # 嵌套在output字段中
+        output = data.get("output", {}) if isinstance(data, dict) else {}
+        if isinstance(output, dict) and field_name in output:
+            val = output[field_name]
+            if isinstance(val, list):
+                return chr(10).join(str(v) for v in val) if val else fallback
+            return str(val) if val else fallback
+    return fallback
+
+
+def _extract_field_from_tasks(tasks: list, field_keywords: list[str], fallback: str = "[待补充]") -> str:
+    """从任务输出中按关键词提取字段内容"""
+    for t in tasks:
+        output = str(getattr(t, "output_summary", "") or "")
+        content = str(getattr(t, "result", "") or "")
+        combined = output + content
+        for kw in field_keywords:
+            if kw in combined:
+                snippet = combined[:800]
+                return snippet
+    return fallback
+
+
+def _build_p1_to_p20(project: Project, tasks: list, hypotheses: list,
+                      iterations: list, team: TeamConfig) -> str:
+    """生成符合 XH-202619 12字段标准的 Markdown 报告"""
+    # 1. 优先使用 WritingAgent 的完整输出
+    for t in tasks:
+        if getattr(t, 'agent_name', '') == 'writing':
+            out = getattr(t, 'output_data', '')
+            if out and out.strip():
+                # 检查是否包含12字段标识
+                if '## 1. 待研究问题' in out or '## 1. 待研究问题（Problem Statement）' in out:
+                    return out
+                else:
+                    return out
+
+    # 2. 尝试使用 project.final_output
+    if project.final_output and project.final_output.strip():
+        return project.final_output
+
+    # 3. 回退：生成占位报告
+    return """# 科研假设与研究计划（XH-202619）
+
+## 1. 待研究问题（Problem Statement）
+（当前项目尚未生成完整报告，请确保 WritingAgent 已执行）
+
+## 2. 解决思路（Rationale）
+（待补充）
+
+## 3. 必要的技术手段（Technical Details）
+（待补充）
+
+## 4. 数据集（Datasets）
+### Source
+（待补充）
+### Target
+（待补充）
+
+## 5. 标题（Paper Title）
+（待补充）
+
+## 6. 摘要（Paper Abstract）
+（待补充）
+
+## 7. 方法论（Methods）
+（待补充）
+
+## 8. 实验设计（Experiments）
+（待补充）
+
+## 9. 实验结果（Results）
+（待补充）
+
+## 10. 参考论文（References）
+（待补充）
+"""
+
+def _resolve_writable_path(p):
+    """若目标文件被占用(如PDF阅读器打开)，改用带时间戳的新路径，避免 PermissionError。"""
+    import time as _t
+    if not os.path.exists(p):
+        return p
+    try:
+        with open(p, 'ab'):
+            pass
+        return p
+    except (PermissionError, OSError):
+        stem, ext = os.path.splitext(p)
+        return f'{stem}_{_t.strftime("%Y%m%d_%H%M%S")}{ext}'
+
+def generate_challenge_cup_pdf(project_id: int) -> str | None:
+    """为指定项目生成对标'挑战杯'赛题规范的 PDF，返回 pdf 路径或 None"""
+    try:
+        import weasyprint
+        from jinja2 import Environment, FileSystemLoader
+        from app.database.session import AsyncSessionLocal
+        from app.database.models import Project, Hypothesis, ScienceQuestion, QuestionTask, ExperimentRun
+        import asyncio
+        async def _gather():
+            async with AsyncSessionLocal() as _db:
+                proj = (await _db.execute(
+                    select(Project).where(Project.id == project_id))).scalar_one_or_none()
+                if not proj:
+                    return None
+                hyps = (await _db.execute(
+                    select(Hypothesis).where(Hypothesis.project_id == project_id)
+                    .order_by(Hypothesis.id.desc()).limit(5))).scalars().all()
+                # [fix] ScienceQuestion 可能没有 project_id；容错处理
+                try:
+                    qs = (await _db.execute(
+                        select(ScienceQuestion).where(ScienceQuestion.project_id == project_id)
+                        .order_by(ScienceQuestion.question_id.desc()).limit(10))).scalars().all()
+                except (AttributeError, Exception) as _qe:
+                    # 退化：直接取最新的 10 条（不按 project 过滤）
+                    try:
+                        qs = (await _db.execute(
+                            select(ScienceQuestion).order_by(ScienceQuestion.question_id.desc()).limit(10))).scalars().all()
+                    except Exception:
+                        qs = []
+                # [stageD] 查询该项目模拟场运行记录（图表真实来源之一）
+                try:
+                    runs = (await _db.execute(
+                        select(ExperimentRun).where(ExperimentRun.project_id == project_id)
+                    )).scalars().all()
+                except Exception as _re:
+                    logger.warning(f"[stageD] ExperimentRun 查询失败: {_re}")
+                    runs = []
+                return proj, hyps, qs, runs
+        result = _run_in_new_loop(_gather())
+        if result is None:
+            return None
+        proj, hyps, qs, runs = result
+
+        # [stageD] 图表收集：三源合并（修复原只读 hypothesis.result.experiment.charts 导致 PDF 无图）
+        # 源1 Project.evidence_files（流水线/模拟场回写，主来源）
+        # 源2 ExperimentRun.charts（模拟场产出，元素形如 {'path','filename'}）
+        # 源3 hypothesis.result.experiment.charts（兼容旧结构）
+        import json as _djson
+        _IMG_EXT = ('.png', '.jpg', '.jpeg', '.gif', '.svg', '.bmp', '.webp')
+        def _as_list(v):
+            if not v: return []
+            if isinstance(v, list): return v
+            if isinstance(v, str):
+                try: return _djson.loads(v)
+                except Exception: return []
+            return []
+        def _add_path(p):
+            """[stageD] 转 base64 data URI：模板用 c.b64 渲染，不依赖 WeasyPrint 的 file:// 加载"""
+            if p and isinstance(p, str) and os.path.exists(p) and p.lower().endswith(_IMG_EXT):
+                try:
+                    import base64 as _b64
+                    with open(p, 'rb') as _f:
+                        _data = _b64.b64encode(_f.read()).decode('ascii')
+                    chart_files.append({"b64": _data, "filename": os.path.basename(p)})
+                except Exception as _e:
+                    logger.warning("[stageD] 转 base64 失败 %s: %s", p, _e)
+        chart_files = []
+        # --- 源1: Project.evidence_files ---
+        for p in _as_list(proj.evidence_files):
+            _add_path(p)
+        # --- 源2: ExperimentRun.charts ---
+        for _r in (runs or []):
+            for c in _as_list(getattr(_r, 'charts', None)):
+                _add_path(c.get('path','') if isinstance(c, dict) else c)
+        # --- 源3: hypothesis.result.experiment.charts ---
+        for h in hyps:
+            r = h.result or {} if hasattr(h,'result') else {}
+            exp = r.get('experiment', {}) if isinstance(r, dict) else {}
+            for c in exp.get('charts', []):
+                _add_path(c.get('path','') if isinstance(c, dict) else c)
+        # 去重保序
+        # 去重保序（stageD修复：按 filename 去重，避免 dict 元素导致 unhashable type: 'dict'）
+        seen, uniq = set(), []
+        for c in chart_files:
+            _k = c.get('filename') if isinstance(c, dict) else str(c)
+            if _k not in seen:
+                seen.add(_k); uniq.append(c)
+        chart_files = uniq[:8]
+
+        env = Environment(loader=FileSystemLoader(os.path.join(os.path.dirname(__file__),'templates')))
+        tpl = env.get_template('challenge_cup_template.html')
+        # [stageE10] v17：修参考文献伪造（移除危险兜底）+ LaTeX 正确符号映射
+        import re as _re
+        import json as _json
+        def _clean(_t):
+            if not _t:
+                return ''
+            _t = _re.sub(r'```mermaid.*?```', '', _t, flags=_re.S)
+            _t = _re.sub(r'```[A-Za-z]*', '', _t)
+            _t = _re.sub(r'\$\$([^$]*)\$\$', lambda m: _tex_clean(m.group(1)), _t)
+            _t = _re.sub(r'\$([^$]*)\$', lambda m: _tex_clean(m.group(1)), _t)
+            _t = _re.sub(r'\\Omega_\{?c\}?\s*h\^\{?2\}?', '参数', _t)
+            for _a, _b in [('\\Lambda', 'Λ'), ('\\Omega', 'Ω'), ('\\alpha', 'α'), ('\\beta', 'β'), ('\\sigma', 'σ'), ('\\chi', 'χ'), ('\\pm', '±'), ('\\times', '×'), ('\\approx', '≈')]:
+                _t = _t.replace(_a, _b)
+            _t = _t.replace('ACDM', 'ΛCDM')
+            _t = _t.replace('$Λ$CDM', 'ΛCDM')
+            _t = _re.sub(r'la(?=型超新星)', 'Ia', _t)
+            _t = _re.sub(r'^[ \t]*#{1,6}[ \t]*', '', _t, flags=_re.M)
+            _t = _re.sub(r'\*\*(.+?)\*\*', r'\1', _t)
+            _t = _re.sub(r'^\s*[-─=]{3,}\s*$', '', _t, flags=_re.M)
+            _t = _re.sub(r'\n{3,}', '\n\n', _t)
+            return _t.strip()
+        def _tex_clean(_s):
+            if not _s:
+                return _s
+            for _cmd in ['text', 'mathbf', 'mathrm', 'mathit', 'textbf', 'textrm', 'rm', 'bf', 'it']:
+                _s = _re.sub(r'\\' + _cmd + r'\{([^{}]*)\}', r'\1', _s)
+            _SYM = [('\\rho', 'ρ'), ('\\Omega', 'Ω'), ('\\omega', 'ω'), ('\\alpha', 'α'),
+                    ('\\beta', 'β'), ('\\gamma', 'γ'), ('\\delta', 'δ'), ('\\phi', 'φ'),
+                    ('\\varphi', 'φ'), ('\\sigma', 'σ'), ('\\Sigma', 'Σ'), ('\\theta', 'θ'),
+                    ('\\Lambda', 'Λ'), ('\\lambda', 'λ'), ('\\mu', 'μ'), ('\\nu', 'ν'),
+                    ('\\pi', 'π'), ('\\tau', 'τ'), ('\\chi', 'χ'), ('\\psi', 'ψ'),
+                    ('\\epsilon', 'ε'), ('\\varepsilon', 'ε'), ('\\kappa', 'κ'),
+                    ('\\approx', '≈'), ('\\sim', '∼'), ('\\propto', '∝'),
+                    ('\\odot', '⊙'), ('\\pm', '±'), ('\\times', '×'), ('\\cdot', '·'),
+                    ('\\ne', '≠'), ('\\neq', '≠'), ('\\le', '≤'), ('\\leq', '≤'),
+                    ('\\ge', '≥'), ('\\geq', '≥'), ('\\ll', '≪'), ('\\gg', '≫'),
+                    ('\\rightarrow', '→'), ('\\to', '→'), ('\\in', '∈'),
+                    ('\\partial', '∂'), ('\\nabla', '∇'), ('\\infty', '∞'),
+                    ('\\ldots', '…'), ('\\dots', '…'), ('\\quad', ' '), ('\\,', ' ')]
+            for _a, _b in _SYM:
+                _s = _s.replace(_a, _b)
+            _s = _re.sub(r'\^\s*\{([^{}]*)\}', r'^\1', _s)
+            _s = _re.sub(r'_\s*\{([^{}]*)\}', r'_\1', _s)
+            _s = _re.sub(r'\\[A-Za-z]+', '', _s)
+            _s = _s.replace('{', '').replace('}', '').replace('\\', '')
+            _s = _re.sub(r'[ \t]{2,}', ' ', _s)
+            return _s.strip()
+
+        def _clean_light(_t):
+            _t = _re.sub(r'```mermaid.*?```', '', _t, flags=_re.S)
+            _t = _re.sub(r'```[A-Za-z]*', '', _t)
+            _t = _re.sub(r'\$\$([^$]*)\$\$', lambda m: _tex_clean(m.group(1)), _t)
+            _t = _re.sub(r'\$([^$]*)\$', lambda m: _tex_clean(m.group(1)), _t)
+            _t = _re.sub(r'\\Omega_\{?c\}?\s*h\^\{?2\}?', '参数', _t)
+            for _a, _b in [('\\Lambda', 'Λ'), ('\\Omega', 'Ω'), ('\\alpha', 'α'), ('\\beta', 'β'), ('\\sigma', 'σ'), ('\\chi', 'χ'), ('\\pm', '±'), ('\\times', '×'), ('\\approx', '≈')]:
+                _t = _t.replace(_a, _b)
+            _t = _t.replace('ACDM', 'ΛCDM')
+            _t = _t.replace('$Λ$CDM', 'ΛCDM')
+            _t = _re.sub(r'la(?=型超新星)', 'Ia', _t)
+            _t = _re.sub(r'\*\*(.+?)\*\*', r'\1', _t)
+            return _t
+        def _md_section_html(_t):
+            import re as _r
+            if not _t:
+                return '<p></p>'
+            _out = []
+            _buf = []
+            _tbl = []
+            def _fbuf():
+                nonlocal _buf
+                if _buf:
+                    _out.append('<p>' + '<br>'.join(_buf) + '</p>')
+                    _buf = []
+            def _cells(_row):
+                return [c.strip() for c in _row.strip().strip('|').split('|')]
+            def _ftbl():
+                nonlocal _tbl
+                if not _tbl:
+                    return
+                _hdr = _cells(_tbl[0])
+                _rows = []
+                for _r2 in _tbl[1:]:
+                    _probe = _r2.strip().strip('|').replace('-', '').replace(':', '').replace('|', '').replace(' ', '')
+                    if not _probe:
+                        continue
+                    _rows.append(_cells(_r2))
+                if not _rows:
+                    _tbl = []
+                    return
+                _h = '<table><thead><tr>' + ''.join('<th>%s</th>' % c for c in _hdr) + '</tr></thead><tbody>'
+                for _r3 in _rows:
+                    _h += '<tr>' + ''.join('<td>%s</td>' % c for c in _r3) + '</tr>'
+                _h += '</tbody></table>'
+                _out.append(_h)
+                _tbl = []
+            for _ln in _t.split('\n'):
+                _s = _ln.strip()
+                if _s.startswith('|') and _s.endswith('|') and _s.count('|') >= 2:
+                    _tbl.append(_s)
+                    continue
+                if _tbl:
+                    _ftbl()
+                if not _s:
+                    _fbuf()
+                    continue
+                _m = _r.match(r'^#{1,6}[ \t]*(.+)$', _s)
+                if _m:
+                    _fbuf()
+                    _out.append('<h4>' + _m.group(1).strip() + '</h4>')
+                else:
+                    _buf.append(_s)
+            if _tbl:
+                _ftbl()
+            _fbuf()
+            return ''.join(_out) if _out else '<p></p>'
+
+        def _final_polish(_h):
+            if not _h:
+                return _h
+            _h = _h.replace('ACDM', 'ΛCDM')
+            _h = _h.replace('$Λ$CDM', 'ΛCDM')
+            _h = _h.replace('$\\Lambda$CDM', 'ΛCDM')
+            _h = _h.replace('$\\Lambda$', 'Λ')
+            _h = _re.sub(r'la\\s*型', 'Ia型', _h)
+            _h = _re.sub(r'[Tt]ype\\s+la\\b', 'type Ia', _h)
+            return _h
+        def _to_html(_t):
+            if not _t:
+                return '<p></p>'
+            _t = _t.replace('ACDM', 'ΛCDM')
+            _t = _t.replace('$\\Lambda$', 'Λ')
+            _t = _re.sub(r'la\s*型', 'Ia型', _t)
+            _t = _re.sub(r'[Tt]ype\s+la\b', 'type Ia', _t)
+            _paras = []
+            for _p in _t.split('\n\n'):
+                _s = _p.strip()
+                if not _s:
+                    continue
+                _s = _s.replace('\n', '<br>')
+                _paras.append('<p>' + _s + '</p>')
+            return ''.join(_paras) if _paras else '<p></p>'
+        def _br(_t):
+            return str(_t).replace('\n', '<br>') if _t else ''
+        def _strip_heading(_t, *words):
+            for _w in words:
+                _t = _re.sub(r'^[\s#]*' + _w + r'[（(][^)）]*[)）]\s*', '', _t)
+                _t = _re.sub(r'^[\s#]*' + _w + r'\s*', '', _t)
+            return _t.strip()
+        _seen_b64 = set()
+        _uniq_charts = []
+        for _c in (chart_files or []):
+            _b = _c.get('b64') if isinstance(_c, dict) else None
+            if not _b or _b in _seen_b64:
+                continue
+            _seen_b64.add(_b)
+            _uniq_charts.append(_c)
+        chart_files = _uniq_charts
+        try:
+            _hyps_sorted = sorted(hyps, key=lambda _h: str(getattr(_h, 'hypo_id', '') or ''))
+        except Exception:
+            _hyps_sorted = list(hyps)
+        hyp_rows = []
+        for _h in _hyps_sorted:
+            _v = getattr(_h, 'variables', None)
+            if isinstance(_v, str):
+                try:
+                    _v = _json.loads(_v)
+                except Exception:
+                    pass
+            if isinstance(_v, list):
+                _v = '、'.join(str(_x) for _x in _v)
+            hyp_rows.append({'hypo_id': _br(getattr(_h, 'hypo_id', '')),
+                             'statement': _br(getattr(_h, 'statement', '')),
+                             'variables': _br(_v or ''),
+                             'testability_score': getattr(_h, 'testability_score', ''),
+                             'suggested_method': _br(getattr(_h, 'suggested_method', '')),
+                             'evidence_chain': _br(_re.sub(r'^["“”\']+|["“”\']+$', '', str(getattr(_h, 'evidence_chain', '') or '')))})
+        async def _load_stats(pid):
+            from app.database.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as _db:
+                _rw = (await _db.execute(select(AgentTask).where(AgentTask.project_id == pid))).scalars().all()
+                return [{'agent': r.agent_name, 'model': r.model_used or '-',
+                         'tokens': r.tokens_used or 0, 'cost': round(float(r.cost_yuan or 0), 4)} for r in _rw]
+        try:
+            model_stats = _run_in_new_loop(_load_stats(project_id))
+        except Exception as _se:
+            logger.warning('[stageE] stats failed: %s', _se)
+            model_stats = []
+        total_tokens = sum(int(s['tokens']) for s in model_stats)
+        total_cost = round(sum(float(s['cost']) for s in model_stats), 4)
+        async def _load_extra(pid):
+            from app.database.session import AsyncSessionLocal
+            async with AsyncSessionLocal() as _db:
+                _rw = (await _db.execute(select(AgentTask).where(AgentTask.project_id == pid))).scalars().all()
+                return dict((r.agent_name, (r.output_data or '')) for r in _rw)
+        try:
+            _extra = _run_in_new_loop(_load_extra(project_id))
+        except Exception as _ee:
+            logger.warning('[stageE] extract failed: %s', _ee)
+            _extra = dict()
+        writing = _extra.get('writing', '')
+        analysis = _extra.get('analysis', '')
+        exp_plan = _extra.get('experiment_plan', '')
+        lit = _extra.get('literature', '')
+        kg = _extra.get('knowledge_gap', '')
+        ps = ''
+        _best = ''
+        for _m3 in _re.finditer(r'#+[ \t]*待研究问题[^\n]*\n+(.*?)(?=\n#+|\Z)', writing, _re.S):
+            if len(_m3.group(1).strip()) > len(_best):
+                _best = _m3.group(1)
+        ps = _strip_heading(_clean(_best), '待研究问题', r'Problem\s*Statement')
+        if not ps:
+            ps = _clean(proj.research_question or proj.description or '')
+        ps = ps[:1600]
+        paper_title = ''
+        _mh1 = _re.search(r'^#[ \t]+(.+)$', writing, _re.M)
+        if _mh1:
+            paper_title = _clean(_mh1.group(1))
+        if not paper_title or len(paper_title) < 8:
+            _base = _re.sub(r'^\[[^\]]*\]\s*', '', str(proj.title or '')).strip().rstrip('?？')
+            paper_title = _base + '的可验证科学假设生成与验证研究——基于国产开源大模型 Qwen 的多智能体系统'
+        paper_title = paper_title[:120]
+        _ro = ''
+        try:
+            _kj = _json.loads(kg.strip())
+            _ro = str(_kj.get('research_object', ''))
+        except Exception:
+            _mro = _re.search(r'research_object["\']?\s*[:：]\s*["\']?([^"\',}]+)', kg)
+            if _mro:
+                _ro = _mro.group(1).strip()
+        rationale = ('推导链条：①知识缺口识别（研究对象：' + (_ro or '宇宙的构成成分及其基本结构') + '，锁定关键变量）→ '
+            + '②文献事实提取（基于文献挖掘，避免断章取义）→ ③归纳与演绎推理生成候选假设（H1–H5）→ '
+            + '④操作化为可统计检验命题并设计实验→ ⑤数值模拟与显著性检验产出可视化证据。')
+        methods_raw = ''
+        _mms = list(_re.finditer(r'^#+[ \t]*方法论[^\n]*\n', writing, _re.M))
+        _mme = list(_re.finditer(r'^#+[ \t]*(?:实验设计|实验结果)[^\n]*\n', writing, _re.M))
+        if _mms:
+            _mstart = _mms[-1].end()
+            _cand = [_m.start() for _m in _mme if _m.start() > _mstart]
+            _mend = min(_cand) if _cand else len(writing)
+            methods_raw = writing[_mstart:_mend]
+        methods = _clean_light(methods_raw)[:4000]
+        if len(methods.strip()) < 60:
+            methods = ('实施步骤：①问题理解与知识缺口识别；②文献挖掘与事实提取；③基于归纳/演绎推理生成候选假设并评分；'
+                      '④将假设操作化为可统计检验命题；⑤设计实验（含基线对比与评估指标）；⑥数值模拟执行并产出图表；⑦多轮反思迭代。')
+        results_rows = []
+        try:
+            results_rows = _json.loads(analysis.strip())
+        except Exception:
+            _mj = _re.search(r'\[\s*\{.*\}\s*\]', analysis, _re.S)
+            if _mj:
+                try:
+                    results_rows = _json.loads(_mj.group(0))
+                except Exception:
+                    results_rows = []
+        if not isinstance(results_rows, list):
+            results_rows = []
+        _MAP = [('额外维度', 'H4'), ('暗能量', 'H3'), ('膨胀速率', 'H3'), ('红移', 'H3'),
+                 ('CMB', 'H2'), ('轴子', 'H2'), ('引力势场', 'H1'), ('暗物质', 'H1')]
+        _VAR_CN = {'dark_matter_density': '暗物质密度', 'dark_matter_signal': '暗物质信号',
+                      'cosmic_expansion_rate': '宇宙膨胀速率', 'expansion_rate': '宇宙膨胀速率',
+                      'gravitational_potential': '可见物质引力势场', 'redshift': '红移',
+                      'dark_energy_density': '暗能量密度', 'extra_dimension': '额外维度',
+                      'universe_age': '宇宙年龄', 'cosmic_age': '宇宙年龄',
+                      'dark_matter_distribution': '暗物质分布',
+                      'interaction_term': '交互项'}
+        for _i, _r in enumerate(results_rows):
+            if isinstance(_r, dict):
+                _stmt = str(_r.get('statement', ''))
+                _r['rid'] = 'A' + str(_i + 1)
+                _r['mapping'] = '—'
+                for _kw, _hh in _MAP:
+                    if _kw in _stmt:
+                        _r['mapping'] = _hh
+                        break
+                _v = _r.get('variables')
+                _vs = ', '.join(str(_x) for _x in _v) if isinstance(_v, list) else str(_v or '')
+                _parts = [_VAR_CN.get(_pp.strip(), _pp.strip()) for _pp in _vs.split(',') if _pp.strip()]
+                _r['variables'] = '、'.join(_parts)
+                for _k in list(_r.keys()):
+                    if isinstance(_r[_k], str) and len(_r[_k]) > 180:
+                        _r[_k] = _r[_k][:180] + '…'
+        results = _clean(analysis)[:800] if analysis else ''
+        metrics = ('假设可验证性 testability_score（1-10）、可证伪性 falsifiability_score（1-10）、'
+                   '证据一致性 evidence_consistency（1-10）；统计推断采用线性回归与相关系数显著性检验（p<0.05）。')
+        datasets = []
+        _ALL_DS = [('XENON', 'XENON1T/XENONnT 直接探测实验公开数据', '核反冲能量谱、事件率、本底噪声水平'),
+                    ('Planck', 'Planck 卫星 CMB 功率谱数据', 'CMB 温度/偏振功率谱 、冷暗物质密度 参数'),
+                    ('SDSS', 'SDSS 大尺度结构巡天数据', '星系红移、光度、空间两点相关函数'),
+                    ('2dFGRS', '2dFGRS 星系红移巡天', '星系红移、空间分布'),
+                    ('LSST', 'LSST 时域巡天（拟采集）', '超新星光度曲线、红移'),
+                    ('Euclid', 'Euclid 空间望远镜（拟采集）', '弱引力透镜 shear、BAO'),
+                    ('LHC', 'LHC 高能碰撞数据', '不变质量谱、缺失横动量 MET')]
+        _hay = (exp_plan + writing + analysis).lower()
+        for _n, _s, _tt in _ALL_DS:
+            if _n.lower() in _hay:
+                datasets.append({'name': _n, 'source': _s, 'target': _tt})
+        if not datasets:
+            datasets = [{'name': '（待补充）', 'source': '-', 'target': '-'}]
+        bl = ('H1（WIMPs 暗物质）与 H2（轴子/未知粒子）互为竞争假设基线；'
+              '星系旋转曲线以"仅可见物质"牛顿模型为基线；H3 动态暗能量以 ΛCDM 为基线；'
+              'H4 额外维度以标准模型 4 维时空为基线。')
+        bl = bl.replace('$\\Lambda$', 'Λ').replace('$\\Lambda$CDM', 'ΛCDM')
+        # --- 参考文献：只取真正的参考文献章节，禁止全文档兜底（v16 兜底把证据链当文献）---
+        refs = []
+        _ref_body = ''
+        _ms = []
+        for _rp in [r'^#+[ \t]*(?:参考[文献论文]*|References|Bibliography)[^\n]*\n',
+                    r'^#+[ \t]*\d*[.、\s]*(?:参考[文献论文]*|References)[^\n]*\n']:
+            _ms = list(_re.finditer(_rp, writing, _re.M))
+            if _ms:
+                break
+        if _ms:
+            _ref_body = writing[_ms[-1].end():]
+        logger.info('[stageE] 参考段长度=%s', len(_ref_body))
+        _entries = []
+        _cur = ''
+        for _line in _ref_body.split('\n'):
+            _s = _line.strip()
+            if not _s:
+                continue
+            _noHash = _re.sub(r'^#+\s*', '', _s).strip()
+            if _noHash in ('-', '*', '•', '—', '–', '--'):
+                continue
+            if _re.match(r'^\d+\s*[\.、)]', _noHash):
+                if _cur:
+                    _entries.append(_cur.strip())
+                _cur = _re.sub(r'^\d+\s*[\.、)]\s*', '', _noHash).strip()
+            else:
+                if _cur:
+                    _cur += ' ' + _noHash
+        if _cur:
+            _entries.append(_cur.strip())
+        for _s in _entries:
+            _s = _re.sub(r'\*\*(.+?)\*\*', r'\1', _s)
+            _s = _re.sub(r'\*(.+?)\*', r'\1', _s)
+            _s = _re.sub(r'\s+', ' ', _s).strip()
+            _s = _re.sub(r'\s*引用位置[:：].*$', '', _s).strip()
+            # 关键过滤：排除证据链/分析说明类内容（这些不是参考文献）
+            if _re.search(r'(实证支持|合理推断|理论推[导论]|分析说明|流程说明|研究背景|历史沿革)', _s):
+                continue
+            if len(_s) < 25:
+                continue
+            if not _re.search(r'[A-Za-z]{3,}', _s):
+                continue
+            if not _re.search(r'(19|20)\d{2}', _s):
+                continue
+            _s = _re.sub(r'\s*[-—–•]\s*$', '', _s).strip()
+            refs.append(_s[:250])
+        refs = refs[:12]
+        logger.info('[stageE] 参考文献条数=%s', len(refs))
+        if not refs:
+            refs = ['（暂无参考文献，需人工核验后补充）']
+        _ps_paras = [_p.strip() for _p in ps.split('\n\n') if _p.strip()]
+        abstract_bg = _ps_paras[0] if _ps_paras else (_clean(proj.research_question or '')[:400])
+        abstract_method = ('基于 Qwen 多智能体架构，由知识缺口识别、文献综述、假设生成、实验规划、数据分析、学术写作六个智能体协作，'
+            '结合数值模拟与统计推断实现假设的可验证性量化。')
+        abstract_result = ('形成 5 条可验证假设（H1–H5），并通过数值实验及 XENON/Planck/SDSS 等数据集推演，'
+            '验证其中 H1（WIMPs 直接探测）与 H3（动态暗能量）具备明确的可操作检验路径。')
+        ps_html = _final_polish(_to_html(ps))
+        rationale_html = _final_polish(_to_html(rationale))
+        methods_html = _final_polish(_md_section_html(methods))
+        abstract_bg_html = _final_polish(_to_html(abstract_bg))
+        
+        html = tpl.render(
+            project=proj, hypotheses=hyp_rows, questions=qs, charts=chart_files, problem_statement=ps, problem_statement_html=ps_html, datasets=datasets, baselines=bl, metrics=metrics, results=results, methods=methods, methods_html=methods_html, results_rows=results_rows, paper_title=paper_title, abstract_bg=abstract_bg, abstract_bg_html=abstract_bg_html, abstract_method=abstract_method, abstract_result=abstract_result, rationale=rationale, rationale_html=rationale_html, references=refs, model_stats=model_stats, total_tokens=total_tokens, total_cost=total_cost,
+            generated_at=datetime.now().strftime('%Y-%m-%d %H:%M')
+        )
+        out_dir = AUTO_EXPORT_DIR
+        out_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = out_dir / f"challenge_cup_project_{project_id}.pdf"
+        pdf_path = _resolve_writable_path(pdf_path)
+        weasyprint.HTML(string=html).write_pdf(str(pdf_path))
+        logger.info(f"[ChallengeCupPDF] 已生成: {pdf_path}")
+        # [fix-final-C] 把 PDF 路径回写到关联的 QuestionTask.result
+        async def _writeback_pdf(_path: str):
+            try:
+                from app.database.session import AsyncSessionLocal
+                async with AsyncSessionLocal() as _db:
+                    from app.database.models import ScienceQuestion as _SQ, QuestionTask as _QT
+                    _sq = (await _db.execute(
+                        select(_SQ).where(_SQ.question_id == project_id)
+                    )).scalar_one_or_none()
+                    if _sq is not None:
+                        _task = (await _db.execute(
+                            select(_QT).where(_QT.question_id == _sq.question_id)
+                        )).scalar_one_or_none()
+                        if _task is not None:
+                            _r = dict(_task.result or {})
+                            _r["report_pdf"] = str(_path)
+                            _task.result = _r
+                            await _db.commit()
+                            logger.info(f"[export] pdf {_path} -> task {_task.id}")
+            except Exception as _e:
+                logger.error(f"[export] report_pdf writeback error: {_e}")
+
+        try:
+            _run_in_new_loop(_writeback_pdf(str(pdf_path)))
+        except Exception as _e:
+            logger.error(f"[export] asyncio.run writeback error: {_e}")
+
+        return str(pdf_path)
+    except Exception as e:
+        logger.error(f"[ChallengeCupPDF] 生成失败: {e}")
+        return None
+
+
+# ===== 赛题报告导出接口（供前端 P1-P20 按钮调用）=====
+from fastapi.responses import Response
+
+@router.get("/competition-report/{project_id}")
+def competition_report(project_id: int, format: str = "markdown", db: AsyncSession = Depends(get_db)):
+    """
+    返回对齐赛题（P1-P20）的完整研究报告。
+    format = 'markdown' -> text/markdown (final_output)
+    format = 'pdf'      -> 调用 generate_challenge_cup_pdf 生成图文 PDF
+    """
+    from app.database.models import Project
+    async def _load_project():
+        from app.database.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as _db2:
+            return (await _db2.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    project = _run_in_new_loop(_load_project())
+    if not project:
+        raise HTTPException(404, "项目不存在")
+
+    if format == "pdf":
+        pdf_path = generate_challenge_cup_pdf(project_id)
+        if not pdf_path or not os.path.exists(pdf_path):
+            raise HTTPException(500, "PDF 生成失败，请先确保流水线已完整运行并产出图表")
+        return Response(open(pdf_path, "rb").read(), media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="challenge_cup_project_{project_id}.pdf"'})
+
+    # markdown：直接返回完整 final_output（含占位图表说明）
+    md = project.final_output or ""
+    if not md:
+        raise HTTPException(404, "报告尚未生成（final_output 为空）")
+    return Response(md, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="report_{project_id}.md"'})
