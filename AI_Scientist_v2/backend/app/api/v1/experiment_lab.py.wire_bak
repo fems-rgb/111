@@ -41,7 +41,6 @@ class RunRequest(BaseModel):
     question_task_id: Optional[int] = None
     generate_video: bool = True
     timeout: int = Field(60, ge=10, le=1200)
-    data_table: Optional[dict] = None  # [fix] 前端传入的表格数据 {'columns':[...],'rows':[[...]]}
 
 
 class TemplateCreate(BaseModel):
@@ -68,17 +67,17 @@ async def run_exp(req: RunRequest, bg: BackgroundTasks,
     db.add(run)
     await db.commit()
     await db.refresh(run)
-    bg.add_task(_exec, run.id, req.code, req.timeout, req.generate_video, req.data_table)
+    bg.add_task(_exec, run.id, req.code, req.timeout, req.generate_video)
     return {'run_id': run.id, 'status': 'running'}
 
 
-async def _exec(run_id, code, timeout, gen_video, data_table=None):
+async def _exec(run_id, code, timeout, gen_video):
     from app.database.session import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
         try:
             run = (await db.execute(select(ExperimentRun).where(ExperimentRun.id == run_id))).scalar_one_or_none()
             if not run: return
-            res = await run_experiment(code, run_id, timeout, gen_video, meta={'data_table': data_table})
+            res = await run_experiment(code, run_id, timeout, gen_video)
             run.status = 'completed' if res['success'] else 'failed'
             run.output_text = res.get('output_text', '')
             run.charts = res.get('charts', [])
@@ -132,16 +131,6 @@ async def _exec(run_id, code, timeout, gen_video, data_table=None):
                     await db.commit()
         except Exception as e:
             logger.error(f'实验执行异常: {e}', exc_info=True)
-            # [fix-running] 异常时必须持久化状态, 否则前端永远 '运行中'
-            try:
-                if run is not None:
-                    run.status = 'failed'
-                    run.error_message = str(e)[:2000]
-                    run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-                    print(f'[lab] _exec 异常已记录 run {run.id}: {e}')
-            except Exception as _commit_err:
-                print(f'[lab] _exec 状态提交失败: {_commit_err}')
 
 
 @router.get('/status/{run_id}')
@@ -311,4 +300,3 @@ async def delete_single_run(run_id: int,
     await db.delete(run)
     await db.commit()
     return {'message': '已删除', 'run_id': run_id}
-

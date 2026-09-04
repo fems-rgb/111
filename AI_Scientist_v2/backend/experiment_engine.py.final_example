@@ -1,0 +1,226 @@
+# -*- coding: utf-8 -*-
+"""模拟骨架: 模拟你现有 experiment_engine.py 的结构。"""
+import os, sys, json, asyncio, logging, shutil
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+OUTPUT_ROOT = os.path.join(os.getcwd(), 'output', 'experiments')
+
+FORBIDDEN = ['os.system', 'subprocess.run']
+FORBIDDEN_IMPORTS = ['socket']
+
+
+def _check_safety(code: str) -> Optional[str]:
+    for f in FORBIDDEN:
+        if f in code:
+            return f'拦截 {f}'
+    return None
+
+def _serialize_data_table(data_table) -> str:
+    if data_table is None:
+        return "'__NONE__'"
+    try:
+        s = __import__('json').dumps(data_table, ensure_ascii=False, default=str)
+    except Exception:
+        return "'__NONE__'"
+    return repr(s)
+
+def _build_wrapper(code: str, out_dir: str, charts_dir: str,
+                   generate_video: bool, data_table=None) -> str:
+    safe_code = (code
+                 .replace(chr(92), chr(92) + chr(92))
+                 .replace(chr(34) * 3, chr(34) + chr(39) + chr(34)))
+
+    df_json = _serialize_data_table(data_table)
+
+    anim = ""
+    if generate_video:
+        anim = (
+            "\n"
+            "# === Animation auto-save ===\n"
+            "import atexit\n"
+            "_ANIMS = []\n"
+            "_orig_FA = getattr(animation, 'FuncAnimation', None)\n"
+            "if _orig_FA is not None:\n"
+            "    class _TA(_orig_FA):\n"
+            "        def __init__(self, *a, **kw):\n"
+            "            super().__init__(*a, **kw)\n"
+            "            _ANIMS.append(self)\n"
+            "    animation.FuncAnimation = _TA\n"
+        )
+
+    wrapper = (
+        "# -*- coding: utf-8 -*-\n"
+        "import sys, io, os, json, warnings\n"
+        "import numpy as np\n"
+        "import pandas as pd\n"
+        "import matplotlib\n"
+        "import matplotlib.pyplot as plt\n"
+        "import matplotlib.animation as animation\n"
+        "matplotlib.use('Agg')\n"
+        "warnings.filterwarnings('ignore', category=UserWarning)\n"
+        "sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')\n"
+        "sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')\n"
+        "\n"
+        "OUT = r'" + out_dir.replace("'", "''") + "'\n"
+        "CDIR = r'" + charts_dir.replace("'", "''") + "'\n"
+        "_CHARTS = []\n"
+        "\n"
+        "_DF_JSON = " + df_json + "\n"
+        "\n"
+        "# === 图表捕获 ===\n"
+        "_orig_savefig = plt.savefig\n"
+        "def _save(*a, **kw):\n"
+        "    if a:\n"
+        "        p = a[0]\n"
+        "        if not os.path.isabs(str(p)):\n"
+        "            p = os.path.join(CDIR, str(p))\n"
+        "        a = (p,) + a[1:]\n"
+        "    kw.setdefault('dpi', 150)\n"
+        "    kw.setdefault('bbox_inches', 'tight')\n"
+        "    _orig_savefig(*a, **kw)\n"
+        "    _CHARTS.append(str(a[0]) if a else '')\n"
+        "plt.savefig = _save\n"
+        "\n"
+        "_orig_show = plt.show\n"
+        "def _show(*a, **kw):\n"
+        "    import glob as _glb, os as _os\n"
+        "    _st = set(_CHARTS)\n"
+        "    for _f in sorted(_glb.glob(_os.path.join(CDIR, '*.png'))):\n"
+        "        if _f not in _st:\n"
+        "            _CHARTS.append(_f)\n"
+        "            _st.add(_f)\n"
+        "    plt.close('all')\n"
+        "plt.show = _show\n"
+        + anim +
+        "\n"
+        "def __run(__code):\n"
+        "    import builtins\n"
+        "    try:\n"
+        "        _dt = None if _DF_JSON == '__NONE__' else json.loads(_DF_JSON)\n"
+        "    except Exception:\n"
+        "        _dt = None\n"
+        "    df = None\n"
+        "    if _dt is not None:\n"
+        "        try:\n"
+        "            if isinstance(_dt, dict) and 'rows' in _dt:\n"
+        "                df = pd.DataFrame(_dt['rows'], columns=_dt.get('columns'))\n"
+        "            else:\n"
+        "                df = pd.DataFrame(_dt)\n"
+        "        except Exception:\n"
+        "            df = None\n"
+        "    _ns = {'__builtins__': builtins, 'df': df,\n"
+        "           'pd': pd, 'np': np, 'plt': plt, 'os': os, 'json': json}\n"
+        "    exec(__code, _ns)\n"
+        "    if 'result_data' in _ns:\n"
+        "        globals()['result_data'] = _ns['result_data']\n"
+        "\n"
+        "__USER_CODE = (\n"
+        '    r"""\n'
+        + safe_code +
+        '\n"""\n'
+        ")\n"
+        "\n"
+        "__run(__USER_CODE)\n"
+        "\n"
+        "_result = {'charts': _CHARTS, 'data_table': None}\n"
+        "if 'result_data' in globals():\n"
+        "    _result['data_table'] = globals()['result_data']\n"
+        "with open(os.path.join(OUT, '_meta.json'), 'w', encoding='utf-8') as _f:\n"
+        "    json.dump(_result, _f, ensure_ascii=False, default=str)\n"
+    )
+    return wrapper
+
+def _auto_generate_charts(charts_dir: str, run_id, data_table=None):
+    import os
+    import numpy as np
+    import pandas as _pd
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import logging
+    logger = logging.getLogger(__name__)
+
+    def _to_df(src):
+        if src is None:
+            return None
+        try:
+            if isinstance(src, dict) and "rows" in src and "columns" in src:
+                cols, rows = src["columns"], src["rows"]
+                if rows and isinstance(rows[0], dict):
+                    return _pd.DataFrame(rows)
+                return _pd.DataFrame(rows, columns=cols)
+            return _pd.DataFrame(src)
+        except Exception:
+            return None
+
+    df = _to_df(data_table)
+    os.makedirs(charts_dir, exist_ok=True)
+    out = []
+    if df is None or len(df) == 0:
+        logger.warning("[autochart] run %s 无真实数据, 跳过(不造假)", run_id)
+        return out
+
+    nums = [c for c in df.columns if df[c].dtype.kind in "biufc"]
+    if len(nums) >= 2:
+        xc, yc = nums[0], nums[1]
+        path = os.path.join(charts_dir, "relation.png")
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.scatter(df[xc].astype(float).values, df[yc].astype(float).values, alpha=0.6)
+        try:
+            c = np.polyfit(df[xc].astype(float).values, df[yc].astype(float).values, 1)
+            ax.plot(df[xc].astype(float).values,
+                    c[0] * df[xc].astype(float).values + c[1], "r-", lw=2,
+                    label="y=%.2fx+%.2f" % (c[0], c[1]))
+        except Exception:
+            pass
+        ax.set_title("relation %s vs %s (run %s)" % (xc, yc, run_id))
+        ax.set_xlabel(xc); ax.set_ylabel(yc); ax.legend()
+        plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        out.append(path)
+    if nums:
+        col = nums[0]
+        path = os.path.join(charts_dir, "distribution.png")
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.hist(df[col].dropna().astype(float),
+                bins=min(30, max(5, len(df) // 10)), density=True, alpha=0.7)
+        ax.set_title("%s distribution (run %s)" % (col, run_id))
+        ax.set_xlabel(col); ax.set_ylabel("density")
+        plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        out.append(path)
+    if len(nums) >= 3:
+        path = os.path.join(charts_dir, "correlation.png")
+        fig, ax = plt.subplots(figsize=(6, 5))
+        corr = df[nums].apply(_pd.to_numeric, errors="coerce").corr()
+        im = ax.imshow(corr.values, cmap="coolwarm", vmin=-1, vmax=1)
+        ax.set_xticks(range(len(corr.columns)))
+        ax.set_xticklabels(corr.columns, rotation=45, ha="right", fontsize=8)
+        ax.set_yticks(range(len(corr.columns)))
+        ax.set_yticklabels(corr.columns, fontsize=8)
+        fig.colorbar(im, ax=ax)
+        ax.set_title("correlation matrix (run %s)" % run_id)
+        plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        out.append(path)
+    logger.info("[autochart] run %s 真实数据生成 %d 张图", run_id, len(out))
+    return out
+
+async def run_experiment(code: str, run_id: int, timeout: int = 60,
+                         generate_video: bool = True) -> dict:
+    """真实结构: 从 meta 读 data_table, 调用 _auto_generate_charts + _build_wrapper。"""
+    run_dir = os.path.join(OUTPUT_ROOT, str(run_id))
+    charts_dir = os.path.join(run_dir, 'charts')
+    os.makedirs(charts_dir, exist_ok=True)
+
+    # 模拟 API 层: 把 meta 存在函数属性上
+    meta_raw = getattr(run_experiment, '_last_meta', None) or '{}'
+    try:
+        meta = json.loads(meta_raw) if isinstance(meta_raw, str) else dict(meta_raw or {})
+    except Exception:
+        meta = {}
+
+    charts_list = _auto_generate_charts(charts_dir, run_id)
+    wrapper = _build_wrapper(code, run_dir, charts_dir, generate_video, data_table=data_table)
+    run_py = os.path.join(run_dir, '_run.py')
+    with open(run_py, 'w', encoding='utf-8') as f:
+        f.write(wrapper)
+    return {'ok': True, 'charts': charts_list, 'run_py': run_py}

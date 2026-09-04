@@ -337,7 +337,7 @@ class Orchestrator:
                                     db.add(_run)
                                     await db.commit()
                                     await db.refresh(_run)
-                                    _res = await run_experiment(_code, _run.id, timeout=120, generate_video=True, meta={'data_table': None})
+                                    _res = await run_experiment(_code, _run.id, timeout=120, generate_video=True)
                                     _charts = _res.get("charts") or []
                                     for _k, _v in (("status", "completed" if _res.get("success") else "failed"),
                                                    ("output_text", _res.get("output_text", "")),

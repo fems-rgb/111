@@ -1,0 +1,514 @@
+# -*- coding: utf-8 -*-
+import os, sys, time, json, asyncio, logging
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+# [fix] 基于本文件位置计算 backend 根目录，避免依赖启动 cwd
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OUTPUT_ROOT = os.path.join(_BACKEND_ROOT, 'output', 'experiments')
+_DATA_CACHE = {}  # [fix] run_id -> data_table
+
+FORBIDDEN = ['os.system', 'subprocess.run', 'subprocess.call', 'subprocess.Popen',
+             'shutil.rmtree', '__import__', 'eval(', 'exec(', 'socket', 'ctypes']
+FORBIDDEN_IMPORTS = ['socket', 'ctypes', 'multiprocessing', 'subprocess', 'shutil']
+
+CN_FONT_SETUP = (
+    "import matplotlib\n"
+    "matplotlib.use('Agg')\n"
+    "import matplotlib.pyplot as plt\n"
+    "plt.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DengXian', 'DejaVu Sans']\n"
+    "plt.rcParams['axes.unicode_minus'] = False\n"
+)
+
+
+def _check_safety(code: str) -> Optional[str]:
+    for f in FORBIDDEN:
+        if f in code:
+            return f'\u5b89\u5168\u62e6\u622a: \u7981\u6b62\u4f7f\u7528 {f}'
+    for m in FORBIDDEN_IMPORTS:
+        if f'import {m}' in code or f'from {m}' in code:
+            return f'\u5b89\u5168\u62e6\u622a: \u7981\u6b62\u5bfc\u5165 {m}'
+    return None
+
+
+def _build_wrapper(code: str, out_dir: str, charts_dir: str, generate_video: bool, data_table=None) -> str:
+    # [fix] 真实数据 -> df (在用户代码前, 由 exec 执行)
+    _serialized = _json.dumps(data_table, ensure_ascii=False, default=str) if data_table is not None else 'null'
+    _df_lines = []
+    _df_lines.append('import json, pandas as _pd')
+    _df_lines.append('_dt = json.loads(' + repr(_serialized) + ')' )
+    _df_lines.append('df = None')
+    _df_lines.append('if _dt is not None:')
+    _df_lines.append('    try:')
+    _df_lines.append('        if isinstance(_dt, dict) and "rows" in _dt:' )
+    _df_lines.append('            df = _pd.DataFrame(_dt["rows"], columns=_dt.get("columns"))')
+    _df_lines.append('        else:')
+    _df_lines.append('            df = _pd.DataFrame(_dt)')
+    _df_lines.append('    except Exception:')
+    _df_lines.append('        df = None')
+    _df_setup = '\n'.join(_df_lines) + '\n'
+    safe_code = _df_setup + code.replace(chr(92), chr(92)+chr(92)).replace(chr(34)*3, chr(34)+chr(39)+chr(34))
+
+    anim_hook = ''
+    if generate_video:
+        anim_hook = (
+            "\n"
+            "# === Animation auto-save hook ===\n"
+            "import atexit\n"
+            "_ANIMATIONS = []\n"
+            "_orig_FuncAnimation = animation.FuncAnimation\n"
+            "class _TrackedFuncAnimation(_orig_FuncAnimation):\n"
+            "    def __init__(self, *a, **kw):\n"
+            "        super().__init__(*a, **kw)\n"
+            "        _ANIMATIONS.append(self)\n"
+            "    def save(self, *a, **kw):\n"
+            "        if a:\n"
+            "            p = str(a[0])\n"
+            "            if not os.path.isabs(p):\n"
+            "                p = os.path.join(_OUT, p)\n"
+            "            a = (p,) + a[1:]\n"
+            "        super().save(*a, **kw)\n"
+            "animation.FuncAnimation = _TrackedFuncAnimation\n"
+            "\n"
+            "def _auto_save_animations():\n"
+            "    for ani in _ANIMATIONS:\n"
+            "        try:\n"
+            "            gif_path = os.path.join(_OUT, 'animation.gif')\n"
+            "            mp4_path = os.path.join(_OUT, 'animation.mp4')\n"
+            "            saved = False\n"
+            "            try:\n"
+            "                from matplotlib.animation import FFMpegWriter\n"
+            "                writer = FFMpegWriter(fps=15, bitrate=1800)\n"
+            "                ani.save(mp4_path, writer=writer)\n"
+            "                saved = True\n"
+            "            except Exception:\n"
+            "                pass\n"
+            "            if not saved:\n"
+            "                try:\n"
+            "                    from matplotlib.animation import PillowWriter\n"
+            "                    writer = PillowWriter(fps=15)\n"
+            "                    ani.save(gif_path, writer=writer)\n"
+            "                    saved = True\n"
+            "                except Exception:\n"
+            "                    pass\n"
+            "            if not saved:\n"
+            "                try:\n"
+            "                    ani.save(gif_path, writer='imagemagick')\n"
+            "                except Exception:\n"
+            "                    pass\n"
+            "        except Exception:\n"
+            "            pass\n"
+            "atexit.register(_auto_save_animations)\n"
+        )
+
+    wrapper = (
+        "import sys, io\n"
+        "sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')\n"
+        "sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')\n"
+        "\n"
+        + CN_FONT_SETUP +
+        "\n"
+        "import matplotlib.animation as animation\n"
+        "import numpy as np\n"
+        "import os, json, warnings\n"
+        "warnings.filterwarnings('ignore', category=UserWarning)\n"
+        "\n"
+        "_CHARTS = []\n"
+        f"_OUT = r'{out_dir}'\n"
+        f"_CDIR = r'{charts_dir}'\n"
+        "\n"
+        "_orig_savefig = plt.savefig\n"
+        "def _save(*a, **kw):\n"
+        "    if a:\n"
+        "        p = a[0]\n"
+        "        if not os.path.isabs(str(p)):\n"
+        "            p = os.path.join(_CDIR, str(p))\n"
+        "        a = (p,) + a[1:]\n"
+        "    kw.setdefault('dpi', 150)\n"
+        "    kw.setdefault('bbox_inches', 'tight')\n"
+        "    _orig_savefig(*a, **kw)\n"
+        "    _CHARTS.append(str(a[0]) if a else '')\n"
+        "plt.savefig = _save\n"
+        "\n"
+        "_orig_show = plt.show\n"
+        "def _show(*a, **kw):\n"
+        "    import glob as _glb, os as _os\n"
+        "    _st = set(_CHARTS)\n"
+        "    for _f in sorted(_glb.glob(_os.path.join(_CDIR, \"*.png\"))):\n"
+        "        if _f not in _st:\n"
+        "            _CHARTS.append(_f)\n"
+        "            _st.add(_f)\n"
+        "    plt.close('all')\n"
+        "plt.show = _show\n"
+        + anim_hook +
+        "\n"
+        "exec(\"\"\"\n"
+        + safe_code +
+        "\n\"\"\")\n"
+        "\n"
+        "_result = {'charts': _CHARTS, 'data_table': None}\n"
+        "if 'result_data' in dir():\n"
+        "    _result['data_table'] = result_data\n"
+        "with open(os.path.join(_OUT, '_meta.json'), 'w', encoding='utf-8') as _f:\n"
+        "    json.dump(_result, _f, ensure_ascii=False, default=str)\n"
+    )
+    return wrapper
+
+
+
+
+# [auto-fig] 当代码未产出图时，基于运行数据自动生成项目专属标准图
+def _auto_generate_charts(charts_dir: str, run_id, data_table=None):
+    """[fix] 基于真实 data_table 绘图; 无数据返回 [] (不造假)."""
+    import numpy as np
+    import pandas as _pd
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    def _to_df(src):
+        if src is None:
+            return None
+        try:
+            if isinstance(src, dict) and "rows" in src and "columns" in src:
+                cols, rows = src["columns"], src["rows"]
+                if rows and isinstance(rows[0], dict):
+                    return _pd.DataFrame(rows)
+                return _pd.DataFrame(rows, columns=cols)
+            return _pd.DataFrame(src)
+        except Exception:
+            return None
+
+    df = _to_df(data_table)
+    os.makedirs(charts_dir, exist_ok=True)
+    out = []
+    if df is None or len(df) == 0:
+        logger.warning("[autochart] run %s 无真实数据, 跳过(不造假)", run_id)
+        return out
+
+    _nums = [c for c in df.columns if df[c].dtype.kind in "biufc"]
+
+    if len(_nums) >= 2:
+        xc, yc = _nums[0], _nums[1]
+        path = os.path.join(charts_dir, "relation.png")
+        fig, ax = plt.subplots(figsize=(6, 4))
+        x = df[xc].astype(float).values
+        y = df[yc].astype(float).values
+        ax.scatter(x, y, alpha=0.6)
+        try:
+            c = np.polyfit(x, y, 1)
+            ax.plot(x, np.polyval(c, x), "r-", lw=2, label="y=%.2fx+%.2f" % (c[0], c[1]))
+        except Exception:
+            pass
+        ax.set_title("relation %s vs %s (run %s)" % (xc, yc, run_id))
+        ax.set_xlabel(xc); ax.set_ylabel(yc); ax.legend()
+        plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        out.append(path)
+
+    if _nums:
+        col = _nums[0]
+        path = os.path.join(charts_dir, "distribution.png")
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.hist(df[col].dropna().astype(float), bins=min(30, max(5, len(df) // 10)), density=True, alpha=0.7, color="steelblue")
+        ax.set_title("%s distribution (run %s)" % (col, run_id))
+        ax.set_xlabel(col); ax.set_ylabel("density")
+        plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        out.append(path)
+
+    if len(_nums) >= 3:
+        path = os.path.join(charts_dir, "correlation.png")
+        fig, ax = plt.subplots(figsize=(6, 5))
+        corr = df[_nums].apply(_pd.to_numeric, errors="coerce").corr()
+        im = ax.imshow(corr.values, cmap="coolwarm", vmin=-1, vmax=1)
+        ax.set_xticks(range(len(corr.columns)))
+        ax.set_xticklabels(corr.columns, rotation=45, ha="right", fontsize=8)
+        ax.set_yticks(range(len(corr.columns)))
+        ax.set_yticklabels(corr.columns, fontsize=8)
+        fig.colorbar(im, ax=ax)
+        ax.set_title("correlation matrix (run %s)" % run_id)
+        plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
+        out.append(path)
+
+    logger.info("[autochart] run %s 真实数据生成 %d 张图", run_id, len(out))
+    return out
+async def run_experiment(code: str, run_id: int, timeout: int = 60,
+                         generate_video: bool = True) -> dict:
+    start = time.time()
+    err = _check_safety(code)
+    if err:
+        return {'success': False, 'error': err, 'output_text': '',
+                'charts': [], 'video_path': None, 'data_table': None, 'duration_ms': 0}
+
+    out_dir = os.path.join(OUTPUT_ROOT, str(run_id))
+    charts_dir = os.path.join(out_dir, 'charts')
+    os.makedirs(charts_dir, exist_ok=True)
+
+    wrapper = _build_wrapper(code, out_dir, charts_dir, generate_video, data_table=data_table)
+
+    tmp = os.path.join(out_dir, '_run.py')
+    with open(tmp, 'w', encoding='utf-8') as f:
+        f.write(wrapper)
+
+    try:
+        env = os.environ.copy()
+        env['PYTHONIOENCODING'] = 'utf-8'
+        env['MPLBACKEND'] = 'Agg'
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, '-X', 'utf8', tmp,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            cwd=out_dir, env=env)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        dur = int((time.time() - start) * 1000)
+        sout = stdout.decode('utf-8', errors='replace')[:10000]
+        serr = stderr.decode('utf-8', errors='replace')[:5000]
+
+        serr_lines = [l for l in serr.split('\n')
+                      if l.strip() and 'UserWarning' not in l and 'Glyph' not in l
+                      and 'missing from font' not in l and '_orig_savefig' not in l
+                      and '_auto_save' not in l and 'PillowWriter' not in l
+                      and 'FFMpegWriter' not in l]
+        serr_clean = '\n'.join(serr_lines).strip()
+
+        if proc.returncode != 0:
+            return {'success': False, 'output_text': sout, 'error': serr_clean[-2000:] or serr[-2000:],
+                    'charts': [], 'video_path': None, 'data_table': None, 'duration_ms': dur}
+
+        meta_path = os.path.join(out_dir, '_meta.json')
+        charts_list = []
+        data_table = None
+        if os.path.exists(meta_path):
+            with open(meta_path, encoding='utf-8') as f:
+                meta = json.load(f)
+            charts_list = meta.get('charts', [])
+            data_table = meta.get('data_table')
+            _DATA_CACHE[str(run_id)] = data_table  # [fix]
+
+        if not charts_list:
+            for fn in sorted(os.listdir(charts_dir)):
+                if fn.endswith(('.png', '.jpg', '.svg')):
+                    charts_list.append(os.path.join(charts_dir, fn))
+        # [auto-fig] 兜底：若仍无图，基于本项目数据自动生成 3 张标准图
+        if not charts_list:
+            try:
+                charts_list = _auto_generate_charts(charts_dir, run_id, data_table)
+                logger.warning("[run_experiment] 代码未产出图，已自动生成 %d 张兜底图", len(charts_list))
+            except Exception as _ae:
+                logger.warning("[run_experiment] 自动绘图失败: %s", _ae)
+
+        video_path = None
+        if generate_video:
+            mp4_path = os.path.join(out_dir, 'animation.mp4')
+            gif_path = os.path.join(out_dir, 'animation.gif')
+            if os.path.exists(mp4_path) and os.path.getsize(mp4_path) > 0:
+                video_path = mp4_path
+            elif os.path.exists(gif_path) and os.path.getsize(gif_path) > 0:
+                video_path = gif_path
+            else:
+                for fn in os.listdir(out_dir):
+                    if fn.endswith(('.mp4', '.gif', '.avi', '.mov')) and fn != '_run.py':
+                        candidate = os.path.join(out_dir, fn)
+                        if os.path.getsize(candidate) > 0:
+                            video_path = candidate
+                            break
+
+        # 去重
+        _seen = set()
+        _charts_unique = []
+        for c in charts_list:
+            if os.path.exists(c) and c not in _seen:
+                _seen.add(c)
+                _charts_unique.append({'path': c, 'filename': os.path.basename(c)})
+
+        return {'success': True, 'output_text': sout,
+                'charts': _charts_unique,
+                'video_path': video_path, 'data_table': data_table,
+                'error': serr_clean if serr_clean else None, 'duration_ms': dur}
+    except asyncio.TimeoutError:
+        try: proc.kill()
+        except: pass
+        return {'success': False, 'output_text': '', 'error': f'\u6267\u884c\u8d85\u65f6({timeout}\u79d2)',
+                'charts': [], 'video_path': None, 'data_table': None,
+                'duration_ms': int((time.time()-start)*1000)}
+    except Exception as e:
+        return {'success': False, 'output_text': '', 'error': str(e)[:1000],
+                'charts': [], 'video_path': None, 'data_table': None,
+                'duration_ms': int((time.time()-start)*1000)}
+
+
+BUILTIN_TEMPLATES = [
+    {
+        'name': '\u7ebf\u6027\u56de\u5f52\u6a21\u62df',
+        'description': '\u751f\u6210\u5408\u6210\u6570\u636e\u5e76\u62df\u5408\u7ebf\u6027\u6a21\u578b\uff0c\u8f93\u51fa\u56de\u5f52\u7cfb\u6570\u3001R\u00b2\u503c\u548c\u6b8b\u5dee\u56fe',
+        'category': '\u7edf\u8ba1\u5206\u6790',
+        'code': (
+            "import numpy as np\n"
+            "import matplotlib.pyplot as plt\n"
+            "from scipy import stats\n"
+            "\n"
+            "np.random.seed(42)\n"
+            "n = 200\n"
+            "X = np.random.uniform(0, 10, n)\n"
+            "Y = 2.5 * X + 3 + np.random.normal(0, 1.5, n)\n"
+            "\n"
+            "slope, intercept, r_value, p_value, std_err = stats.linregress(X, Y)\n"
+            "\n"
+            "fig, axes = plt.subplots(1, 2, figsize=(12, 5))\n"
+            "axes[0].scatter(X, Y, alpha=0.6, color='steelblue')\n"
+            "axes[0].plot(X, intercept + slope * X, 'r-', linewidth=2,\n"
+            "             label=f'y={slope:.2f}x+{intercept:.2f}')\n"
+            "axes[0].set_title(f'R\u00b2={r_value**2:.4f}, p={p_value:.2e}')\n"
+            "axes[0].set_xlabel('\u81ea\u53d8\u91cf X')\n"
+            "axes[0].set_ylabel('\u56e0\u53d8\u91cf Y')\n"
+            "axes[0].legend()\n"
+            "\n"
+            "residuals = Y - (slope * X + intercept)\n"
+            "axes[1].scatter(slope*X+intercept, residuals, alpha=0.6, color='coral')\n"
+            "axes[1].axhline(y=0, color='k', linestyle='--')\n"
+            "axes[1].set_title('\u6b8b\u5dee\u5206\u5e03\u56fe')\n"
+            "axes[1].set_xlabel('\u9884\u6d4b\u503c')\n"
+            "axes[1].set_ylabel('\u6b8b\u5dee')\n"
+            "plt.tight_layout()\n"
+            "plt.savefig('regression.png', dpi=150, bbox_inches='tight')\n"
+            "plt.show()\n"
+            "\n"
+            "result_data = {\n"
+            "    'columns': ['\u6307\u6807', '\u6570\u503c'],\n"
+            "    'rows': [['\u659c\u7387', f'{slope:.4f}'], ['\u622a\u8ddd', f'{intercept:.4f}'],\n"
+            "             ['R\u00b2', f'{r_value**2:.4f}'], ['p\u503c', f'{p_value:.2e}']]\n"
+            "}\n"
+            "print(f'\u56de\u5f52\u5b8c\u6210: y={slope:.3f}x+{intercept:.3f}, R\u00b2={r_value**2:.4f}')\n"
+        )
+    },
+    {
+        'name': '\u8499\u7279\u5361\u6d1b\u4f30\u7b97\u5706\u5468\u7387',
+        'description': '\u901a\u8fc7\u968f\u673a\u91c7\u6837\u4f30\u7b97pi\u503c\uff0c\u5c55\u793a\u6536\u655b\u8fc7\u7a0b',
+        'category': '\u6570\u503c\u8ba1\u7b97',
+        'code': (
+            "import numpy as np\n"
+            "import matplotlib.pyplot as plt\n"
+            "\n"
+            "np.random.seed(42)\n"
+            "N = 5000\n"
+            "x = np.random.uniform(-1, 1, N)\n"
+            "y = np.random.uniform(-1, 1, N)\n"
+            "inside = x**2 + y**2 <= 1\n"
+            "pi_est = 4 * inside.sum() / N\n"
+            "\n"
+            "fig, ax = plt.subplots(figsize=(6, 6))\n"
+            "ax.scatter(x[inside], y[inside], s=1, c='green', alpha=0.5, label='\u5706\u5185')\n"
+            "ax.scatter(x[~inside], y[~inside], s=1, c='red', alpha=0.3, label='\u5706\u5916')\n"
+            "circle = plt.Circle((0,0), 1, fill=False, color='k', lw=2)\n"
+            "ax.add_patch(circle)\n"
+            "ax.set_aspect('equal')\n"
+            "ax.set_title(f'\u8499\u7279\u5361\u6d1b\u6cd5 \u03c0 = {pi_est:.4f}')\n"
+            "ax.legend()\n"
+            "plt.savefig('monte_carlo.png', dpi=150, bbox_inches='tight')\n"
+            "plt.show()\n"
+            "\n"
+            "running = 4 * np.cumsum(inside) / np.arange(1, N+1)\n"
+            "fig2, ax2 = plt.subplots(figsize=(8, 4))\n"
+            "ax2.plot(running, 'b-', lw=0.5)\n"
+            "ax2.axhline(y=np.pi, color='r', ls='--', label=f'\u771f\u5b9e\u03c0={np.pi:.6f}')\n"
+            "ax2.set_xlabel('\u91c7\u6837\u6b21\u6570')\n"
+            "ax2.set_ylabel('\u03c0 \u4f30\u8ba1\u503c')\n"
+            "ax2.set_title('\u6536\u655b\u8fc7\u7a0b')\n"
+            "ax2.legend()\n"
+            "plt.savefig('convergence.png', dpi=150, bbox_inches='tight')\n"
+            "plt.show()\n"
+            "\n"
+            "result_data = {\n"
+            "    'columns': ['\u6307\u6807', '\u6570\u503c'],\n"
+            "    'rows': [['\u91c7\u6837\u6570', str(N)], ['\u03c0\u4f30\u8ba1\u503c', f'{pi_est:.6f}'],\n"
+            "             ['\u771f\u5b9e\u03c0', f'{np.pi:.6f}'], ['\u8bef\u5dee', f'{abs(pi_est-np.pi):.6f}']]\n"
+            "}\n"
+            "print(f'\u8499\u7279\u5361\u6d1b: \u03c0 = {pi_est:.6f}')\n"
+        )
+    },
+    {
+        'name': '\u6b63\u6001\u5206\u5e03\u4e0e\u4e2d\u5fc3\u6781\u9650\u5b9a\u7406',
+        'description': '\u6f14\u793a\u4e2d\u5fc3\u6781\u9650\u5b9a\u7406\uff1a\u975e\u6b63\u6001\u6837\u672c\u5747\u503c\u7684\u5206\u5e03\u8d8b\u8fd1\u6b63\u6001',
+        'category': '\u7edf\u8ba1\u5206\u6790',
+        'code': (
+            "import numpy as np\n"
+            "import matplotlib.pyplot as plt\n"
+            "from scipy import stats\n"
+            "\n"
+            "np.random.seed(42)\n"
+            "sample_sizes = [1, 5, 30, 100]\n"
+            "n_experiments = 10000\n"
+            "\n"
+            "fig, axes = plt.subplots(2, 2, figsize=(12, 8))\n"
+            "for ax, n in zip(axes.flat, sample_sizes):\n"
+            "    means = [np.mean(np.random.exponential(1, n)) for _ in range(n_experiments)]\n"
+            "    ax.hist(means, bins=50, density=True, alpha=0.7, color='steelblue', edgecolor='white')\n"
+            "    mu, sigma = np.mean(means), np.std(means)\n"
+            "    x_range = np.linspace(mu - 4*sigma, mu + 4*sigma, 200)\n"
+            "    ax.plot(x_range, stats.norm.pdf(x_range, mu, sigma), 'r-', lw=2, label='\u6b63\u6001\u62df\u5408')\n"
+            "    ax.set_title(f'\u6837\u672c\u91cf n={n}')\n"
+            "    ax.set_xlabel('\u6837\u672c\u5747\u503c')\n"
+            "    ax.set_ylabel('\u6982\u7387\u5bc6\u5ea6')\n"
+            "    ax.legend(fontsize=8)\n"
+            "plt.suptitle('\u4e2d\u5fc3\u6781\u9650\u5b9a\u7406\u6f14\u793a(\u6307\u6570\u5206\u5e03\u91c7\u6837)', fontsize=14, fontweight='bold')\n"
+            "plt.tight_layout()\n"
+            "plt.savefig('clt.png', dpi=150, bbox_inches='tight')\n"
+        "    # 拆分 2x2 子图为独立图表\n"
+        "    for _ci, (_cax, _cn) in enumerate(zip(axes.flat, sample_sizes)):\n"
+        "        _cfig = plt.figure(figsize=(6, 4))\n"
+        "        _cmeans = [np.mean(np.random.exponential(1, _cn)) for _ in range(n_experiments)]\n"
+        "        plt.hist(_cmeans, bins=50, density=True, alpha=0.7, color='steelblue', edgecolor='white')\n"
+        "        _cmu, _csigma = np.mean(_cmeans), np.std(_cmeans)\n"
+        "        _cx = np.linspace(_cmu - 4*_csigma, _cmu + 4*_csigma, 200)\n"
+        "        plt.plot(_cx, stats.norm.pdf(_cx, _cmu, _csigma), 'r-', lw=2)\n"
+        "        plt.title(f'Sample n={_cn}')\n"
+        "        plt.xlabel('Sample Mean')\n"
+        "        plt.ylabel('Density')\n"
+        "        plt.tight_layout()\n"
+        "        plt.savefig(f'clt_n{_cn}.png', dpi=150, bbox_inches='tight')\n"
+        "        plt.show()\n"
+        "        plt.close(_cfig)\n"
+            "plt.show()\n"
+            "\n"
+            "result_data = {\n"
+            "    'columns': ['\u6837\u672c\u91cf', '\u5747\u503c', '\u6807\u51c6\u5dee', '\u504f\u5ea6'],\n"
+            "    'rows': [[str(n),\n"
+            "              f'{np.mean([np.mean(np.random.exponential(1,n)) for _ in range(1000)]):.4f}',\n"
+            "              f'{np.std([np.mean(np.random.exponential(1,n)) for _ in range(1000)]):.4f}',\n"
+            "              f'{stats.skew([np.mean(np.random.exponential(1,n)) for _ in range(1000)]):.4f}']\n"
+            "             for n in sample_sizes]\n"
+            "}\n"
+            "print('\u4e2d\u5fc3\u6781\u9650\u5b9a\u7406\u6f14\u793a\u5b8c\u6210')\n"
+        )
+    },
+    {
+        'name': '\u52a8\u6001\u6b63\u5f26\u6ce2\u52a8\u753b',
+        'description': '\u4f7f\u7528 FuncAnimation \u751f\u6210\u6b63\u5f26\u6ce2\u4f20\u64ad\u52a8\u753b\uff0c\u81ea\u52a8\u4fdd\u5b58\u4e3a MP4/GIF',
+        'category': '\u52a8\u6001\u53ef\u89c6\u5316',
+        'code': (
+            "import numpy as np\n"
+            "import matplotlib.pyplot as plt\n"
+            "import matplotlib.animation as animation\n"
+            "\n"
+            "fig, ax = plt.subplots(figsize=(8, 4))\n"
+            "x = np.linspace(0, 2*np.pi, 200)\n"
+            "line, = ax.plot(x, np.sin(x), 'b-', lw=2)\n"
+            "ax.set_xlim(0, 2*np.pi)\n"
+            "ax.set_ylim(-1.5, 1.5)\n"
+            "ax.set_title('\u6b63\u5f26\u6ce2\u4f20\u64ad\u52a8\u753b')\n"
+            "ax.set_xlabel('x')\n"
+            "ax.set_ylabel('sin(x + t)')\n"
+            "\n"
+            "def update(frame):\n"
+            "    line.set_ydata(np.sin(x + frame * 0.1))\n"
+            "    ax.set_title(f'\u6b63\u5f26\u6ce2\u4f20\u64ad t={frame*0.1:.1f}')\n"
+            "    return line,\n"
+            "\n"
+            "ani = animation.FuncAnimation(fig, update, frames=60, interval=50, blit=True)\n"
+            "# \u65e0\u9700\u624b\u52a8\u8c03\u7528 ani.save() \u2014 \u7cfb\u7edf\u4f1a\u81ea\u52a8\u4fdd\u5b58\n"
+            "plt.show()\n"
+            "\n"
+            "print('\u52a8\u753b\u751f\u6210\u5b8c\u6210\uff0c\u5171 60 \u5e27')\n"
+        )
+    },
+]
+
+
