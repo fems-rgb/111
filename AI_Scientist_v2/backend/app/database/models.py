@@ -132,7 +132,7 @@ class AgentTask(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     agent_name = Column(String(50), nullable=False)
     step_order = Column(Integer, nullable=False)
-    status = Column(SAEnum(TaskStatus), default=TaskStatus.PENDING)
+    status = Column(String(32), default=TaskStatus.PENDING.value, nullable=False)
 
     # 输入输出
     input_data = Column(Text, default="")

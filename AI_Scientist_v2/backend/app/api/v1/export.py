@@ -155,6 +155,14 @@ async def auto_export_pdf(project_id: int, db: AsyncSession) -> str | None:
         except Exception:
             pass
 
+    # ★ [fix] 优先走 WeasyPrint 精美版（含图表、专业排版）
+    try:
+        _weasy_path = generate_challenge_cup_pdf(project_id)
+        if _weasy_path and __import__('os').path.isfile(_weasy_path):
+            logger.info(f"✅ PDF自动导出成功(WeasyPrint精美版): {_weasy_path}")
+            return _weasy_path
+    except Exception as _we:
+        logger.warning(f"WeasyPrint精美版失败，降级xhtml2pdf: {_we}")
     md_text = _build_p1_to_p20(proj, tasks, hypos, iters, team)
     html_body = md_lib.markdown(md_text, extensions=['tables', 'fenced_code'])
     full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -172,7 +180,7 @@ code {{ background-color: #f5f5f5; padding: 1px 4px; }}
 
     AUTO_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (proj.name or f"project_{project_id}"))[:60]
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (proj.title or f"project_{project_id}"))[:60]
     filename = f"{COMPETITION['topic_id']}_{safe_name}_{ts}.pdf"
     filepath = AUTO_EXPORT_DIR / filename
 
@@ -625,8 +633,22 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
         # --- 图表去重 ---
         _seen=set();_uc=[]
         import base64 as _b64, os as _os, glob as _glob
-        _EXP=r'D:\\AI_Scientist\\AI_Scientist\\backend\\output\\experiments'
-        _all_png={_os.path.basename(_p):_p for _p in _glob.glob(_EXP+r'\\**\\*.png', recursive=True)}
+        # [fix] 动态定位本项目图表目录
+        _PROJ_ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+        _CANDIDATE_DIRS = [
+            _os.path.join(_PROJ_ROOT, 'output', 'deliverables', f'project_{project_id}', 'charts'),
+            _os.path.join(_PROJ_ROOT, 'output', 'deliverables', f'project_{project_id}'),
+            _os.path.join(_PROJ_ROOT, 'output', 'experiments', f'project_{project_id}', 'charts'),
+            _os.path.join(_PROJ_ROOT, 'output', 'experiments', str(project_id), 'charts'),
+        ]
+        _all_png = {}
+        for _d in _CANDIDATE_DIRS:
+            if _os.path.isdir(_d):
+                for _f in sorted(_os.listdir(_d)):
+                    if _f.lower().endswith(('.png','.jpg','.jpeg','.svg')):
+                        _all_png[_f] = _os.path.join(_d, _f)
+        if not _all_png:
+            logger.warning('[stageE] project_%s 无专属图表，不填充占位图', project_id)
         logger.info('[stageE] 目录中png共%s个: %s', len(_all_png), list(_all_png.keys())[:5])
         def _add_ch(_c):
             if not isinstance(_c,dict): return

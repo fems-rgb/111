@@ -363,6 +363,42 @@ class Orchestrator:
                                                 _ev.append(_res["video_path"])
                                             _pj.evidence_files = _ev
                                             await db.commit()
+                                        # [sync] 清空 + 同步实验图到 deliverables/project_{project_id}/charts/
+
+                                        try:
+
+                                            import os as _os, shutil as _sh, glob as _glb
+
+                                            _exp_charts = _os.path.join(OUTPUT_ROOT, str(_run.id), 'charts')
+
+                                            _backend = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+
+                                            _deli_charts = _os.path.join(_backend, 'output', 'deliverables', f'project_{project_id}', 'charts')
+
+                                            if _os.path.isdir(_exp_charts):
+
+                                                _os.makedirs(_deli_charts, exist_ok=True)
+
+                                                for _old in _glb.glob(_os.path.join(_deli_charts, '*')):
+
+                                                    try: _os.remove(_old)
+
+                                                    except Exception: pass
+
+                                                for _fn in sorted(_os.listdir(_exp_charts)):
+
+                                                    if _fn.lower().endswith(('.png','.jpg','.jpeg','.svg')):
+
+                                                        _sh.copy(_os.path.join(_exp_charts, _fn),
+
+                                                                 _os.path.join(_deli_charts, _fn))
+
+                                                logger.info('[stageC] 同步图到 %s: %s', _deli_charts, sorted(_os.listdir(_deli_charts)))
+
+                                        except Exception as _se:
+
+                                            logger.warning('[stageC] 同步图失败（不阻塞）: %s', _se)
+
                                     logger.info("[stageC] 模拟场完成 run=%s charts=%s video=%s",
                                                 _run.id, len(_charts), bool(_res.get("video_path")))
                                     try:
@@ -498,18 +534,34 @@ class Orchestrator:
                     _all_done = True
                 if _all_done:
                     project.status = ProjectStatus.COMPLETED
-                    # [auto-export] 流水线完成 → 自动导出 PDF + 归集图表（所有 import 在块内，无顶层依赖）
+                    # [auto-export] 流水线完成 →【精美版 PDF】(WeasyPrint+图表) 落地 deliverables/project_{id}/report.pdf
+                    _pdf_final = None
                     try:
-                        import os as _ae_os
-                        import shutil as _ae_sh
-                        import glob as _ae_gl
-                        from app.database.session import AsyncSessionLocal as _ae_DB
-                        from app.api.v1.export import auto_export_pdf as _ae_fn
-                        async with _ae_DB() as _ae_db:
-                            await _ae_fn(project_id, _ae_db)
-                        logger.info("[auto-export] PDF 自动导出完成: project %s", project_id)
+                        import asyncio as _ae_aio
+                        from app.api.v1.export import generate_challenge_cup_pdf as _gen_pdf
+                        # 精美版内部 _run_in_new_loop；run_in_executor 避免嵌套事件循环冲突
+                        _pdf_final = await _ae_aio.get_running_loop().run_in_executor(
+                            None, lambda: _gen_pdf(project_id))
+                        logger.info("[auto-export] 精美版 PDF 生成: project %s -> %r", project_id, _pdf_final)
                     except Exception as _ae_e:
-                        logger.warning("[auto-export] PDF 导出失败(不影响流水线): %s", _ae_e)
+                        import traceback as _ae_tb
+                        logger.error("[auto-export] 精美版生成失败(不再降级xhtml2pdf): %s\n%s", _ae_e, _ae_tb.format_exc())
+                    
+                    # [fix] 落地到 deliverables/project_{id}/report.pdf（固定位置，前端/下载可预测）
+                    try:
+                        import os as _ae_os_l, shutil as _ae_sh_l
+                        _ae_root_l = _ae_os_l.path.dirname(_ae_os_l.path.dirname(_ae_os_l.path.dirname(_ae_os_l.path.abspath(__file__))))
+                        _ae_dst_l = _ae_os_l.path.join(_ae_root_l, "output", "deliverables", f"project_{project_id}")
+                        _ae_os_l.makedirs(_ae_dst_l, exist_ok=True)
+                        _ae_report = _ae_os_l.path.join(_ae_dst_l, "report.pdf")
+                        if _pdf_final and _ae_os_l.path.isfile(_pdf_final):
+                            _ae_sh_l.copy(_pdf_final, _ae_report)
+                            logger.info("[auto-export] ✅ 精美版 PDF 已落地: %s", _ae_report)
+                        else:
+                            logger.error("[auto-export] 精美版未产出，不再生成 xhtml2pdf 兜底 PDF")
+                    except Exception as _ae_el:
+                        import traceback as _tbe
+                        logger.error("[auto-export] PDF 落地失败: %s\n%s", _ae_el, _tbe.format_exc())
                     try:
                         import os as _ae_os2
                         import shutil as _ae_sh2
@@ -675,5 +727,6 @@ class IterationFeedbackTracker:
             "current_stage": "feedback" if self.iterations else "hypothesis",
             "last_feedback": self.iterations[-1]["feedback"] if self.iterations else None
         }
+
 
 
