@@ -58,8 +58,10 @@ output/
 
 # 备份 / 临时脚本
 *.bak
-*.bak_*
-*_backup.py
+*.bak*
+*_bak
+*_backup*
+*.pre_fix_backup
 *.tmp
 *.orig
 *.rej

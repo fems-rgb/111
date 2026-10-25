@@ -84,7 +84,7 @@ async def list_projects(
     try:
         projects = await get_user_projects_with_progress(db, user.id, status=status, workspace=workspace, limit=size, offset=(page - 1) * size)
     except Exception as e:
-        print(f"[stageB] progress aggregation failed, fallback: {e}")
+        logger.debug("[stageB] progress aggregation failed, fallback: %s", e)
         projects = await get_user_projects(db, user.id, status=status, workspace=workspace, limit=size, offset=(page - 1) * size)
     return projects
 
@@ -252,7 +252,7 @@ async def delete(
                 select(_SQ).where(_SQ.title == _title_core)
             )).scalar_one_or_none()
         if _sq_obj:
-            print(f"[cascade-A] project {project_id} -> ScienceQuestion question_id={_sq_obj.question_id}")
+            logger.debug("[cascade-A] project %s -> ScienceQuestion question_id=%s", project_id, _sq_obj.question_id)
             _tasks = (await db.execute(
                 select(_QT).where(_QT.question_id == _sq_obj.question_id, _QT.user_id == user.id)
             )).scalars().all()
@@ -262,18 +262,18 @@ async def delete(
                         from app.utils.cleanup import clean_task_files
                         clean_task_files(_t.id, _t.document_path)
                 except Exception as _fe:
-                    print(f"[cascade-A] task {_t.id} 清理文件跳过: {_fe}")
+                    logger.debug("[cascade-A] task %s 清理文件跳过: %s", _t.id, _fe)
                 await db.delete(_t)
                 deleted.add(_t.id)
-                print(f"[cascade-A] 删除关联 task {_t.id}")
+                logger.info("[cascade-A] 删除关联 task %s", _t.id)
     except Exception as e:
-        print(f"[cascade-A] 异常(不阻塞删项目): {e}")
-    print(f"[cascade-A] project {project_id} 完成，共删除 {len(deleted)} 个 task")
+        logger.warning("[cascade-A] 异常(不阻塞删项目): %s", e)
+    logger.info("[cascade-A] project %s 完成，共删除 %d 个 task", project_id, len(deleted))
 
     try:
         clean_project_files(project_id)
     except Exception as e:
-        print(f"[cascade-A] project file cleanup skipped: {e}")
+        logger.debug("[cascade-A] project file cleanup skipped: %s", e)
 
     # [cascade-B] 清理所有子表记录（避免外键/关联残留导致删除失败）
     try:
@@ -301,9 +301,9 @@ async def delete(
                 _res = await db.execute(
                     _sdel(_model).where(getattr(_model, _col) == project_id)
                 )
-                print(f"[cascade-B] {_model.__name__} 删除 {_res.rowcount or 0} 条")
+                logger.debug("[cascade-B] %s 删除 %s 条", _model.__name__, _res.rowcount or 0)
             except Exception as _ce:
-                print(f"[cascade-B] {_model.__name__} 跳过: {type(_ce).__name__}: {_ce}")
+                logger.debug("[cascade-B] %s 跳过: %s: %s", _model.__name__, type(_ce).__name__, _ce)
 
         # 通过 question_id 关联的表（ExperimentRun.question_task_id 等）
         try:
@@ -317,7 +317,7 @@ async def delete(
             logger.debug("[cascade-B] QuestionTask 反查失败（不阻断删除）: %s", _qt_err)
 
     except Exception as e:
-        print(f"[cascade-B] 异常(不阻塞): {e}")
+        logger.warning("[cascade-B] 异常(不阻塞): %s", e)
 
     await db.delete(project)
     await db.commit()

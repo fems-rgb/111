@@ -1,15 +1,15 @@
 # ============================================================
-# 智研星枢 - 本地一键起服务
+# 智研星枢 - 一键起服务（单容器模式）
 # 用法（在项目根 AI_Scientist_v2/）：
 #   docker compose up --build
 # 访问：
-#   前端 http://localhost:5173
-#   API  http://localhost:8000/docs
+#   http://localhost:8000       ← 前端 SPA（由 backend/static 提供）
+#   http://localhost:8000/docs  ← API Swagger
 # ============================================================
 version: '3.9'
 
 services:
-  backend:
+  app:
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -18,11 +18,11 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: sqlite+aiosqlite:///./data/zhixing.db
+      DEBUG: "False"
     ports:
       - '8000:8000'
     volumes:
       - zhixing-data:/app/data
-      - ./backend/logs:/app/logs
       - ./backend/uploads:/app/uploads
       - ./backend/output:/app/output
     restart: unless-stopped
@@ -32,21 +32,5 @@ services:
       timeout: 5s
       retries: 3
 
-  frontend:
-    image: node:20-alpine
-    working_dir: /app
-    command: sh -c "npm ci && npm run build && npx --yes serve -s dist -l 5173"
-    environment:
-      VITE_API_BASE: http://backend:8000
-    volumes:
-      - ./frontend:/app
-      - frontend-node-modules:/app/node_modules
-    ports:
-      - '5173:5173'
-    depends_on:
-      - backend
-    restart: unless-stopped
-
 volumes:
   zhixing-data:
-  frontend-node-modules:

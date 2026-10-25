@@ -410,12 +410,12 @@ async def on_project_completed(project_id=None, user_id=None, **_kw):
                         if _r.video_path and _r.video_path not in _vids:
                             _vids.append(_r.video_path)
                 except Exception as _er:
-                    print(f"[on_completed] ExperimentRun 兜底收集失败: {_er}")
+                    logger.debug("[on_completed] ExperimentRun 兗底收集失败: %s", _er)
                 result["figures"] = _figs
                 result["videos"] = _vids
-                print(f"[on_completed] project {project_id} figures={len(_figs)} videos={len(_vids)}")
+                logger.info("[on_completed] project %s figures=%d videos=%d", project_id, len(_figs), len(_vids))
             except Exception as _e:
-                print(f"[on_completed] gather artifacts error: {_e}")
+                logger.debug("[on_completed] gather artifacts error: %s", _e)
 
             result["project_id"] = project_id
             task.result = result
@@ -956,7 +956,7 @@ async def get_task_status(
                 if _total:
                     _real_progress = round(_done / _total * 100)
     except Exception as _ep:
-        print(f"[progress] 计算跳过: {_ep}")
+        logger.debug("[progress] 计算跳过: %s", _ep)
 
     q = select(QuestionTask).where(
         QuestionTask.id == task_id,
@@ -1018,8 +1018,8 @@ async def get_task_document(
             try:
                 with open(abs_path, "r", encoding="utf-8") as f:
                     content_from_file = f.read()
-            except Exception:
-                pass
+            except Exception as _read_err:
+                logger.debug("[doc] 读取文件失败 %s: %s", abs_path, _read_err)
 
     if content_from_file:
         return {"task_id": task_id, "content": content_from_file, "source": "file", "path": doc_path}
@@ -1174,20 +1174,18 @@ async def delete_task(
                 )).scalar_one_or_none()
                 if _p2:
                     project_ids.add(int(_p2.id))
-        print(f"[cascade-B] task {task_id} -> project_ids={project_ids}")
+        logger.debug("[cascade-B] task %s -> project_ids=%s", task_id, project_ids)
         for _pid in project_ids:
             _p = (await db.execute(select(_Proj).where(_Proj.id == _pid))).scalar_one_or_none()
             if _p:
                 try:
                     delete_project_physical_files(_pid)
-                except Exception:
-                    pass
+                except Exception as _del_files:
+                    logger.debug("[cascade-B] 物理文件删除失败 project=%s: %s", _pid, _del_files)
                 await db.delete(_p)
-                print(f"[cascade-B] 删除关联 project {_pid}")
+                logger.info("[cascade-B] 删除关联 project %s", _pid)
     except Exception as e:
-        print(f"[cascade-B] 异常(不阻塞删任务): {e}")
-
-    # 清理任务物理文件
+        logger.warning("[cascade-B] 异常(不阻塞删任务): %s", e)
 
     # 清理任务物理文件
     clean_task_files(task.id, task.document_path)
@@ -1377,8 +1375,8 @@ async def _delete_question_cascade(db, question):
         clean_task_files(t.id, t.document_path)
         try:
             await db.execute(_sqla_delete(_ExpRun).where(_ExpRun.question_task_id == t.id))
-        except Exception:
-            pass
+        except Exception as _exp_del:
+            logger.debug("[cascade] 实验运行记录删除失败 task=%s: %s", t.id, _exp_del)
         await db.delete(t)
     await db.delete(question)
 
@@ -1453,8 +1451,8 @@ async def delete_all_questions(
         for t in tasks:
             try:
                 await _cascade_cleanup_question_task(db, t)
-            except Exception:
-                pass
+            except Exception as _cleanup_err:
+                logger.debug("[delete-all] 级联清理失败 task=%s: %s", t.id, _cleanup_err)
             await db.delete(t)
         await db.delete(question)
         count += 1

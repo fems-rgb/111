@@ -1,4 +1,7 @@
-# 智研星枢 - Docker 构建上下文忽略（放在项目根，服务多 context）
+# 智研星枢 - Docker 构建上下文忽略
+# 注意：docker-compose.yml 的 build context 为 ./backend，
+#       实际生效的是 backend/.dockerignore。
+#       本文件仅在从项目根目录构建时作为参考。
 __pycache__/
 *.py[cod]
 *.egg-info/

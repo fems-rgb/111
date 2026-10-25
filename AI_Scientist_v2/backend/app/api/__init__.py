@@ -1,5 +1,1 @@
-"""API路由注册"""
-from app.api.projects import router as projects_router
-from app.api.documents import router as documents_router
-
-all_routers = [projects_router, documents_router]
+"""API 路由包 — 具体路由模块在 app.api.v1 下注册（见 app/main.py）"""

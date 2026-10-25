@@ -32,7 +32,6 @@ export function useSSE(initialSteps?: Array<{agent_name: string; display_name?: 
     source.onopen = () => {
       connected.value = true
       retryCount = 0
-      console.log('[SSE] 连接成功')
     }
 
     source.onmessage = (e) => {

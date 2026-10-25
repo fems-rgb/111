@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """文献检索 v3：Crossref 主力 + S2/arXiv 备用"""
-import json, re, urllib.parse, urllib.request, time, hashlib, ssl
+import json, re, urllib.parse, urllib.request, time, hashlib, ssl, logging
 from pathlib import Path
 from typing import List, Dict
+
+logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("output/literature_cache")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,23 +42,23 @@ def _get(url, timeout=25, retries=3, use_ssl=False):
         except urllib.error.HTTPError as e:
             if e.code == 429 and i < retries - 1:
                 wait = 2 ** i * 10
-                print(f"[literature] 429 限速，等待 {wait}s...")
+                logger.info("[literature] 429 限速，等待 %ds...", wait)
                 time.sleep(wait)
             else:
-                if i == retries - 1: print(f"[literature] HTTP {e.code}: {url[:60]}")
+                if i == retries - 1: logger.warning("[literature] HTTP %s: %s", e.code, url[:60])
                 time.sleep(2)
         except Exception as e:
             if i < retries - 1:
                 time.sleep(3)
             else:
-                print(f"[literature] 连接失败: {e}")
+                logger.warning("[literature] 连接失败: %s", e)
     return None
 
 # ---- Crossref（主力，国内可访问）----
 def search_crossref(query, limit=6):
     cached = _cache_get(f"cr:{query}:{limit}")
     if cached:
-        print(f"[literature] Crossref 缓存命中 ({len(cached)} 篇)")
+        logger.debug("[literature] Crossref 缓存命中 (%d 篇)", len(cached))
         return cached
 
     out = []
@@ -83,9 +85,9 @@ def search_crossref(query, limit=6):
                 "url": item.get("URL", ""), "source": "Crossref"
             })
         _cache_set(f"cr:{query}:{limit}", out)
-        print(f"[literature] Crossref 检索到 {len(out)} 篇")
+        logger.info("[literature] Crossref 检索到 %d 篇", len(out))
     except Exception as e:
-        print(f"[literature] Crossref fail: {e}")
+        logger.warning("[literature] Crossref fail: %s", e)
     return out
 
 # ---- S2（备用）----
@@ -106,7 +108,8 @@ def search_semantic_scholar(query, limit=4):
                         "year": str(p.get("year","")), "doi": p.get("doi",""),
                         "url": p.get("url",""), "source": "SemanticScholar"})
         _cache_set(f"s2:{query}:{limit}", out)
-    except: pass
+    except Exception as _e:
+        logger.debug("[SemanticScholar] %s", _e)
     return out
 
 # ---- arXiv（备用）----
@@ -130,7 +133,8 @@ def search_arxiv(query, limit=4):
                         "year": pu.group(1)[:4] if pu else "", "doi": "",
                         "url": idu.group(1).strip() if idu else "", "source": "arXiv"})
         _cache_set(f"arxiv:{query}:{limit}", out)
-    except: pass
+    except Exception as _e:
+        logger.debug("[arXiv] %s", _e)
     return out
 
 def retrieve_for_project(research_topic, k=8):

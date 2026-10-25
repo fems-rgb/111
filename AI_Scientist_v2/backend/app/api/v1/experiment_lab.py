@@ -126,9 +126,9 @@ async def _exec(run_id, code, timeout, gen_video, data_table=None):
                             _r["videos"] = _vids
                             _task.result = _r
                             await db.commit()
-                            print(f"[lab] run {run.id} -> task {_task.id} 回写 figures={len(_figs)} videos={len(_vids)}")
+                            logger.info("[lab] run %s -> task %s 回写 figures=%d videos=%d", run.id, _task.id, len(_figs), len(_vids))
                     except Exception as _e:
-                        print(f"[lab] task result 回写失败(不阻塞): {_e}")
+                        logger.debug("[lab] task result 回写失败(不阻塞): %s", _e)
                     await db.commit()
         except Exception as e:
             logger.error(f'实验执行异常: {e}', exc_info=True)
@@ -139,9 +139,9 @@ async def _exec(run_id, code, timeout, gen_video, data_table=None):
                     run.error_message = str(e)[:2000]
                     run.completed_at = datetime.now(timezone.utc)
                     await db.commit()
-                    print(f'[lab] _exec 异常已记录 run {run.id}: {e}')
+                    logger.info('[lab] _exec 异常已记录 run %s: %s', run.id, e)
             except Exception as _commit_err:
-                print(f'[lab] _exec 状态提交失败: {_commit_err}')
+                logger.debug('[lab] _exec 状态提交失败: %s', _commit_err)
 
 
 @router.get('/status/{run_id}')

@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.6
 # ============================================================
 # 智研星枢 后端镜像
 # 构建（在项目根 AI_Scientist_v2/ 下）：
@@ -13,9 +12,21 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     MPLBACKEND=Agg
 
-# 科学计算 & matplotlib 常用系统依赖
+# 系统依赖：
+#   libgl1 / libglib2.0-0 → matplotlib
+#   fonts-noto-cjk        → PDF 中文渲染
+#   libpango / libcairo / libgdk-pixbuf → WeasyPrint（PDF 导出核心）
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential curl libgl1 libglib2.0-0 fonts-noto-cjk \
+        build-essential \
+        curl \
+        libgl1 \
+        libglib2.0-0 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf2.0-0 \
+        shared-mime-info \
+        fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -23,13 +34,17 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 拷贝应用代码
+# 应用代码
 COPY ./app ./app
-COPY ./run.py ./alembic.ini* ./
-COPY ./migrations* ./migrations/
+COPY ./run.py ./alembic.ini ./
+COPY ./migrations ./migrations/
+COPY ./scripts ./scripts/
+
+# 前端预构建产物（SPA 单端口部署）
+COPY ./static ./static/
 
 # 运行时目录
-RUN mkdir -p /app/uploads /app/logs /app/output/experiments
+RUN mkdir -p /app/data /app/uploads /app/logs /app/output/experiments
 
 EXPOSE 8000
 

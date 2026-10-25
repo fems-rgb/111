@@ -1,4 +1,10 @@
-"""知识库索引服务 - 占位模块（待实现向量检索/全文索引）"""
+"""知识库索引服务 —— 当前为轻量级全文检索抽象层。
+
+生产级扩展路径：
+- 嵌入模型：DashScope text-embedding-v3
+- 向量库：ChromaDB / FAISS
+- 混合检索：BM25 + Dense 并行后融合
+"""
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
