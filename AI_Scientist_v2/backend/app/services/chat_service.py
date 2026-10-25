@@ -22,15 +22,34 @@ GENERAL_SYSTEM = """你是「智研星辰」AI助手，专注人文社科学术�
 FALLBACK_REPLY = "\u26a0\ufe0f AI\u670d\u52a1\u6682\u65f6\u4e0d\u53ef\u7528\uff08API Key\u672a\u914d\u7f6e\u6216\u7f51\u7edc\u5f02\u5e38\uff09\u3002\n\n\u8bf7\u68c0\u67e5 backend/.env \u6587\u4ef6\u4e2d QWEN_API_KEY \u662f\u5426\u5df2\u6b63\u786e\u8bbe\u7f6e\u3002"
 
 
-async def chat_with_ai(db: AsyncSession, user_id: int, content: str, project_id: int = None) -> dict:
+async def chat_with_ai(db: AsyncSession, user_id: int, content: str, project_id: int = None, attachments: list[dict] | None = None) -> dict:
+    # ── 斜杠命令派发 ──
+    if content.startswith("/skill"):
+        return await _handle_skill_command(db, user_id, content, project_id)
+    if content.startswith("/"):
+        # 其他未知斜杠命令一并发给 AI
+        pass
+
     is_safe, reason = prompt_guard.check(content)
     if not is_safe:
         raise ValueError(f"\u5b89\u5168\u68c0\u6d4b\u672a\u901a\u8fc7: {reason}")
     content = sanitize_input(content)
 
+    # ── 拼接附件上下文 ──
+    attachment_header = ""
+    if attachments:
+        parts = []
+        for att in attachments[:5]:  # 安全上限 5 个附件
+            fname = att.get("filename", "unknown")
+            summary = (att.get("summary") or "")[:3000]
+            parts.append(f"[附件: {fname}]\n{summary}")
+        if parts:
+            attachment_header = "\n\n".join(parts) + "\n\n---\n\n"
+
     if not settings.QWEN_API_KEY or settings.QWEN_API_KEY == "sk-your-api-key-here":
         logger.warning("QWEN_API_KEY not configured, returning fallback")
-        user_msg = ChatMessage(project_id=project_id, user_id=user_id, role="user", content=content)
+        user_msg = ChatMessage(project_id=project_id, user_id=user_id, role="user", content=content,
+                                metadata_={"attachments": [{"filename": a.get("filename"), "file_id": a.get("file_id")} for a in (attachments or [])]} if attachments else None)
         ai_msg = ChatMessage(project_id=project_id, user_id=user_id, role="assistant", content=FALLBACK_REPLY, tokens_used=0)
         db.add_all([user_msg, ai_msg])
         await db.commit()
@@ -45,9 +64,10 @@ async def chat_with_ai(db: AsyncSession, user_id: int, content: str, project_id:
             history += f"\n{msg.role}: {msg.content[:500]}"
 
     user_prompt = f"\u5386\u53f2\u5bf9\u8bdd:\n{history}\n\n\u5f53\u524d\u95ee\u9898: {content}" if history else content
+    full_prompt = attachment_header + user_prompt
 
     try:
-        result = await call_qwen(GENERAL_SYSTEM, prompt_guard.sanitize_for_llm(user_prompt), project_id=project_id)
+        result = await call_qwen(GENERAL_SYSTEM, prompt_guard.sanitize_for_llm(full_prompt), project_id=project_id)
     except Exception as e:
         logger.error(f"LLM call failed: {e}")
         error_reply = f"\u26a0\ufe0f AI\u8c03\u7528\u5931\u8d25: {str(e)[:200]}"
@@ -57,9 +77,11 @@ async def chat_with_ai(db: AsyncSession, user_id: int, content: str, project_id:
         await db.commit()
         return {"reply": error_reply, "tokens": {"input": 0, "output": 0}, "model": "error", "cost": 0}
 
-    user_msg = ChatMessage(project_id=project_id, user_id=user_id, role="user", content=content)
+    user_msg = ChatMessage(project_id=project_id, user_id=user_id, role="user", content=content,
+                            metadata_={"attachments": [{"filename": a.get("filename"), "file_id": a.get("file_id")} for a in (attachments or [])]} if attachments else None)
     ai_msg = ChatMessage(project_id=project_id, user_id=user_id, role="assistant", content=result["content"],
-                         tokens_used=result["tokens"]["input"] + result["tokens"]["output"])
+                         tokens_used=result["tokens"]["input"] + result["tokens"]["output"],
+                         metadata_={"model": result["model"], "cost": result["cost"], "tokens": result["tokens"]})
     db.add_all([user_msg, ai_msg])
     await db.commit()
     return {"reply": result["content"], "tokens": result["tokens"], "model": result["model"], "cost": result["cost"]}

@@ -1,15 +1,55 @@
 ﻿<template>
   <div class="chat-layout">
     <div class="chat-main">
-      <div class="chat-topbar"><span class="topbar-title">💬 AI 学术助手</span><div class="topbar-actions"><button class="topbar-btn" @click="startNewChat" title="开始新对话">✨ 新对话</button><button class="topbar-btn" @click="loadHistory" title="加载历史记录">📜 历史</button><button class="topbar-btn danger" @click="clearAll" title="清除所有对话">🗑️ 清除</button></div></div>
+      <div class="chat-topbar">
+        <span class="topbar-title">💬 AI 学术助手</span>
+        <div class="topbar-actions">
+          <button class="topbar-btn" @click="startNewChat" title="开始新对话">✨ 新对话</button>
+          <button class="topbar-btn" @click="loadHistory" title="加载历史记录">📜 历史</button>
+          <button class="topbar-btn danger" @click="clearAll" title="清除所有对话">🗑️ 清除</button>
+        </div>
+      </div>
       <div class="chat-messages" ref="msgBox">
-        <div v-for="m in messages" :key="m.id" :class="['msg',m.role]"><div class="msg-bubble" v-html="formatContent(m.content)"></div></div>
+        <div v-for="m in messages" :key="m.id" :class="['msg',m.role]">
+          <div class="msg-bubble">
+            <div class="msg-content" v-html="formatContent(m.content)"></div>
+            <div v-if="m.attachments?.length" class="msg-attachments">
+              <span v-for="(a,i) in m.attachments" :key="i" class="attach-chip">📎 {{ a.filename }}</span>
+            </div>
+            <div v-if="m.meta" class="msg-meta">
+              <span v-if="m.meta.model">🧠 {{ m.meta.model }}</span>
+              <span v-if="m.meta.tokens">· 🧮 {{ (m.meta.tokens.input||0)+(m.meta.tokens.output||0) }}</span>
+              <span v-if="m.meta.cost">· ¥{{ Number(m.meta.cost).toFixed(4) }}</span>
+            </div>
+            <div class="msg-actions">
+              <button @click="copyMessage(m)" title="复制">📄</button>
+              <button v-if="m.serverId" @click="togglePin(m)" :title="m.isPinned?'取消置顶':'置顶'">{{ m.isPinned?'📌':'📍' }}</button>
+              <button v-if="m.serverId" @click="deleteOne(m)" title="删除">🗑️</button>
+            </div>
+          </div>
+        </div>
         <div v-if="streaming" class="msg assistant"><div class="msg-bubble typing">⏳ 思考中...</div></div>
       </div>
       <div class="chat-input-area">
-        <ChatToolbar :project-id="projectId" :steps="currentSteps" @files="handleFiles" @kb-search="triggerKbSearch" @pipeline-saved="onPipelineSaved" @feedback-submitted="onFeedbackSubmitted" />
+        <ChatToolbar :project-id="projectId" :steps="currentSteps"
+          @files="handleFiles"
+          @attachments-uploaded="handleAttachmentsUploaded"
+          @kb-search="triggerKbSearch"
+          @pipeline-saved="onPipelineSaved"
+          @feedback-submitted="onFeedbackSubmitted" />
+        <!-- 待发送附件 chips -->
+        <div v-if="pendingAttachments.length" class="pending-attachments">
+          <span v-for="(a,i) in pendingAttachments" :key="i" class="pend-chip">
+            📎 {{ a.filename }} <button class="pend-rm" @click="pendingAttachments.splice(i,1)">✕</button>
+          </span>
+        </div>
+        <!-- /skill 自动补全 -->
+        <div v-if="showSlashHint" class="slash-hint">
+          <div class="slash-tip">💡 可用命令：<code>/help</code> · <code>/skill</code> · <code>/history</code> · <code>/clear</code> · <code>/delete</code></div>
+          <div v-if="skillHint" class="slash-tip skill">🛠️ 技能示例：<code>/skill literature_summary input=你的输入</code></div>
+        </div>
         <div class="input-row">
-          <textarea v-model="inputText" @keydown.enter.exact.prevent="send" placeholder="输入研究问题或指令... (输入 /help 查看命令)" rows="1" />
+          <textarea ref="inputRef" v-model="inputText" @keydown.enter.exact.prevent="send" @input="onInput" placeholder="输入研究问题或指令... (输入 / 查看命令)" rows="1" />
           <button class="send-btn" @click="send" :disabled="!inputText.trim()||streaming">发送</button>
         </div>
       </div>
@@ -45,19 +85,34 @@ import { knowledgeApi } from '@/api/modules/knowledge'
 const route = useRoute()
 const projectId = computed(()=>Number(route.params.projectId||route.query.projectId||0))
 
-interface Msg{id:number;role:'user'|'assistant';content:string}
+interface Attachment { file_id?: string; filename: string; summary?: string }
+interface Msg {
+  id: number
+  serverId?: number
+  role: 'user'|'assistant'
+  content: string
+  attachments?: Attachment[]
+  meta?: { model?: string; cost?: number; tokens?: { input: number; output: number } }
+  isPinned?: boolean
+}
 const messages = ref<Msg[]>([])
 const inputText = ref('')
+const inputRef = ref<HTMLTextAreaElement>()
 const streaming = ref(false)
 const showHypoPanel = ref(false)
 const currentSteps = ref<string[]>([])
 const msgBox = ref<HTMLElement>()
 const hypoPanelRef = ref<InstanceType<typeof HypothesisPanel>>()
+const pendingAttachments = ref<Attachment[]>([])
+const showSlashHint = ref(false)
+const skillHint = ref(false)
 let msgIdCounter = 0
 
-function pushMsg(role:'user'|'assistant', content:string){
-  messages.value.push({id:++msgIdCounter, role, content})
+function pushMsg(role:'user'|'assistant', content:string, extras: Partial<Msg> = {}): Msg {
+  const m: Msg = { id: ++msgIdCounter, role, content, ...extras }
+  messages.value.push(m)
   nextTick(scrollToBottom)
+  return m
 }
 
 // ===== 斜杠命令拦截 =====
@@ -71,7 +126,8 @@ async function handleSlashCommand(cmd: string): Promise<boolean> {
       '• `/history` — 重新加载对话历史\n' +
       '• `/delete` — 清除所有对话历史\n' +
       '• `/clear` — 仅清空当前屏幕（不删服务端记录）\n' +
-      '• `/skill` — 在对话中调用技能市场\n\n' +
+      '• `/skill` — 列出可用技能\n' +
+      '• `/skill <id> input=xxx` — 执行技能\n\n' +
       '直接输入文字即可与AI助手对话。'
     )
     return true
@@ -103,13 +159,18 @@ async function handleSlashCommand(cmd: string): Promise<boolean> {
     return true
   }
 
-  if (command.startsWith('/skill')) {
-    // /skill 命令发给后端处理
-    return false
-  }
-
-  // 未知命令也发给后端
+  // /skill 和未知命令都发给后端处理
   return false
+}
+
+function onInput() {
+  const v = inputText.value
+  showSlashHint.value = v.startsWith('/')
+  skillHint.value = v.startsWith('/skill')
+  if (inputRef.value) {
+    inputRef.value.style.height = 'auto'
+    inputRef.value.style.height = Math.min(inputRef.value.scrollHeight, 120) + 'px'
+  }
 }
 
 // ===== 发送消息 =====
@@ -117,21 +178,27 @@ async function send(){
   const text = inputText.value.trim()
   if(!text || streaming.value) return
   inputText.value = ''
+  showSlashHint.value = false
+  if (inputRef.value) inputRef.value.style.height = 'auto'
 
-  // 斜杠命令拦截
-  if (text.startsWith('/')) {
+  // 斜杠命令拦截（/skill 交给后端）
+  if (text.startsWith('/') && !text.startsWith('/skill')) {
     const handled = await handleSlashCommand(text)
     if (handled) return
   }
 
-  pushMsg('user', text)
+  const attached = [...pendingAttachments.value]
+  pendingAttachments.value = []
+  pushMsg('user', text, attached.length ? { attachments: attached } : {})
   streaming.value = true
   await nextTick(); scrollToBottom()
 
   try {
-    const res = await chatApi.send(text, projectId.value || undefined)
+    const res = await chatApi.send(text, projectId.value || undefined, attached.length ? attached : undefined)
     const data = res.data
-    pushMsg('assistant', data.reply || '[无回复内容]')
+    pushMsg('assistant', data.reply || '[无回复内容]', {
+      meta: { model: data.model, cost: data.cost, tokens: data.tokens }
+    })
   } catch(e:any) {
     const errMsg = e?.response?.data?.detail || e?.message || '未知错误'
     pushMsg('assistant', `⚠️ 请求失败: ${errMsg}`)
@@ -142,31 +209,76 @@ async function send(){
   }
 }
 
-// ===== 加载历史 =====
+// ===== 加载历史（含服务端 id 用于删除/置顶）=====
 async function loadHistory(){
   try {
     const pid = projectId.value || undefined
     const res = await chatApi.history(pid, 50)
     const list = res.data || []
-    messages.value = list.map((m:any, i:number) => ({id: i+1, role: m.role, content: m.content}))
+    messages.value = list.map((m:any, i:number) => ({
+      id: i+1,
+      serverId: m.id,
+      role: m.role,
+      content: m.content,
+      isPinned: m.is_pinned,
+      attachments: m.metadata_?.attachments,
+      meta: m.metadata_?.model ? { model: m.metadata_.model, cost: m.metadata_.cost, tokens: m.metadata_.tokens } : undefined,
+    }))
     msgIdCounter = messages.value.length
     scrollToBottom()
   } catch(e){ console.error('加载历史失败', e) }
 }
 
-// ===== Markdown简易格式化 =====
+// ===== 消息操作 =====
+async function copyMessage(m: Msg) {
+  try { await navigator.clipboard.writeText(m.content); flashTip(m.id, '已复制') } catch {}
+}
+async function togglePin(m: Msg) {
+  if (!m.serverId) return
+  try {
+    const res = await chatApi.togglePin(m.serverId)
+    m.isPinned = res.data.is_pinned
+  } catch {}
+}
+async function deleteOne(m: Msg) {
+  if (!m.serverId) return
+  if (!confirm('删除这条消息？')) return
+  try {
+    await chatApi.deleteMessage(m.serverId)
+    messages.value = messages.value.filter(x => x.id !== m.id)
+  } catch {}
+}
+function flashTip(_id: number, _msg: string) { /* reserved for future toast */ }
+
+// ===== Markdown 增强（代码块 + 表格保留）=====
 function formatContent(text: string): string {
   if (!text) return ''
-  let html = text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const codeBlocks: string[] = []
+  let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+    const idx = codeBlocks.length
+    codeBlocks.push(`<pre class="code-block" data-lang="${lang||'text'}"><code>${escapeHtml(code.trim())}</code></pre>`)
+    return `__CODE_BLOCK_${idx}__`
+  })
+  html = escapeHtml(html)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:13px">$1</code>')
+    .replace(/`([^`]+?)`/g, '<code class="inline-code">$1</code>')
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^# (.+)$/gm, '<h2>$1</h2>')
     .replace(/\n/g, '<br>')
+  html = html.replace(/__CODE_BLOCK_(\d+)__/g, (_m, idx) => codeBlocks[Number(idx)])
   return html
 }
+function escapeHtml(s: string): string {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+}
 
-function handleFiles(files:File[]){pushMsg('user', `📎 已上传 ${files.length} 个文件：${files.map(f=>f.name).join(', ')}`)}
+function handleFiles(files:File[]){ /* 已由 attachments-uploaded 处理 */ void files }
+function handleAttachmentsUploaded(items: Attachment[]) {
+  items.forEach(it => { if (!pendingAttachments.value.find(p=>p.file_id===it.file_id)) pendingAttachments.value.push(it) })
+}
+
 async function triggerKbSearch(){
   const query = inputText.value.trim() || prompt('请输入知识库检索关键词：')
   if(!query) return
@@ -216,15 +328,15 @@ async function clearAll(){
 function startNewChat(){
   messages.value = []
   msgIdCounter = 0
+  pendingAttachments.value = []
   pushMsg('assistant', '👋 新对话已开始，输入研究问题即可对话（/help 查看命令，📜 可加载历史记录）。')
 }
+
 // ===== 赛道一增量：人工反馈交互 =====
 const feedbackDialog = ref({ visible: false, hypoId: '', action: '' as 'accept'|'reject'|'revise', comment: '' })
-
 function onHypoFeedback(hypoId: string, action: 'accept'|'reject'|'revise') {
   feedbackDialog.value = { visible: true, hypoId, action, comment: '' }
 }
-
 async function submitFeedback() {
   const { hypoId, action, comment } = feedbackDialog.value
   if (!projectId.value) return
@@ -248,15 +360,34 @@ onMounted(()=>{ pushMsg('assistant', '👋 新对话已开始，输入研究问�
 .chat-messages{flex:1;overflow-y:auto;padding:16px}
 .msg{margin-bottom:12px;display:flex}
 .msg.user{justify-content:flex-end}
-.msg-bubble{max-width:72%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.6;word-break:break-word}
+.msg-bubble{max-width:78%;padding:10px 14px;border-radius:12px;font-size:14px;line-height:1.6;word-break:break-word;position:relative}
 .msg.user .msg-bubble{background:#1a73e8;color:#fff;border-bottom-right-radius:4px}
 .msg.assistant .msg-bubble{background:#f0f2f5;color:#333;border-bottom-left-radius:4px}
 .msg.assistant .msg-bubble :deep(strong){font-weight:600}
-.msg.assistant .msg-bubble :deep(code){font-family:monospace}
+.msg.assistant .msg-bubble :deep(h2),.msg.assistant .msg-bubble :deep(h3),.msg.assistant .msg-bubble :deep(h4){margin:8px 0 4px;font-weight:700}
+.msg-bubble :deep(.code-block){background:#1e293b;color:#e2e8f0;padding:10px 12px;border-radius:8px;overflow-x:auto;font-family:'Consolas','Monaco',monospace;font-size:12.5px;margin:8px 0;line-height:1.5}
+.msg-bubble :deep(.code-block)::before{content:attr(data-lang);display:block;color:#94a3b8;font-size:11px;margin-bottom:4px;text-transform:uppercase}
+.msg-bubble :deep(.inline-code){background:rgba(0,0,0,.08);padding:1px 5px;border-radius:3px;font-family:monospace;font-size:13px}
 .typing{opacity:.7}
+.msg-meta{font-size:11px;opacity:.75;margin-top:6px;padding-top:4px;border-top:1px dashed rgba(0,0,0,.15);display:flex;gap:6px}
+.msg.assistant .msg-meta{color:#5a6c7d}
+.msg-actions{position:absolute;top:4px;right:4px;display:none;gap:2px}
+.msg-bubble:hover .msg-actions{display:flex}
+.msg-actions button{background:rgba(255,255,255,.9);border:1px solid rgba(0,0,0,.08);border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;line-height:1}
+.msg-actions button:hover{background:#fff;border-color:#aaa}
+.msg-attachments{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
+.attach-chip{font-size:11px;padding:1px 8px;background:rgba(255,255,255,.25);border-radius:10px}
+.msg.assistant .attach-chip{background:#e0ecff;color:#1a5fb4}
+.pending-attachments{display:flex;flex-wrap:wrap;gap:6px;padding:4px 12px;background:#f7f9fc;border-top:1px solid #eaecef}
+.pend-chip{display:flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px;background:#e8f0fe;border-radius:12px;color:#1a5844}
+.pend-rm{background:none;border:none;color:#888;cursor:pointer;font-size:12px;padding:0 2px}
+.pend-rm:hover{color:#e74c3c}
+.slash-hint{padding:4px 12px;background:#fff9e6;border-top:1px solid #ffe8a3;font-size:11px;color:#8a6d3b}
+.slash-tip code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:3px;margin:0 2px;font-family:monospace}
+.slash-tip.skill{margin-top:2px;color:#0a6ed1;background:#eef6ff;padding:3px 6px;border-radius:4px}
 .chat-input-area{border-top:1px solid #e5e7eb;background:#fff}
 .input-row{display:flex;gap:8px;padding:10px;align-items:flex-end}
-.input-row textarea{flex:1;resize:none;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:14px;font-family:inherit;max-height:120px}
+.input-row textarea{flex:1;resize:none;border:1px solid #ddd;border-radius:8px;padding:10px;font-size:14px;font-family:inherit;max-height:120px;overflow-y:auto}
 .send-btn{padding:10px 20px;background:#1a73e8;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:14px;white-space:nowrap}
 .send-btn:disabled{opacity:.5;cursor:not-allowed}
 .toggle-hypo{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:50;background:#fff;border:1px solid #e5e7eb;border-right:none;border-radius:8px 0 0 8px;padding:12px 6px;cursor:pointer;font-size:16px}
@@ -277,5 +408,3 @@ onMounted(()=>{ pushMsg('assistant', '👋 新对话已开始，输入研究问�
 .topbar-btn.danger:hover{background:#fee;border-color:#f99;color:#c00}
 .hypo-panel{width:320px;min-width:280px;border-left:1px solid #e5e7eb;overflow-y:auto;background:#fafbfc}
 </style>
-
-

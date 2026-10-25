@@ -45,7 +45,13 @@ import { uploadApi } from '@/api/modules/chat'
 import { useAppStore } from '@/stores/app'
 
 const props = defineProps<{ projectId: number; steps?: string[] }>()
-const emit = defineEmits<{ (e:'files',files:File[]):void; (e:'kb-search'):void; (e:'pipeline-saved',steps:string[]):void; (e:'feedback-submitted'):void }>()
+const emit = defineEmits<{
+  (e:'files',files:File[]):void
+  (e:'attachments-uploaded', items: Array<{ file_id: string; filename: string; summary: string }>):void
+  (e:'kb-search'):void
+  (e:'pipeline-saved',steps:string[]):void
+  (e:'feedback-submitted'):void
+}>()
 
 const appStore = useAppStore()
 const { mode } = storeToRefs(appStore)
@@ -60,7 +66,7 @@ const dragIdx = ref(-1)
 const dragOver = ref(false)
 const availableAgents = ['literature','hypothesis','design','experiment_plan','analysis','writing','review','reflection']
 
-interface FileChip { id: number; name: string; ext: string; status: 'uploading'|'done'|'error' }
+interface FileChip { id: number; name: string; ext: string; status: 'uploading'|'done'|'error'; file_id?: string; summary?: string }
 const uploadedFiles = ref<FileChip[]>([])
 let chipId = 0
 
@@ -72,13 +78,13 @@ function fileIcon(ext: string): string {
 }
 
 async function doUpload(files: File[]) {
+  const readyItems: Array<{ file_id: string; filename: string; summary: string }> = []
   for (const file of files) {
     const ext = file.name.split('.').pop() || ''
     const chip: FileChip = { id: ++chipId, name: file.name, ext, status: 'uploading' }
     uploadedFiles.value.push(chip)
     try {
-      // 分片上传到 /multimodal/upload
-      const CHUNK_SIZE = 2 * 1024 * 1024 // 2MB per chunk
+      const CHUNK_SIZE = 2 * 1024 * 1024
       const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
       const initRes = await uploadApi.init(file.name, file.size, file.type)
       const uploadId = initRes.data.upload_id
@@ -87,13 +93,18 @@ async function doUpload(files: File[]) {
         const blob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size))
         await uploadApi.uploadChunk(uploadId, i, '', blob)
       }
-      await uploadApi.complete(uploadId)
+      const completeRes = await uploadApi.complete(uploadId)
+      const data = completeRes.data || {}
       chip.status = 'done'
+      chip.file_id = data.file_id
+      chip.summary = data.summary
+      readyItems.push({ file_id: data.file_id, filename: data.filename || file.name, summary: data.summary || '' })
     } catch (e: any) {
       chip.status = 'error'
       console.warn('[Upload] failed:', file.name, e?.message)
     }
   }
+  if (readyItems.length) emit('attachments-uploaded', readyItems)
   emit('files', files)
 }
 

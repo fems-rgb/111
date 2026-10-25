@@ -2,12 +2,16 @@
 import type { ChatMessage } from '@/types'
 
 export const chatApi = {
-  send: (content: string, projectId?: number) =>
-    client.post('/chat/send', { content, project_id: projectId }),
+  send: (content: string, projectId?: number, attachments?: Array<{ file_id?: string; filename: string; summary?: string }>) =>
+    client.post('/chat/send', { content, project_id: projectId, attachments }),
   history: (projectId?: number, limit = 50) =>
     client.get<ChatMessage[]>('/chat/history', { params: { project_id: projectId, limit } }),
   deleteHistory: (projectId?: number) =>
     client.delete('/chat/history', { params: { project_id: projectId } }),
+  deleteMessage: (id: number) =>
+    client.delete<{ ok: boolean; deleted_id: number }>(`/chat/messages/${id}`),
+  togglePin: (id: number) =>
+    client.post<{ ok: boolean; id: number; is_pinned: boolean }>(`/chat/messages/${id}/pin`),
 }
 
 // ===== 断点续传 API =====
