@@ -53,6 +53,8 @@
                 class="text-xs px-3 py-1.5 rounded-md bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200">🧪 实验场</button>
         <button @click="$router.push(`/traces?projectId=${project.id}`)"
                 class="text-xs px-3 py-1.5 rounded-md bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200">📊 Trace</button>
+        <button @click="$router.push(`/courses?create=1&projectId=${project.id}&title=${encodeURIComponent((project.title || '研究专题') + ' · 研讨课')}&domain=${encodeURIComponent(project.domain || '')}&syllabus=${encodeURIComponent(project.research_question || '')}`)"
+                class="text-xs px-3 py-1.5 rounded-md bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200" title="把研究成果开成一门课，AI 直接生成课件">🎓 转成课程开课</button>
       </div>
     </div>
 

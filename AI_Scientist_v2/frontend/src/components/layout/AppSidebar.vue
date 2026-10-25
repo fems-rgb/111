@@ -9,7 +9,7 @@
     <!-- 导航 -->
     <nav class="flex-1 p-3 space-y-1 overflow-y-auto">
       <router-link v-for="item in navItems" :key="item.path" :to="item.path"
-                   :class="[$route.path === item.path ? 'sidebar-link-active' : 'sidebar-link']"
+                   :class="[isActive(item.path) ? 'sidebar-link-active' : 'sidebar-link']"
                    :title="appStore.sidebarCollapsed ? item.label : ''">
         <span class="text-lg relative">{{ item.icon }}<span v-if="item.badge" class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse"></span></span>
         <span v-if="!appStore.sidebarCollapsed">{{ item.label }}</span>
@@ -35,12 +35,31 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { getExperimentHistory } from '@/api/modules/experiment'
+import { courseApi } from '@/api/modules/courses'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
 const appStore = useAppStore()
 const authStore = useAuthStore()
+const route = useRoute()
+
+const TEACHER_ROLES = ['teacher', 'researcher', 'admin']
+function isActive(path: string) {
+  if (path === '/') return route.path === '/'
+  if (path === '/courses') return route.path === '/courses' || route.path.startsWith('/course/')
+  return route.path === path || route.path.startsWith(path + '/')
+}
+
+const staleCourses = ref(0)
+async function _loadCourseBadge() {
+  if (!TEACHER_ROLES.includes(authStore.user?.role || '')) return
+  try {
+    const r = await courseApi.stats()
+    staleCourses.value = r.data?.need_update_coursewares || 0
+  } catch { /* ignore */ }
+}
 
 const expRunning = ref(false)
 let _expTimer: any = null
@@ -51,7 +70,7 @@ async function _pollExp() {
     expRunning.value = items.length > 0 && items[0].status === 'running'
   } catch {}
 }
-onMounted(() => { _pollExp(); _expTimer = setInterval(_pollExp, 5000) })
+onMounted(() => { _pollExp(); _loadCourseBadge(); _expTimer = setInterval(_pollExp, 5000) })
 onUnmounted(() => { if (_expTimer) clearInterval(_expTimer) })
 
 const navItems = computed(() => {
@@ -59,6 +78,7 @@ const navItems = computed(() => {
     { path: '/', icon: '📊', label: '工作台' },
     { path: '/chat', icon: '💬', label: 'AI对话' },
     { path: '/knowledge', icon: '📚', label: '资料库' },
+    { path: '/courses', icon: '🎓', label: '课程中心', badge: staleCourses.value > 0 },
     { path: '/questions', icon: '🔬', label: '科学问题题库' },
     { path: '/experiment-lab', icon: '🧪', label: '实验模拟场', badge: expRunning.value },
     { path: '/skills', icon: '🛜', label: '技能市场' },

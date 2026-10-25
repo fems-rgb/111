@@ -20,6 +20,10 @@ const router = createRouter({
         { path: 'automation', name: 'Automation', component: () => import('@/views/automation/AutomationView.vue'), meta: { title: '自动化流水线' } },
         { path: 'questions', name: 'Questions', component: () => import('@/views/workspace/QuestionsView.vue'), meta: { title: '科学问题题库' } },
         { path: 'experiment-lab', name: 'ExperimentLab', component: () => import('@/views/workspace/ExperimentLab.vue'), meta: { title: '实验模拟场' } },
+        // === 课程中心（开课 / 选课 / PPT 电子化阅读 / AI 更新） ===
+        { path: 'courses', name: 'Courses', component: () => import('@/views/course/CoursesView.vue'), meta: { title: '课程中心' } },
+        { path: 'course/:id', name: 'CourseDetail', component: () => import('@/views/course/CourseDetail.vue'), meta: { title: '课程详情' } },
+        { path: 'course/:courseId/read/:cwId', name: 'CoursewareReader', component: () => import('@/views/course/CoursewareReader.vue'), meta: { title: '课件阅读' } },
         { path: 'settings', name: 'Settings', component: () => import('@/views/settings/SettingsView.vue') },
         { path: 'admin', name: 'Admin', component: () => import('@/views/admin/AdminView.vue'), meta: { requiresAdmin: true } },
       ]

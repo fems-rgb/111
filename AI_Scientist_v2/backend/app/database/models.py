@@ -522,3 +522,105 @@ class ExperimentTemplate(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+# ════════════════════════════════════════════════
+#  课程中心（在线教育模块：老师开课 / 学生上课）
+# ════════════════════════════════════════════════
+
+class CourseStatus(str, enum.Enum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
+class Course(Base):
+    """课程：老师创建、可上传课件、发布后学生可选修"""
+    __tablename__ = "courses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    teacher_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(200), nullable=False)
+    code = Column(String(50), default="")
+    description = Column(Text, default="")
+    syllabus = Column(Text, default="")            # 教学大纲（AI 生成课件的依据）
+    chapters = Column(JSON, default=list)          # [{title, points:[]}]
+    domain = Column(String(100), default="")
+    status = Column(SAEnum(CourseStatus), default=CourseStatus.DRAFT)
+    visibility = Column(String(20), default="public")   # public / private
+    cover_emoji = Column(String(8), default="📖")
+    enroll_count = Column(Integer, default=0)
+    view_count = Column(Integer, default=0)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True)  # 联动：讲义可源自研究项目
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    teacher = relationship("User", foreign_keys=[teacher_id])
+    coursewares = relationship("Courseware", back_populates="course", cascade="all, delete-orphan")
+    enrollments = relationship("Enrollment", back_populates="course", cascade="all, delete-orphan")
+
+
+class Courseware(Base):
+    """课件：一份 PPT/PDF 或 AI 生成的幻灯片集，带版本链"""
+    __tablename__ = "coursewares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    title = Column(String(300), nullable=False)
+    source_type = Column(String(20), default="upload")     # upload / ai_generated
+    source_path = Column(String(500), default="")          # 原始文件相对路径
+    file_size = Column(Integer, default=0)
+    doc_id = Column(Integer, ForeignKey("documents.id"), nullable=True)  # 联动：资料库/RAG
+    slide_count = Column(Integer, default=0)
+    status = Column(String(20), default="pending")          # pending/converting/ready/failed
+    error_message = Column(Text, default="")
+    version = Column(Integer, default=1)
+    parent_id = Column(Integer, ForeignKey("coursewares.id"), nullable=True)  # AI 刷新后的版本链
+    staleness_report = Column(JSON, default=dict)           # 体检结果摘要
+    read_size_kb = Column(Integer, default=0)               # 转换后体积（体现优化效果）
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    course = relationship("Course", back_populates="coursewares")
+    slides = relationship("Slide", back_populates="courseware", cascade="all, delete-orphan",
+                          order_by="Slide.slide_index")
+
+
+class Slide(Base):
+    """单页幻灯片：文本层 + 瘦身后的图片，支撑电子书式阅读"""
+    __tablename__ = "slides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    courseware_id = Column(Integer, ForeignKey("coursewares.id"), nullable=False, index=True)
+    slide_index = Column(Integer, default=0)                # 0-based
+    title = Column(String(500), default="")
+    bullets = Column(JSON, default=list)                    # [{level, text}] 可选中/可搜索文本层
+    notes = Column(Text, default="")                        # 演讲者备注
+    tables = Column(JSON, default=list)                     # [[cell, ...], ...]
+    image_path = Column(String(500), default="")            # 压缩后图相对路径
+    image_kb = Column(Integer, default=0)
+    risk_score = Column(Float, default=0.0)                 # AI 陈旧度风险 0~1
+    risk_category = Column(String(50), default="")
+    ai_reason = Column(Text, default="")
+    ai_suggestion = Column(Text, default="")                # 建议更新后的正文
+    updated_by_ai = Column(Boolean, default=False)
+
+    courseware = relationship("Courseware", back_populates="slides")
+
+
+class Enrollment(Base):
+    """选课与学习进度"""
+    __tablename__ = "enrollments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("courses.id"), nullable=False, index=True)
+    student_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    progress = Column(Integer, default=0)                   # 0-100
+    last_courseware_id = Column(Integer, nullable=True)
+    last_slide_index = Column(Integer, default=0)
+    read_slides = Column(JSON, default=list)                # ["cw:{id}:{idx}", ...]
+    enrolled_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    course = relationship("Course", back_populates="enrollments")
+    student = relationship("User", foreign_keys=[student_id])

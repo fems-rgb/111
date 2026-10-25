@@ -39,6 +39,26 @@
       </div>
     </div>
 
+    <!-- 课程中心联动条 -->
+    <div class="card p-4 flex flex-wrap items-center gap-3">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">🎓</span>
+        <div>
+          <p class="text-sm font-semibold">课程中心</p>
+          <p class="text-[11px] text-surface-500">
+            {{ courseStat.published }} 门公开课 · 我教 {{ courseStat.my_courses }} · 我在学 {{ courseStat.my_enrollments }}
+            <span v-if="courseStat.need_update_coursewares" class="text-orange-600">· ⚠️ {{ courseStat.need_update_coursewares }} 件课件待 AI 更新</span>
+            <span v-if="courseStat.ai_generated_coursewares" class="text-purple-600">· 🤖 {{ courseStat.ai_generated_coursewares }} 件 AI 课件</span>
+          </p>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 ml-auto">
+        <button @click="$router.push('/courses')" class="text-xs px-3 py-1.5 rounded-md bg-surface-100 hover:bg-surface-200">浏览课程</button>
+        <button @click="$router.push('/courses?scope=enrolled')" class="text-xs px-3 py-1.5 rounded-md bg-green-50 text-green-700 hover:bg-green-100 border border-green-200">我的学习</button>
+        <button v-if="canTeach" @click="$router.push('/courses?create=1')" class="text-xs px-3 py-1.5 rounded-md bg-primary-600 text-white hover:bg-primary-700">＋ 开课并 AI 做课件</button>
+      </div>
+    </div>
+
     <!-- 核心：研究计划设计器（对标 DeepSeek Harness） -->
     <div class="card border-l-4 border-l-primary-500">
       <div class="flex items-center justify-between mb-4">
@@ -227,8 +247,10 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useProjectStore } from '@/stores/project'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { observabilityApi } from '@/api/modules/observability'
 import { uploadApi } from '@/api/modules/chat'
+import { courseApi } from '@/api/modules/courses'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import ImageAnalyzer from '@/components/common/ImageAnalyzer.vue'
 import { useSSE } from '@/composables/useSSE'
@@ -237,6 +259,13 @@ import type { CostSummary } from '@/types'
 const router = useRouter()
 const projectStore = useProjectStore()
 const appStore = useAppStore()
+const authStore = useAuthStore()
+
+const canTeach = computed(() => ['teacher', 'researcher', 'admin'].includes(authStore.user?.role || ''))
+const courseStat = reactive({ published: 0, my_courses: 0, my_enrollments: 0, total_slides: 0, need_update_coursewares: 0, ai_generated_coursewares: 0 })
+async function loadCourseStat() {
+  try { Object.assign(courseStat, (await courseApi.stats()).data) } catch { /* 未开课不影响工作台 */ }
+}
 
 // ✅ 使用 store 中的 currentWorkspace（全局联动）
 const showAdvanced = ref(false)
@@ -328,7 +357,8 @@ onMounted(async () => {
   await Promise.all([
     projectStore.fetchProjects({ workspace: appStore.currentWorkspace }),
     projectStore.fetchStats(appStore.currentWorkspace),
-    observabilityApi.getCost().then(r => costSummary.value = r.data).catch(() => {})
+    observabilityApi.getCost().then(r => costSummary.value = r.data).catch(() => {}),
+    loadCourseStat(),
   ])
   // ✅ 使用真实API数据，不再硬编码
 })

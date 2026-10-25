@@ -44,6 +44,8 @@
                   class="text-[11px] px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200">💬 对话中调用</button>
           <button @click.stop="addSkillToPipeline(skill)" title="作为新流水线的一步"
                   class="text-[11px] px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200">⚙️ 加入流水线</button>
+<button @click.stop="useSkillInCourse(skill)" title="让 AI 做课件时调用这个技能作为素材来源"
+                  class="text-[11px] px-2 py-1 rounded bg-teal-50 text-teal-700 hover:bg-teal-100 border border-teal-200">🎓 用于课件</button>
         </div>
       </div>
     </div>
@@ -263,6 +265,10 @@ function useSkillInChat(skill: SkillInfo) {
 }
 function addSkillToPipeline(skill: SkillInfo) {
   router.push(`/automation?addSkill=${encodeURIComponent(skill.id)}&addSkillName=${encodeURIComponent(skill.name)}`)
+}
+function useSkillInCourse(skill: SkillInfo) {
+  // 带着技能回到课程中心：新建课程时预勾选该技能，生成课件时会先跑它拿结果
+  router.push(`/courses?create=1&skillIds=${encodeURIComponent(skill.id)}&title=${encodeURIComponent(skill.name + ' 专题课')}`)
 }
 
 const skills = ref<SkillInfo[]>([])

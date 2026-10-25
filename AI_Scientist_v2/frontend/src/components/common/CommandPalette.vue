@@ -46,6 +46,7 @@ import { useAppStore } from '@/stores/app'
 import { getQuestions } from '@/api/modules/questions'
 import { automationApi } from '@/api/modules/automation'
 import { knowledgeApi } from '@/api/modules/knowledge'
+import { courseApi, type Course } from '@/api/modules/courses'
 
 interface CmdItem { _id: string; _idx: number; icon: string; title: string; subtitle?: string; badge?: string; group: string; action: () => void }
 
@@ -64,11 +65,13 @@ const loading = ref(false)
 const questionsCache = ref<any[]>([])
 const pipelinesCache = ref<any[]>([])
 const knowledgeCache = ref<any[]>([])
+const coursesCache = ref<Course[]>([])
 
 const PAGES: Array<{ icon: string; title: string; subtitle: string; path: string; keywords: string }> = [
   { icon: '🏠', title: '首页 Dashboard', subtitle: '项目 & 概览', path: '/', keywords: 'home dashboard 首页' },
   { icon: '💬', title: 'AI 对话', subtitle: '与学术助手对话', path: '/chat', keywords: 'chat ai 对话' },
   { icon: '📚', title: '科学问题题库', subtitle: 'Science 125 · 生成研究方案', path: '/questions', keywords: 'question science 题库' },
+  { icon: '🎓', title: '课程中心', subtitle: '开课 / 选课 / PPT 电子化阅读 / AI 更新课件', path: '/courses', keywords: 'course teaching 课程 课件 上课' },
   { icon: '🗂️', title: '资料库', subtitle: '本地文件 + 外部学术搜索', path: '/knowledge', keywords: 'knowledge 资料库 文献' },
   { icon: '🛠️', title: '技能市场', subtitle: '内置/自定义/webhook 技能', path: '/skills', keywords: 'skill market 技能' },
   { icon: '⚙️', title: '自动化流水线', subtitle: '多 Agent 编排 · 定时 · 反馈迭代', path: '/automation', keywords: 'pipeline automation 流水线' },
@@ -85,13 +88,14 @@ async function loadIndexes() {
   if (!(projects.value && projects.value.length)) {
     try { await projectStore.fetchProjects() } catch { /* ignore */ }
   }
-  if (questionsCache.value.length && pipelinesCache.value.length && knowledgeCache.value.length) return
+  if (questionsCache.value.length && pipelinesCache.value.length && knowledgeCache.value.length && coursesCache.value.length) return
   loading.value = true
   try {
-    const [qRes, pRes, kRes] = await Promise.allSettled([
+    const [qRes, pRes, kRes, cRes] = await Promise.allSettled([
       getQuestions({ page_size: 50 } as any),
       automationApi.list(),
       knowledgeApi.listDocs({ limit: 50 }),
+      courseApi.list({ scope: 'all', limit: 50 }),
     ])
     if (qRes.status === 'fulfilled') {
       const raw: any = (qRes.value as any).data
@@ -102,6 +106,7 @@ async function loadIndexes() {
       const raw: any = (kRes.value as any).data
       knowledgeCache.value = Array.isArray(raw) ? raw : (raw?.items || [])
     }
+    if (cRes.status === 'fulfilled') coursesCache.value = (cRes.value as any).data?.items || []
   } finally { loading.value = false }
 }
 
@@ -128,6 +133,18 @@ const allItems = computed<CmdItem[]>(() => {
   // Knowledge files
   for (const f of knowledgeCache.value.slice(0, 30)) {
     items.push({ _id: `kb-${f.id || f.file_id || f.title}`, _idx: idx++, icon: '📄', title: f.title || f.filename || '未命名', subtitle: `${(f.doc_type||'').toUpperCase()} · ${f.status || ''}`, group: '🗂️ 资料库文件', action: () => router.push(`/chat?attachments=${encodeURIComponent(String(f.id || f.file_id || ''))}&prefill=${encodeURIComponent('请基于这份资料回答我的问题')}`) })
+  }
+  // Courses
+  for (const c of coursesCache.value) {
+    items.push({ _id: `cs-${c.id}`, _idx: idx++, icon: c.cover_emoji || '🎓', title: c.title,
+      subtitle: `${c.teacher_name || ''}${c.domain ? ' · ' + c.domain : ''} · ${c.courseware_count} 件课件`,
+      group: '🎓 课程', badge: c.is_enrolled ? '已选' : undefined,
+      action: () => router.push(`/course/${c.id}`) })
+    for (const w of (c.coursewares || []).filter(x => x.status === 'ready').slice(0, 3)) {
+      items.push({ _id: `cw-${w.id}`, _idx: idx++, icon: w.source_type === 'ai_generated' ? '🤖' : '📊',
+        title: `${c.title} › ${w.title}`, subtitle: `${w.slide_count} 页 · v${w.version}`, group: '📖 课件',
+        action: () => router.push(`/course/${c.id}/read/${w.id}`) })
+    }
   }
   return items
 })

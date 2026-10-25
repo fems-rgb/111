@@ -1,0 +1,889 @@
+"""智研星枢 - 课程中心 API
+
+角色权限：
+- teacher / researcher / admin → 开课、改课、发布、上传课件、AI 生成与刷新
+- student → 浏览已发布课程、选课、阅读课件、上报学习进度
+
+路由拆分说明：课程走 /courses/*，课件走 /coursewares/*，
+避免 /courses/{course_id} 把 /courses/courseware 当成 id 匹配。
+"""
+import os
+import uuid
+import logging
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi.responses import FileResponse, PlainTextResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func, desc, or_, inspect as sa_inspect
+from sqlalchemy.orm import selectinload
+
+from app.database.session import get_db
+from app.database.models import (User, UserRole, Course, CourseStatus, Courseware, Slide,
+                                 Enrollment, Document, Project, Pipeline, PipelineRun)
+from app.api.deps import get_current_user, get_current_user_flexible
+from app.config import settings
+from app.security.sanitizer import sanitize_filename
+from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, GenerateDeckRequest,
+                                 AiRefreshRequest, ProgressRequest, OutlineRequest,
+                                 CoursewareUpdateRequest, SyncPipelineRequest)
+from app.services import ppt_service, course_ai_service
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/courses", tags=["课程中心"])
+cw_router = APIRouter(prefix="/coursewares", tags=["课程中心-课件"])
+
+COURSEWARE_EXTS = {".pptx", ".ppt"}
+MAX_COURSEWARE_SIZE = 100 * 1024 * 1024
+TEACHER_ROLES = {UserRole.TEACHER, UserRole.RESEARCHER, UserRole.ADMIN}
+
+
+# ════════════════ 权限 & 工具 ════════════════
+
+async def require_teacher(user: User = Depends(get_current_user)) -> User:
+    if user.role not in TEACHER_ROLES:
+        raise HTTPException(status_code=403, detail="仅教师/研究员可开设或编辑课程")
+    return user
+
+
+async def _course_or_404(db: AsyncSession, course_id: int) -> Course:
+    stmt = (select(Course).where(Course.id == course_id)
+            .options(selectinload(Course.teacher), selectinload(Course.coursewares)))
+    course = (await db.execute(stmt)).scalar_one_or_none()
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    return course
+
+
+async def _courseware_or_404(db: AsyncSession, cw_id: int) -> Courseware:
+    cw = (await db.execute(select(Courseware).where(Courseware.id == cw_id)
+                           .options(selectinload(Courseware.course)))).scalar_one_or_none()
+    if not cw:
+        raise HTTPException(status_code=404, detail="课件不存在")
+    return cw
+
+
+def _course_out(c: Course, extra: dict | None = None) -> dict:
+    """序列化课程。
+
+    teacher / coursewares 是懒加载关系：在 create/update 等未经 selectinload 预加载的
+    路径上直接访问会触发异步 IO（MissingGreenlet），因此先查 unloaded 集合，
+    未加载则不访问，避免隐式 lazy load。
+    """
+    unloaded = sa_inspect(c).unloaded
+    teacher = None if "teacher" in unloaded else c.teacher
+    coursewares = None if "coursewares" in unloaded else c.coursewares
+    d = {
+        "id": c.id, "title": c.title, "code": c.code, "description": c.description,
+        "syllabus": c.syllabus or "", "chapters": c.chapters or [], "domain": c.domain,
+        "status": (c.status.value if hasattr(c.status, "value") else str(c.status)),
+        "visibility": c.visibility, "cover_emoji": c.cover_emoji,
+        "enroll_count": c.enroll_count, "view_count": c.view_count,
+        "teacher_id": c.teacher_id,
+        "teacher_name": (teacher.display_name or teacher.username) if teacher else "",
+        "teacher_institution": (teacher.institution or "") if teacher else "",
+        "project_id": c.project_id,
+        "courseware_count": len(coursewares) if coursewares is not None else 0,
+        "created_at": c.created_at.isoformat() if c.created_at else "",
+    }
+    return {**d, **(extra or {})}
+
+
+async def _resolve_material(db: AsyncSession, user: User, sources: dict | None,
+                            topic: str, fallback_doc_id: int | None,
+                            fallback_project_id: int | None) -> tuple[str, list[dict]]:
+    """把多源素材请求归一化并聚合为参考文本（联动核心）"""
+    src = dict(sources or {})
+    if fallback_doc_id and not src.get("doc_ids"):
+        src["doc_ids"] = [fallback_doc_id]
+    if fallback_project_id and not src.get("project_id"):
+        src["project_id"] = fallback_project_id
+    if not any(src.get(k) for k in ("doc_ids", "question_ids", "task_ids", "project_id",
+                                    "chat_project_id", "pipeline_run_id", "skill_runs")):
+        return "", []
+    return await course_ai_service.collect_material(db, user, src, topic=topic)
+
+
+# ════════════════ 课程浏览 / 管理 ════════════════
+
+@router.get("")
+async def list_courses(
+    q: str = Query("", max_length=100),
+    domain: str = Query("", max_length=50),
+    scope: str = Query("all", description="all=已发布 / mine=我教的 / enrolled=我学的"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(Course).options(selectinload(Course.teacher), selectinload(Course.coursewares))
+    if scope == "mine":
+        stmt = stmt.where(Course.teacher_id == user.id)
+    elif scope == "enrolled":
+        sub = select(Enrollment.course_id).where(Enrollment.student_id == user.id)
+        stmt = stmt.where(Course.id.in_(sub))
+    else:
+        stmt = stmt.where(Course.status == CourseStatus.PUBLISHED, Course.visibility == "public")
+
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(Course.title.ilike(like), Course.description.ilike(like),
+                              Course.domain.ilike(like), Course.code.ilike(like)))
+    if domain:
+        stmt = stmt.where(Course.domain == domain)
+
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar() or 0
+    rows = (await db.execute(stmt.order_by(desc(Course.updated_at)).offset(offset).limit(limit))
+            ).scalars().unique().all()
+    enrolled_ids = set((await db.execute(
+        select(Enrollment.course_id).where(Enrollment.student_id == user.id))).scalars().all())
+
+    return {"items": [_course_out(c, {"is_enrolled": c.id in enrolled_ids}) for c in rows],
+            "total": total, "can_teach": user.role in TEACHER_ROLES}
+
+
+@router.get("/stats")
+async def course_stats(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """工作台联动卡片"""
+    published = (await db.execute(select(func.count()).select_from(Course)
+                                  .where(Course.status == CourseStatus.PUBLISHED))).scalar() or 0
+    mine = (await db.execute(select(func.count()).select_from(Course)
+                             .where(Course.teacher_id == user.id))).scalar() or 0
+    my_enrolled = (await db.execute(select(func.count()).select_from(Enrollment)
+                                    .where(Enrollment.student_id == user.id))).scalar() or 0
+    total_slides = (await db.execute(select(func.count()).select_from(Slide))).scalar() or 0
+    stale_cw = (await db.execute(select(func.count(func.distinct(Slide.courseware_id)))
+                                 .where(Slide.risk_score >= 0.4))).scalar() or 0
+    ai_made = (await db.execute(select(func.count()).select_from(Courseware)
+                                .where(Courseware.source_type == "ai_generated"))).scalar() or 0
+    return {"published": published, "my_courses": mine, "my_enrollments": my_enrolled,
+            "total_slides": total_slides, "need_update_coursewares": stale_cw,
+            "ai_generated_coursewares": ai_made, "can_teach": user.role in TEACHER_ROLES}
+
+
+@router.get("/materials")
+async def material_sources(limit_per: int = Query(30, ge=1, le=100),
+                           user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    """给前端「素材来源选择器」用：一次拿到可引用的原资料/题目/报告/项目/对话/流水线/技能"""
+    docs = (await db.execute(select(Document).where(Document.user_id == user.id)
+                             .order_by(desc(Document.created_at)).limit(limit_per))).scalars().all()
+    from app.database.models import ScienceQuestion, QuestionTask, CustomSkill
+    qs = (await db.execute(select(ScienceQuestion).where(ScienceQuestion.is_active == True)  # noqa: E712
+                           .order_by(ScienceQuestion.question_id).limit(limit_per))).scalars().all()
+    tasks = (await db.execute(select(QuestionTask).where(QuestionTask.user_id == user.id,
+                                                         QuestionTask.status == "completed")
+                              .order_by(desc(QuestionTask.id)).limit(limit_per))).scalars().all()
+    projs = (await db.execute(select(Project).where(Project.owner_id == user.id)
+                              .order_by(desc(Project.id)).limit(limit_per))).scalars().all()
+    pipes = (await db.execute(select(Pipeline).where(Pipeline.user_id == user.id)
+                              .order_by(desc(Pipeline.last_run)))).scalars().all()
+    runs = (await db.execute(select(PipelineRun).where(PipelineRun.pipeline_id.in_(
+        [p.id for p in pipes] or ["__none__"])).order_by(desc(PipelineRun.started_at))
+        .limit(limit_per))).scalars().all()
+    skills = (await db.execute(select(CustomSkill).where(
+        (CustomSkill.user_id == user.id) | (CustomSkill.is_public == True))  # noqa: E712
+    )).scalars().all()
+
+    from app.api.v1.skills import BUILTIN_SKILLS
+    return {
+        "documents": [{"id": d.id, "label": d.filename, "ext": d.file_ext,
+                       "has_content": bool((d.structured_data or {}).get("content"))} for d in docs],
+        "questions": [{"question_id": q.question_id, "label": f"#{q.question_id} {q.title}",
+                       "category": q.category} for q in qs],
+        "tasks": [{"id": t.id, "label": f"报告 #{t.id} · {t.result.get('title', '') if isinstance(t.result, dict) else ''}"
+                                    .strip(" ·"), "question_id": t.question_id} for t in tasks],
+        "projects": [{"id": p.id, "label": p.title, "has_chat": True} for p in projs],
+        "pipelines": [{"id": p.id, "label": p.name, "steps": len(p.steps or [])} for p in pipes],
+        "pipeline_runs": [{"id": r.id, "pipeline_id": r.pipeline_id, "status": r.status,
+                           "label": f"{next((p.name for p in pipes if p.id == r.pipeline_id), r.pipeline_id)} · {r.status}"}
+                          for r in runs],
+        "skills": ([{"id": k, "label": v.get("name", k), "type": "builtin"}
+                    for k, v in BUILTIN_SKILLS.items()] +
+                   [{"id": f"custom_{s.id}", "label": s.name,
+                     "type": "webhook" if (s.webhook_url or "") else "prompt"} for s in skills]),
+    }
+
+
+@router.post("", status_code=201)
+async def create_course(req: CourseCreateRequest, user: User = Depends(require_teacher),
+                        db: AsyncSession = Depends(get_db)):
+    course = Course(teacher_id=user.id, title=req.title, code=req.code,
+                    description=req.description, syllabus=req.syllabus, domain=req.domain,
+                    cover_emoji=req.cover_emoji or "📖", chapters=req.chapters or [],
+                    visibility=req.visibility or "public", project_id=req.project_id)
+    db.add(course)
+    await db.commit()
+    logger.info(f"🎓 课程已创建: #{course.id} {course.title} by {user.username}")
+    # 重新带入 eager 加载，避免响应里触发隐式 lazy load
+    return _course_out(await _course_or_404(db, course.id))
+
+
+@router.get("/{course_id}")
+async def get_course(course_id: int, user: User = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_db)):
+    course = await _course_or_404(db, course_id)
+    is_teacher = course.teacher_id == user.id or user.role == UserRole.ADMIN
+    if course.status != CourseStatus.PUBLISHED and not is_teacher:
+        raise HTTPException(status_code=403, detail="课程尚未发布")
+
+    cws = (await db.execute(select(Courseware).where(Courseware.course_id == course_id)
+                            .order_by(desc(Courseware.created_at)))).scalars().all()
+    enr = (await db.execute(select(Enrollment).where(Enrollment.course_id == course_id,
+                                                     Enrollment.student_id == user.id)
+                            )).scalar_one_or_none()
+    course.view_count = (course.view_count or 0) + 1
+    await db.commit()
+    return _course_out(course, {
+        "is_teacher": is_teacher,
+        "coursewares": [{
+            "id": w.id, "title": w.title, "source_type": w.source_type,
+            "slide_count": w.slide_count, "status": w.status, "version": w.version,
+            "parent_id": w.parent_id, "file_size": w.file_size, "read_size_kb": w.read_size_kb,
+            "doc_id": w.doc_id, "staleness": w.staleness_report or {},
+            "error_message": w.error_message or "",
+            "created_at": w.created_at.isoformat() if w.created_at else "",
+        } for w in cws],
+        "enrollment": None if not enr else {
+            "progress": enr.progress, "last_courseware_id": enr.last_courseware_id,
+            "last_slide_index": enr.last_slide_index},
+    })
+
+
+@router.patch("/{course_id}")
+async def update_course(course_id: int, req: CourseUpdateRequest,
+                        user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可以修改")
+    for field in ("title", "code", "description", "syllabus", "domain", "cover_emoji",
+                  "chapters", "visibility"):
+        val = getattr(req, field, None)
+        if val is not None:
+            setattr(course, field, val)
+    if req.status:
+        if req.status not in {s.value for s in CourseStatus}:
+            raise HTTPException(status_code=400, detail="非法状态")
+        course.status = CourseStatus(req.status)
+    await db.commit()
+    return _course_out(await _course_or_404(db, course_id))
+
+
+@router.delete("/{course_id}")
+async def delete_course(course_id: int, user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可以删除")
+    await db.delete(course)
+    await db.commit()
+    return {"ok": True}
+
+
+# ════════════════ 选课 / 名册 ════════════════
+
+@router.post("/{course_id}/enroll")
+async def enroll(course_id: int, user: User = Depends(get_current_user),
+                 db: AsyncSession = Depends(get_db)):
+    course = await _course_or_404(db, course_id)
+    if course.status != CourseStatus.PUBLISHED:
+        raise HTTPException(status_code=400, detail="课程未发布，暂不可选课")
+    if course.teacher_id == user.id:
+        raise HTTPException(status_code=400, detail="负责人无需选课")
+    exist = (await db.execute(select(Enrollment).where(Enrollment.course_id == course_id,
+                                                      Enrollment.student_id == user.id)
+                              )).scalar_one_or_none()
+    if exist:
+        return {"ok": True, "already": True, "progress": exist.progress}
+    db.add(Enrollment(course_id=course_id, student_id=user.id))
+    course.enroll_count = (course.enroll_count or 0) + 1
+    await db.commit()
+    return {"ok": True, "already": False}
+
+
+@router.delete("/{course_id}/enroll")
+async def unenroll(course_id: int, user: User = Depends(get_current_user),
+                   db: AsyncSession = Depends(get_db)):
+    enr = (await db.execute(select(Enrollment).where(Enrollment.course_id == course_id,
+                                                    Enrollment.student_id == user.id)
+                            )).scalar_one_or_none()
+    if not enr:
+        raise HTTPException(status_code=404, detail="未选修该课程")
+    course = await _course_or_404(db, course_id)
+    course.enroll_count = max(0, (course.enroll_count or 0) - 1)
+    await db.delete(enr)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/{course_id}/students")
+async def list_students(course_id: int, user: User = Depends(require_teacher),
+                        db: AsyncSession = Depends(get_db)):
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可查看名册")
+    rows = (await db.execute(
+        select(Enrollment, User).join(User, User.id == Enrollment.student_id)
+        .where(Enrollment.course_id == course_id).order_by(desc(Enrollment.updated_at)))).all()
+    return {"items": [{
+        "student_id": e.student_id, "name": u.display_name or u.username,
+        "institution": u.institution or "", "progress": e.progress,
+        "last_slide": e.last_slide_index,
+        "enrolled_at": e.enrolled_at.isoformat() if e.enrolled_at else "",
+    } for e, u in rows], "total": len(rows)}
+
+
+# ════════════════ 课件电子化（需求 2） ════════════════
+
+@router.post("/{course_id}/courseware", status_code=201)
+async def upload_courseware(course_id: int, file: UploadFile = File(...),
+                            title: str = Form(default=""),
+                            user: User = Depends(require_teacher),
+                            db: AsyncSession = Depends(get_db)):
+    """上传 PPT → 拆解为电子书（文本层 + 逐页瘦身图 + 懒加载）"""
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可上传课件")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in COURSEWARE_EXTS:
+        raise HTTPException(status_code=400,
+                            detail="请上传 .pptx 课件（.ppt 请先在 Office 中另存为 .pptx）")
+    content = await file.read()
+    if len(content) > MAX_COURSEWARE_SIZE:
+        raise HTTPException(status_code=400, detail="课件过大，最大 100MB")
+
+    cw = Courseware(course_id=course_id,
+                    title=title or sanitize_filename(file.filename or "课件"),
+                    source_type="upload", file_size=len(content), status="converting")
+    db.add(cw)
+    await db.commit()
+    await db.refresh(cw)
+
+    saved_name = f"{uuid.uuid4().hex[:12]}{ext}"
+    src_dir = os.path.join(settings.UPLOAD_DIR, "courses_src")
+    os.makedirs(src_dir, exist_ok=True)
+    src_path = os.path.join(src_dir, saved_name)
+    with open(src_path, "wb") as f:
+        f.write(content)
+    cw.source_path = os.path.join("courses_src", saved_name)
+
+    try:
+        await _materialize_courseware(db, cw, src_path, creator=user)
+    except Exception as e:
+        logger.exception("courseware conversion failed")
+        cw.status = "failed"
+        cw.error_message = str(e)[:500]
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"课件电子化失败: {str(e)[:200]}")
+
+    return {"id": cw.id, "title": cw.title, "slide_count": cw.slide_count, "status": cw.status,
+            "file_size": cw.file_size, "read_size_kb": cw.read_size_kb, "doc_id": cw.doc_id,
+            "optimization": (cw.staleness_report or {}).get("_opt", {})}
+
+
+async def _materialize_courseware(db: AsyncSession, cw: Courseware, src_path: str | None,
+                                  slides: list[dict] | None = None,
+                                  creator: User | None = None) -> None:
+    """slides 落库 + 体积优化统计 + 注册资料库（联动）"""
+    if slides is None:
+        if not src_path or not os.path.exists(src_path):
+            raise ValueError("课件源文件缺失")
+        slides = ppt_service.convert_pptx_to_slides(src_path, cw.id)
+
+    db.add_all([Slide(
+        courseware_id=cw.id, slide_index=s["slide_index"], title=s.get("title", ""),
+        bullets=s.get("bullets", []), notes=s.get("notes", ""), tables=s.get("tables", []),
+        image_path=s.get("image_path", ""), image_kb=s.get("image_kb", 0),
+        updated_by_ai=bool(s.get("updated_by_ai", False)),
+        risk_score=float(s.get("risk_score", 0) or 0),
+        risk_category=s.get("risk_category", "") or "",
+        ai_reason=s.get("ai_reason", "") or "", ai_suggestion=s.get("ai_suggestion", "") or "",
+    ) for s in slides])
+    cw.slide_count = len(slides)
+
+    opt = ppt_service.estimate_optimization(cw.file_size or 0, slides)
+    cw.read_size_kb = opt["ebook_kb"]
+    rep = dict(cw.staleness_report or {})
+    rep["_opt"] = opt
+    cw.staleness_report = rep
+    cw.status = "ready"
+
+    # 联动：课件文本进资料库 → 可被 RAG 检索 / 作为对话附件
+    if creator is not None:
+        try:
+            ebook_md = ppt_service.build_ebook_markdown(slides, cw.title)
+            doc = Document(user_id=creator.id, filename=f"{cw.title}.md", saved_name="",
+                           file_ext=".md", file_size=len(ebook_md.encode("utf-8")),
+                           description=f"课程课件电子化 · course_id={cw.course_id}",
+                           summary=ebook_md[:1200],
+                           structured_data={"course_id": cw.course_id, "courseware_id": cw.id,
+                                            "content": ebook_md[:60000]},
+                           parse_status="ok", tags=["courseware", "course"])
+            db.add(doc)
+            await db.flush()
+            cw.doc_id = doc.id
+        except Exception as e:
+            logger.warning(f"courseware→knowledge 联动注册失败(不影响阅读): {e}")
+
+    await db.commit()
+    await db.refresh(cw)
+
+
+# ════════════════ 阅读端点（coursewares 路由） ════════════════
+
+@cw_router.get("/{cw_id}")
+async def get_courseware_meta(cw_id: int, user: User = Depends(get_current_user),
+                              db: AsyncSession = Depends(get_db)):
+    """只返回文本层（几十 KB），图片由 /image 懒加载 —— 这是浏览速度的关键"""
+    cw = await _courseware_or_404(db, cw_id)
+    course = cw.course
+    is_teacher = bool(course and (course.teacher_id == user.id or user.role == UserRole.ADMIN))
+    if course and course.status != CourseStatus.PUBLISHED and not is_teacher:
+        raise HTTPException(status_code=403, detail="课程尚未发布")
+    enr = (await db.execute(select(Enrollment).where(Enrollment.course_id == cw.course_id,
+                                                    Enrollment.student_id == user.id)
+                            )).scalar_one_or_none()
+    slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
+                               .order_by(Slide.slide_index))).scalars().all()
+    return {
+        "id": cw.id, "title": cw.title, "course_id": cw.course_id,
+        "course_title": course.title if course else "",
+        "cover_emoji": course.cover_emoji if course else "📖",
+        "domain": course.domain if course else "",
+        "course_project_id": course.project_id if course else None,
+        "version": cw.version, "parent_id": cw.parent_id, "source_type": cw.source_type,
+        "status": cw.status, "slide_count": cw.slide_count, "file_size": cw.file_size,
+        "read_size_kb": cw.read_size_kb, "doc_id": cw.doc_id,
+        "staleness": cw.staleness_report or {}, "optimization": (cw.staleness_report or {}).get("_opt", {}),
+        "is_teacher": is_teacher, "enrolled": bool(enr) or is_teacher,
+        "resume": {"courseware_id": enr.last_courseware_id, "slide_index": enr.last_slide_index} if enr else None,
+        "slides": [{
+            "slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+            "notes": s.notes or "", "tables": s.tables or [], "has_image": bool(s.image_path),
+            "image_kb": s.image_kb or 0, "risk_score": s.risk_score or 0,
+            "risk_category": s.risk_category or "", "ai_reason": s.ai_reason or "",
+            "ai_suggestion": s.ai_suggestion or "", "updated_by_ai": bool(s.updated_by_ai),
+        } for s in slides],
+    }
+
+
+@cw_router.get("/{cw_id}/slides/{slide_index}/image")
+async def get_slide_image(cw_id: int, slide_index: int,
+                          user: User = Depends(get_current_user_flexible),
+                          db: AsyncSession = Depends(get_db)):
+    s = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id,
+                                              Slide.slide_index == slide_index)
+                          )).scalar_one_or_none()
+    if not s or not s.image_path:
+        raise HTTPException(status_code=404, detail="该页无配图")
+    abs_path = os.path.join(settings.UPLOAD_DIR, s.image_path)
+    if not os.path.isfile(abs_path):
+        raise HTTPException(status_code=404, detail="图片文件缺失")
+    return FileResponse(abs_path, media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@cw_router.get("/{cw_id}/ebook", response_class=PlainTextResponse)
+async def download_ebook(cw_id: int, user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """连贯读物（Markdown）—— 真正的电子书形态"""
+    cw = await _courseware_or_404(db, cw_id)
+    slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
+                               .order_by(Slide.slide_index))).scalars().all()
+    payload = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+                "notes": s.notes or "", "tables": s.tables or []} for s in slides]
+    return ppt_service.build_ebook_markdown(payload, cw.title)
+
+
+@cw_router.get("/{cw_id}/export/pptx")
+async def export_pptx(cw_id: int, user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    """反向导出原生 .pptx（课堂投影用，保留老师熟悉的工作流）"""
+    cw = await _courseware_or_404(db, cw_id)
+    slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
+                               .order_by(Slide.slide_index))).scalars().all()
+    payload = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+                "notes": s.notes or ""} for s in slides]
+    if not payload:
+        raise HTTPException(status_code=400, detail="课件暂无内容页")
+    out_dir = os.path.join(settings.UPLOAD_DIR, "courses_export")
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"cw{cw_id}_v{cw.version}.pptx")
+    ppt_service.render_pptx(payload, cw.title, out_path)
+    return FileResponse(out_path,
+                        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        filename=f"{cw.title}_v{cw.version}.pptx")
+
+
+@cw_router.post("/{cw_id}/progress")
+async def report_progress(cw_id: int, req: ProgressRequest,
+                          user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    cw = await _courseware_or_404(db, cw_id)
+    enr = (await db.execute(select(Enrollment).where(Enrollment.course_id == cw.course_id,
+                                                    Enrollment.student_id == user.id)
+                            )).scalar_one_or_none()
+    if not enr:
+        return {"ok": False, "reason": "未选修该课程"}
+    key = f"cw:{cw_id}:{req.slide_index}"
+    read = list(enr.read_slides or [])
+    if key not in read:
+        read.append(key)
+        enr.read_slides = read
+    total_cw = (await db.execute(select(func.count(Courseware.id))
+                                 .where(Courseware.course_id == cw.course_id))).scalar() or 1
+    cw_ids_read = {k.rsplit(":", 1)[0] for k in read}
+    # 每份课件读完才算完成：按已读页数比例折算
+    slides_per_cw = {}
+    for k in read:
+        cid = k.rsplit(":", 1)[0]
+        slides_per_cw[cid] = slides_per_cw.get(cid, 0) + 1
+    totals = dict((await db.execute(
+        select(Slide.courseware_id, func.count(Slide.id)).group_by(Slide.courseware_id)
+        .where(Slide.courseware_id.in_([int(c.split(":")[1]) for c in cw_ids_read] or [-1]))
+    )).all())
+    done = 0.0
+    for k in cw_ids_read:
+        cid = int(k.split(":")[1])
+        t = totals.get(cid) or 1
+        done += min(1.0, slides_per_cw.get(k, 0) / t)
+    enr.progress = max(0, min(100, round(done / max(1, total_cw) * 100)))
+    enr.last_courseware_id = cw_id
+    enr.last_slide_index = req.slide_index
+    await db.commit()
+    return {"ok": True, "progress": enr.progress, "slides_read": len(read)}
+
+
+@cw_router.patch("/{cw_id}/slides")
+async def edit_slides(cw_id: int, req: CoursewareUpdateRequest,
+                      user: User = Depends(require_teacher), db: AsyncSession = Depends(get_db)):
+    """人工微调（AI 稿不是终稿）"""
+    cw = await _courseware_or_404(db, cw_id)
+    if cw.course and cw.course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可编辑")
+    if req.title is not None:
+        cw.title = req.title
+    if req.slides:
+        existing = {s.slide_index: s for s in (await db.execute(
+            select(Slide).where(Slide.courseware_id == cw_id))).scalars().all()}
+        for it in req.slides:
+            try:
+                idx = int(it.get("slide_index", -1))
+            except Exception:
+                continue
+            s = existing.get(idx)
+            if not s:
+                continue
+            if "title" in it:
+                s.title = str(it["title"])[:300]
+            if "bullets" in it and isinstance(it["bullets"], list):
+                s.bullets = [{"level": int(b.get("level", 0) or 0),
+                              "text": str(b.get("text", ""))[:400]}
+                             for b in it["bullets"] if isinstance(b, dict)]
+            if "notes" in it:
+                s.notes = str(it["notes"])[:4000]
+    await db.commit()
+    return {"ok": True}
+
+
+@cw_router.delete("/{cw_id}")
+async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
+                            db: AsyncSession = Depends(get_db)):
+    cw = await _courseware_or_404(db, cw_id)
+    if cw.course and cw.course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可删除")
+    if cw.source_path:
+        p = os.path.join(settings.UPLOAD_DIR, cw.source_path)
+        try:
+            if os.path.isfile(p):
+                os.remove(p)
+        except OSError:
+            pass
+    await db.delete(cw)
+    await db.commit()
+    return {"ok": True}
+
+
+@cw_router.get("/{cw_id}/versions")
+async def list_versions(cw_id: int, user: User = Depends(get_current_user),
+                        db: AsyncSession = Depends(get_db)):
+    """版本链：原始版 → AI 更新版，供老师对比/回退"""
+    cw = await _courseware_or_404(db, cw_id)
+    root_id, guard = cw.parent_id or cw.id, 0
+    while guard < 20:
+        parent = (await db.execute(select(Courseware).where(
+            Courseware.id == root_id))).scalar_one_or_none()
+        if not parent or not parent.parent_id:
+            break
+        root_id, guard = parent.parent_id, guard + 1
+    kin, seen, frontier = [], set(), [root_id]
+    while frontier:
+        rows = (await db.execute(select(Courseware).where(
+            Courseware.parent_id.in_(frontier) | Courseware.id.in_(frontier)))).scalars().all()
+        frontier = []
+        for k in rows:
+            if k.id not in seen:
+                seen.add(k.id)
+                kin.append(k)
+                frontier.append(k.id)
+    kin = sorted(kin, key=lambda x: (x.version, x.id))
+    return {"items": [{"id": k.id, "title": k.title, "version": k.version,
+                       "source_type": k.source_type, "slide_count": k.slide_count,
+                       "parent_id": k.parent_id, "is_current": k.id == cw_id,
+                       "created_at": k.created_at.isoformat() if k.created_at else ""} for k in kin]}
+
+
+# ════════════════ AI：陈旧度体检 + 自动更新（需求 3） ════════════════
+
+@cw_router.post("/{cw_id}/staleness-scan")
+async def staleness_scan(cw_id: int, user: User = Depends(require_teacher),
+                         db: AsyncSession = Depends(get_db)):
+    cw = await _courseware_or_404(db, cw_id)
+    course = cw.course
+    slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
+                               .order_by(Slide.slide_index))).scalars().all()
+    if not slides:
+        raise HTTPException(status_code=400, detail="课件暂无内容页")
+    payload = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or []} for s in slides]
+    report = await course_ai_service.scan_staleness(
+        payload, course_title=course.title if course else cw.title,
+        domain=course.domain if course else "", project_id=course.project_id if course else None)
+
+    by_idx = {i["slide_index"]: i for i in report["items"]}
+    for s in slides:
+        item = by_idx.get(s.slide_index, {})
+        s.risk_score = float(item.get("risk_score", 0) or 0)
+        s.risk_category = item.get("category", "") or ""
+        s.ai_reason = item.get("reason", "") or ""
+        s.ai_suggestion = item.get("suggestion", "") or ""
+    rep = dict(cw.staleness_report or {})
+    rep["summary"] = report["summary"]
+    rep["categories"] = report["summary"].get("categories", {})
+    rep["cost"] = report.get("cost", 0)
+    from datetime import datetime
+    rep["scanned_at"] = datetime.now().isoformat(timespec="seconds")
+    cw.staleness_report = rep
+    await db.commit()
+    return {"ok": True, "summary": report["summary"], "items": report["items"],
+            "cost": report.get("cost", 0)}
+
+
+@cw_router.post("/{cw_id}/ai-refresh")
+async def ai_refresh(cw_id: int, req: AiRefreshRequest,
+                     user: User = Depends(require_teacher), db: AsyncSession = Depends(get_db)):
+    """把陈旧页重写 → 生成新版本（原版保留，可对比）；支持叠加多源素材"""
+    cw = await _courseware_or_404(db, cw_id)
+    course = cw.course
+    slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
+                               .order_by(Slide.slide_index))).scalars().all()
+    old = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+            "notes": s.notes or "", "tables": s.tables or [], "image_path": s.image_path,
+            "image_kb": s.image_kb, "risk_score": s.risk_score or 0,
+            "risk_category": s.risk_category or "", "ai_reason": s.ai_reason or "",
+            "ai_suggestion": s.ai_suggestion or ""} for s in slides]
+
+    if not any((s.risk_score or 0) > 0 for s in slides):
+        report = await course_ai_service.scan_staleness(
+            [{"slide_index": s["slide_index"], "title": s["title"], "bullets": s["bullets"]} for s in old],
+            course_title=course.title if course else cw.title,
+            domain=course.domain if course else "")
+        report_items = report["items"]
+        by_idx = {i["slide_index"]: i for i in report_items}
+        for s, src in zip(slides, old):
+            item = by_idx.get(s.slide_index, {})
+            s.risk_score = float(item.get("risk_score", 0) or 0)
+            s.risk_category = item.get("category", "") or ""
+            s.ai_reason = item.get("reason", "") or ""
+            s.ai_suggestion = item.get("suggestion", "") or ""
+            src.update({"risk_score": s.risk_score, "risk_category": s.risk_category,
+                        "ai_reason": s.ai_reason, "ai_suggestion": s.ai_suggestion})
+        await db.commit()
+    else:
+        report_items = [{"slide_index": s.slide_index, "risk_score": s.risk_score or 0,
+                         "category": s.risk_category or "", "reason": s.ai_reason or "",
+                         "suggestion": s.ai_suggestion or ""} for s in slides]
+
+    if req.slide_indexes:
+        wanted = set(req.slide_indexes)
+        report_items = [i for i in report_items if i["slide_index"] in wanted]
+
+    # 联动：原资料/科学问题/报告/项目/对话/流水线/技能 都可作为更新依据
+    material, provenance = await _resolve_material(
+        db, user, req.sources, cw.title, req.reference_doc_id,
+        course.project_id if course else None)
+    extra = "\n\n".join(x for x in [req.extra_context, material] if x)
+
+    new_slides, usage = await course_ai_service.refresh_slides(
+        old, report_items, course_title=course.title if course else cw.title,
+        domain=course.domain if course else "", extra_context=extra,
+        project_id=course.project_id if course else None)
+
+    if usage.get("updated", 0) == 0:
+        return {"ok": True, "updated": 0, "new_courseware_id": None,
+                "message": "没有需要更新的页面（或 AI 未返回可用结果）",
+                "cost": usage.get("cost", 0), "sources_used": provenance}
+
+    new_cw = Courseware(course_id=cw.course_id, title=req.title or f"{cw.title} · AI 更新版",
+                        source_type="ai_generated", status="converting",
+                        version=cw.version + 1, parent_id=cw.id, file_size=0)
+    db.add(new_cw)
+    await db.commit()
+    await db.refresh(new_cw)
+    rel, abs_dir = ppt_service._slides_dir(new_cw.id)
+    for s in new_slides:
+        if s.get("updated_by_ai"):
+            # 改动页重绘配图；未改动页沿用原图
+            s["image_path"] = ""
+            s["image_kb"] = 0
+    for s in new_slides:
+        if s.get("updated_by_ai"):
+            try:
+                path, kb = ppt_service._render_slide_only(
+                    s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
+                s["image_path"], s["image_kb"] = path, kb
+            except Exception as e:
+                logger.debug(f"refresh slide render skipped: {e}")
+    await _materialize_courseware(db, new_cw, None, slides=new_slides, creator=user)
+    rep = dict(new_cw.staleness_report or {})
+    rep["sources_used"] = provenance
+    rep["refreshed_from"] = cw_id
+    new_cw.staleness_report = rep
+    await db.commit()
+    return {"ok": True, "updated": usage["updated"], "new_courseware_id": new_cw.id,
+            "version": new_cw.version, "cost": usage.get("cost", 0),
+            "tokens": usage.get("tokens", {}), "slide_count": new_cw.slide_count,
+            "sources_used": provenance}
+
+
+# ════════════════ AI：快速做课件（需求 4，多源素材驱动） ════════════════
+
+@router.post("/{course_id}/generate-courseware", status_code=201)
+async def generate_courseware(course_id: int, req: GenerateDeckRequest,
+                              user: User = Depends(require_teacher),
+                              db: AsyncSession = Depends(get_db)):
+    """依据大纲 + 多源素材生成整套课件，生成后即可电子书阅读，也可导出 pptx"""
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可生成课件")
+
+    material, provenance = await _resolve_material(
+        db, user, req.sources, req.topic, req.reference_doc_id, req.project_id or course.project_id)
+
+    slides, meta = await course_ai_service.generate_deck(
+        topic=req.topic, syllabus=req.syllabus or course.syllabus or "",
+        chapter_count=req.chapter_count, slides_per_chapter=req.slides_per_chapter,
+        style=req.style, audience=req.audience,
+        domain=req.domain or course.domain or "", reference_material=material,
+        project_id=req.project_id or course.project_id)
+
+    if not slides:
+        raise HTTPException(status_code=500, detail="AI 未返回可用课件内容，请调整大纲后重试")
+
+    if not req.auto_save:
+        return {"ok": True, "saved": False, "slides": slides, "chapters": meta.get("chapters", []),
+                "cost": meta.get("cost", 0), "sources_used": provenance}
+
+    cw = Courseware(course_id=course_id, title=req.title or f"{req.topic} · AI 生成课件",
+                    source_type="ai_generated", status="converting", slide_count=len(slides))
+    db.add(cw)
+    await db.commit()
+    await db.refresh(cw)
+    rel, abs_dir = ppt_service._slides_dir(cw.id)
+    for s in slides:
+        try:
+            path, kb = ppt_service._render_slide_only(s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
+            s["image_path"], s["image_kb"] = path, kb
+        except Exception as e:
+            logger.debug(f"ai slide render skipped: {e}")
+    if meta.get("chapters"):
+        course.chapters = meta["chapters"]
+    await _materialize_courseware(db, cw, None, slides=slides, creator=user)
+    rep = dict(cw.staleness_report or {})
+    rep["sources_used"] = provenance
+    cw.staleness_report = rep
+    await db.commit()
+    logger.info(f"🎓 AI 生成课件 cw{cw.id} {len(slides)}页 (cost ¥{meta.get('cost', 0):.4f}, "
+                f"素材源 {len(provenance)} 个)")
+    return {"ok": True, "saved": True, "courseware_id": cw.id, "slide_count": cw.slide_count,
+            "chapters": meta.get("chapters", []), "cost": meta.get("cost", 0),
+            "tokens": meta.get("tokens", {}), "version": cw.version, "title": cw.title,
+            "sources_used": provenance}
+
+
+@router.post("/{course_id}/sync-from-pipeline")
+async def sync_from_pipeline(course_id: int, req: SyncPipelineRequest,
+                             user: User = Depends(require_teacher),
+                             db: AsyncSession = Depends(get_db)):
+    """走研究流水线：把流水线产出转成讲义（可叠加技能产出）"""
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可执行")
+    pipe = (await db.execute(select(Pipeline).where(Pipeline.id == req.pipeline_id,
+                                                    Pipeline.user_id == user.id)
+                             )).scalar_one_or_none()
+    if not pipe:
+        raise HTTPException(status_code=404, detail="流水线不存在或无权访问")
+
+    run = None
+    if req.run_id:
+        run = (await db.execute(select(PipelineRun).where(PipelineRun.id == req.run_id,
+                                                          PipelineRun.pipeline_id == pipe.id)
+                                )).scalar_one_or_none()
+    if not run:
+        run = (await db.execute(select(PipelineRun).where(
+            PipelineRun.pipeline_id == pipe.id, PipelineRun.status == "completed")
+            .order_by(desc(PipelineRun.started_at)).limit(1))).scalar_one_or_none()
+    if not run:
+        raise HTTPException(status_code=400,
+                            detail="该流水线暂无成功运行记录，请先在自动化模块运行一次（或提供 run_id）")
+
+    topic = req.topic or pipe.name
+    material, provenance = await _resolve_material(
+        db, user, {"pipeline_run_id": run.id, "skill_runs": req.skill_runs or [],
+                   "project_id": course.project_id}, topic, None, None)
+    if not material:
+        raise HTTPException(status_code=400, detail="流水线运行结果为空，无法生成讲义")
+
+    slides, meta = await course_ai_service.generate_deck(
+        topic=topic, syllabus=course.syllabus or pipe.description or "",
+        chapter_count=req.chapter_count, slides_per_chapter=req.slides_per_chapter,
+        style="研究进展", audience="本科生", domain=course.domain or "",
+        reference_material=material, project_id=course.project_id)
+    if not slides:
+        raise HTTPException(status_code=500, detail="AI 未能从流水线产出转成课件")
+
+    cw = Courseware(course_id=course_id,
+                    title=req.title or f"{topic} · 流水线产出讲义",
+                    source_type="ai_generated", status="converting", slide_count=len(slides))
+    db.add(cw)
+    await db.commit()
+    await db.refresh(cw)
+    cw.title = req.title or f"{topic} · 流水线产出讲义 (源 run {str(run.id)[:8]})"
+    rel, abs_dir = ppt_service._slides_dir(cw.id)
+    for s in slides:
+        try:
+            path, kb = ppt_service._render_slide_only(s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
+            s["image_path"], s["image_kb"] = path, kb
+        except Exception:
+            pass
+    if meta.get("chapters"):
+        course.chapters = meta["chapters"]
+    await _materialize_courseware(db, cw, None, slides=slides, creator=user)
+    rep = dict(cw.staleness_report or {})
+    rep.update({"pipeline_id": pipe.id, "run_id": run.id, "sources_used": provenance})
+    cw.staleness_report = rep
+    await db.commit()
+    return {"ok": True, "courseware_id": cw.id, "slide_count": cw.slide_count,
+            "pipeline": {"id": pipe.id, "name": pipe.name}, "run_id": run.id,
+            "chapters": meta.get("chapters", []), "cost": meta.get("cost", 0),
+            "sources_used": provenance, "title": cw.title}
+
+
+@router.post("/ai/outline")
+async def ai_outline(req: OutlineRequest, user: User = Depends(require_teacher),
+                     db: AsyncSession = Depends(get_db)):
+    """粘贴大纲/讲义文本（也可叠加素材）→ 自动结构化章节，开课辅助"""
+    material, provenance = await _resolve_material(db, user, req.sources, "", None, None)
+    text = req.text + (("\n\n" + material) if material else "")
+    data, usage = await course_ai_service.outline_from_syllabus(text, req.domain)
+    return {"ok": True, "title": data.get("title", ""), "domain": data.get("domain", ""),
+            "chapters": data.get("chapters", []), "cost": usage.get("cost", 0),
+            "sources_used": provenance}

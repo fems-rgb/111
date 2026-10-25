@@ -237,6 +237,7 @@
               <button class="text-xs text-primary-500 hover:underline" @click="previewDoc(doc)">预览</button>
               <button class="text-xs text-blue-600 hover:underline" @click="useInChat(doc)" title="在 AI 对话中使用这份资料">💬 对话</button>
               <button class="text-xs text-purple-600 hover:underline" @click="useInPipeline(doc)" title="作为流水线输入">⚙️ 流水线</button>
+              <button class="text-xs text-teal-600 hover:underline" @click="useInCourse(doc)" title="用这份资料开课 / 生成课件">🎓 开课</button>
               <button class="text-xs text-red-500 hover:underline" @click="deleteDoc(doc.id)">删除</button>
             </td>
           </tr>
@@ -714,5 +715,10 @@ function useInChat(doc: any) {
 function useInPipeline(doc: any) {
   const fid = doc.id || doc.file_id
   router.push(`/automation?prefillName=${encodeURIComponent('基于《' + (doc.title || '') + '》的自动流水线')}&sourceFileId=${encodeURIComponent(String(fid))}`)
+}
+function useInCourse(doc: any) {
+  const fid = doc.id || doc.file_id
+  // 带着资料回到课程中心：新建课程时预勾选这份文档作为素材源
+  router.push(`/courses?create=1&docIds=${encodeURIComponent(String(fid))}&title=${encodeURIComponent((doc.title || '专题').slice(0, 40) + ' 专题课')}`)
 }
 </script>
