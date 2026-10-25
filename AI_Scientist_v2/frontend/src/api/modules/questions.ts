@@ -202,6 +202,12 @@ export function retryTask(taskId: number, customPrompt = '') {
     }>(`/questions/tasks/${taskId}/retry`, { custom_prompt: customPrompt })
 }
 
+export function deleteQuestion(questionId: number) {
+  return client.delete<{ message: string; question_id: number }>(
+    `/questions/${questionId}`
+  )
+}
+
 export function batchDeleteQuestions(questionIds: number[]) {
   return client.post<{ message: string; deleted: number }>(
     '/questions/batch-delete',

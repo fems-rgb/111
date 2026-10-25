@@ -55,7 +55,7 @@
         <!-- 快速模式：仅核心问题 -->
         <div>
           <label class="block text-sm font-medium text-surface-700 mb-1">🎯 核心科学问题</label>
-          <textarea v-model="newProject.research_question" class="input-field h-20 resize-none" 
+          <textarea v-model="newProject.research_question" class="input-field h-20 resize-none"
             placeholder="例如：大语言模型在低资源语言上的跨语言迁移能力是否存在涌现阈值？" required></textarea>
         </div>
 
@@ -64,12 +64,12 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-surface-700 mb-1">💡 候选假设</label>
-              <textarea v-model="newProject.hypothesis" class="input-field h-16 resize-none" 
+              <textarea v-model="newProject.hypothesis" class="input-field h-16 resize-none"
                 placeholder="基于XX理论/数据，我们假设..."></textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-surface-700 mb-1">🔍 验证方法</label>
-              <textarea v-model="newProject.verification_method" class="input-field h-16 resize-none" 
+              <textarea v-model="newProject.verification_method" class="input-field h-16 resize-none"
                 placeholder="实验设计 / 数据分析方案 / 仿真环境..."></textarea>
             </div>
           </div>
@@ -135,6 +135,7 @@
             <option value="iterating">迭代中</option>
           </select>
           <button @click="projectStore.fetchProjects({ workspace: appStore.currentWorkspace })" class="btn-secondary text-sm">刷新</button>
+          <button @click="handleDeleteAllProjects" class="px-3 py-1 text-sm rounded-md border border-red-300 text-red-600 hover:bg-red-50 transition-colors">⚠️ 全部删除</button>
         </div>
       </div>
       <!-- 批量操作栏 -->
@@ -164,7 +165,10 @@
                 💡 {{ p.hypothesis_count }} 假设
               </span>
             </div>
-            <p class="text-sm text-surface-500 mt-1">{{ p.domain }} · {{ new Date(p.created_at).toLocaleDateString('zh-CN') }}</p>
+            <p class="text-sm text-surface-500 mt-1">{{ p.domain }} · {{ new Date(p.created_at).toLocaleDateString('zh-CN') }}
+              <router-link v-if="p.title?.startsWith('[题库]')" :to="'/questions?tab=tasks'"
+                           class="ml-2 text-xs text-blue-500 hover:underline" @click.stop>📋 查看相关任务</router-link>
+            </p>
             <!-- [stageB] 项目流水线进度条 -->
             <div v-if="(p.total_steps || 0) > 0" class="mt-2 flex items-center gap-2">
               <div class="flex-1 h-1.5 bg-surface-200 rounded-full overflow-hidden">
@@ -308,14 +312,16 @@ function toggleSelectAll() {
 }
 async function handleBatchDelete() {
   const ids = Array.from(selectedIds.value)
-  if (!confirm(`确定要删除选中的  个项目吗？此操作不可恢复。`)) return
-  let ok = 0, fail = 0
-  for (const id of ids) {
-    try { await projectStore.deleteProject(id); ok++ } catch { fail++ }
+  if (!confirm(`确定要删除选中的 ${ids.length} 个项目吗？此操作不可恢复。`)) return
+  try {
+    const { projectApi } = await import('@/api/modules/project')
+    const res = await projectApi.batchDelete(ids)
+    appStore.showToast(res.data?.message || `已删除 ${ids.length} 个项目`, 'success')
+    selectedIds.value = new Set()
+    projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '批量删除失败', 'error')
   }
-  selectedIds.value = new Set()
-  appStore.showToast(`批量删除完成：成功  个` + (fail ? `，失败  个` : ''), fail ? 'warning' : 'success')
-  projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
 }
 
 onMounted(async () => {
@@ -377,6 +383,21 @@ async function handleDelete(id: number) {
     appStore.showToast('项目已删除', 'success')
   } catch (e: any) {
     appStore.showToast(e.response?.data?.detail || '删除失败', 'error')
+  }
+}
+
+async function handleDeleteAllProjects() {
+  if (projectStore.projects.length === 0) { appStore.showToast('没有项目可删除', 'info'); return }
+  if (!confirm(`⚠️ 确定删除全部 ${projectStore.projects.length} 个项目？此操作不可恢复！`)) return
+  if (!confirm('再次确认：真的要清空所有项目吗？')) return
+  try {
+    const { projectApi } = await import('@/api/modules/project')
+    const res = await projectApi.deleteAll()
+    appStore.showToast(res.data?.message || '已清空全部项目', 'success')
+    projectStore.projects = []
+    selectedIds.value = new Set()
+  } catch (e: any) {
+    appStore.showToast(e.response?.data?.detail || '清空失败', 'error')
   }
 }
 

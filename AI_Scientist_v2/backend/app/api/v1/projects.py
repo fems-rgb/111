@@ -226,7 +226,55 @@ async def update(
     await db.refresh(project)
     return project
 
-@router.delete("/{project_id}")
+
+@router.post("/batch-delete")
+async def batch_delete(
+    body: dict = Body(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """批量删除项目"""
+    project_ids = body.get("project_ids", [])
+    if not project_ids:
+        raise HTTPException(status_code=400, detail="project_ids 不能为空")
+    deleted = 0
+    for pid in project_ids:
+        project = (await db.execute(
+            select(Project).where(Project.id == pid, Project.owner_id == user.id)
+        )).scalar_one_or_none()
+        if not project:
+            continue
+        try:
+            delete_project_physical_files(pid)
+        except Exception:
+            pass
+        await db.delete(project)
+        deleted += 1
+    await db.commit()
+    return {"message": f"已删除 {deleted} 个项目", "deleted": deleted}
+
+
+@router.delete("/delete-all")
+async def delete_all(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除当前用户全部项目"""
+    projects = (await db.execute(
+        select(Project).where(Project.owner_id == user.id)
+    )).scalars().all()
+    count = 0
+    for project in projects:
+        try:
+            delete_project_physical_files(project.id)
+        except Exception:
+            pass
+        await db.delete(project)
+        count += 1
+    await db.commit()
+    return {"message": f"已清空全部项目（共 {count} 个）", "deleted": count}
+
+
 @router.delete("/{project_id}")
 async def delete(
     project_id: int,

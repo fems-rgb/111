@@ -9,6 +9,8 @@ export const projectApi = {
     client.post<Project>('/projects', data),
   update: (id: number, data: Partial<Project>) => client.patch(`/projects/${id}`, data),
   delete: (id: number) => client.delete(`/projects/${id}`),
+  batchDelete: (ids: number[]) => client.post<{ message: string; deleted: number }>('/projects/batch-delete', { project_ids: ids }),
+  deleteAll: () => client.delete<{ message: string; deleted: number }>('/projects/delete-all'),
   start: (id: number, pipeline?: string[]) => pipeline ? client.post(`/projects/${id}/start`, { pipeline }) : client.post(`/projects/${id}/start`),
   pause: (id: number) => client.post(`/projects/${id}/pause`),
   resume: (id: number) => client.post(`/projects/${id}/resume`),

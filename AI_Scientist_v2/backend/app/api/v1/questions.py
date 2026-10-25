@@ -1364,11 +1364,11 @@ async def batch_import_questions(
     }
 
 
-# ─── 题库题目删除（选取删除 / 批量删除 / 全部清空）────────────────────────────
+# ─── 题库题目删除（单题删除 / 批量删除 / 全部清空）────────────────────────────
 async def _delete_question_cascade(db, question):
-    """物理删除一道题目：连带其下所有 QuestionTask + ExperimentRun"""
+    """物理删除一道题目：连带其下所有 QuestionTask + ExperimentRun + Project"""
     from sqlalchemy import delete as _sqla_delete
-    from app.database.models import ExperimentRun as _ExpRun
+    from app.database.models import ExperimentRun as _ExpRun, Project as _Proj
     tq = select(QuestionTask).where(QuestionTask.question_id == question.question_id)
     tasks = (await db.execute(tq)).scalars().all()
     for t in tasks:
@@ -1377,8 +1377,34 @@ async def _delete_question_cascade(db, question):
             await db.execute(_sqla_delete(_ExpRun).where(_ExpRun.question_task_id == t.id))
         except Exception as _exp_del:
             logger.debug("[cascade] 实验运行记录删除失败 task=%s: %s", t.id, _exp_del)
+        # 联动删除关联的 Project
+        try:
+            _pid = (t.result or {}).get("project_id") if isinstance(t.result, dict) else None
+            if _pid:
+                _proj_obj = (await db.execute(select(_Proj).where(_Proj.id == _pid))).scalar_one_or_none()
+                if _proj_obj:
+                    await db.delete(_proj_obj)
+                    logger.info("[cascade] 删除关联 project %s", _pid)
+        except Exception as _pe:
+            logger.debug("[cascade] 删 project 异常(不阻塞): %s", _pe)
         await db.delete(t)
     await db.delete(question)
+
+
+@router.delete("/{question_id}")
+async def delete_single_question(
+    question_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """删除单道题目（级联删除其下任务 + 实验 + 项目）"""
+    q = select(ScienceQuestion).where(ScienceQuestion.question_id == question_id)
+    question = (await db.execute(q)).scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    await _delete_question_cascade(db, question)
+    await db.commit()
+    return {"message": f"题目 #{question_id} 已删除", "question_id": question_id}
 
 
 @router.post("/batch-delete")

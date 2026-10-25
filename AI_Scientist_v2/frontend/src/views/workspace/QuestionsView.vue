@@ -112,6 +112,10 @@
                     class="px-3 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200 transition-colors text-xs whitespace-nowrap">
               📄 详情
             </button>
+            <button @click.stop="handleDeleteQuestion(q.question_id, q.title)"
+                    class="px-3 py-1.5 rounded-lg text-red-500 border border-red-200 hover:bg-red-50 transition-colors text-xs whitespace-nowrap">
+              🗑️ 删除
+            </button>
           </div>
         </div>
       </div>
@@ -701,7 +705,7 @@ import {
   getTaskStatus, getTaskDocument, submitFeedback, getMyTasks, deleteTask, batchDeleteTasks, batchImportQuestions,
   retryTask,
   type QuestionItem, type QuestionDetail, type CategoryStat,
-  type TaskStatus, type MyTaskItem, type DocumentContent, batchDeleteQuestions, deleteAllQuestions } from '@/api/modules/questions'
+  type TaskStatus, type MyTaskItem, type DocumentContent, batchDeleteQuestions, deleteAllQuestions, deleteQuestion } from '@/api/modules/questions'
 import { automationApi, type Pipeline } from '@/api/modules/automation'
 import { useProjectStore } from '@/stores/project'
 import { useAppStore } from '@/stores/app'
@@ -975,26 +979,43 @@ async function importScience125() {
   }
 }
 
+const handleDeleteQuestion = async (qid: number, title: string) => {
+  if (!confirm(`确定删除题目「${title.slice(0, 30)}」？\n其关联的任务、实验、项目均会被级联删除。`)) return
+  try {
+    const res = await deleteQuestion(qid)
+    showToast(res.data?.message || '题目已删除', 'success')
+    selectedIds.value = new Set([...selectedIds.value].filter(id => id !== qid))
+    await loadQuestions()
+    // 联动刷新项目列表
+    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch {}
+  } catch (e: any) {
+    showToast('删除失败: ' + (e?.message || e?.response?.data?.detail || ''), 'error')
+  }
+}
+
 const handleBatchDelete = async () => {
-  if (!confirm(`确定删除选中的 ${selectedIds.value.size} 道题目？`)) return
+  if (!confirm(`确定删除选中的 ${selectedIds.value.size} 道题目？其关联任务/项目也会被删除。`)) return
   try {
     const res = await batchDeleteQuestions([...selectedIds.value])
     alert(res.data?.message || '删除成功')
     selectedIds.value = new Set()
     await loadQuestions()
+    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch {}
   } catch (e: any) {
     alert('删除失败: ' + (e?.message || e?.response?.data?.detail || e))
   }
 }
 
 const handleDeleteAll = async () => {
-  if (!confirm('⚠️ 确定清空全部题目？此操作不可恢复！')) return
+  if (!confirm('⚠️ 确定清空全部题目？此操作不可恢复！所有关联任务/实验/项目也会被级联删除！')) return
   if (!confirm('再次确认：真的要删除所有题目吗？')) return
   try {
     const res = await deleteAllQuestions()
     alert(res.data?.message || '已清空')
     selectedIds.value = new Set()
     await loadQuestions()
+    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch {}
+    try { loadMyTasks() } catch {}
   } catch (e: any) {
     alert('操作失败: ' + (e?.message || e?.response?.data?.detail || e))
   }
@@ -1178,15 +1199,12 @@ async function confirmDeleteTask(taskId: number) {
   if (!confirm('确定要删除任务 #' + taskId + ' 吗？此操作不可撤销。')) return
   try {
     await deleteTask(taskId)
-    await deleteTask(taskId)
     showToast('✅ 任务已删除', 'success')
     selectedTaskIds.value = new Set([...selectedTaskIds.value].filter(id => id !== taskId))
     await loadMyTasks()
-    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch (e) {}
-    selectedTaskIds.value = new Set([...selectedTaskIds.value].filter(id => id !== taskId))
-    await loadMyTasks()
+    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch {}
   } catch (e: any) {
-    showToast('删除失败: ' + (e?.message || ''), 'error')
+    showToast('删除失败: ' + (e?.message || e?.response?.data?.detail || ''), 'error')
   }
 }
 
@@ -1199,13 +1217,11 @@ async function confirmBatchDeleteTasks() {
     const d = res.data
     showToast(
       (d?.message || '操作完成') + (d && d.errors && d.errors.length > 0 ? '，' + d.errors.length + ' 个失败' : ''),
-      (d && d.errors && d.errors.length > 0) ? 'info' : 'success'
+      (d && d.errors && d.errors.length > 0) ? 'error' : 'success'
     )
     selectedTaskIds.value = new Set()
     await loadMyTasks()
-    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch (e) {}
-    selectedTaskIds.value = new Set()
-    await loadMyTasks()
+    try { projectStore.fetchProjects({ workspace: appStore.currentWorkspace }) } catch {}
   } catch (e: any) {
     showToast('批量删除失败: ' + (e?.message || ''), 'error')
   }
@@ -1267,9 +1283,10 @@ async function submitTaskFeedback() {
   }
 }
 
-// ─── 跳转到工作台项目 ───
-import { useRouter } from 'vue-router'
+// ─── 路由 ───
+import { useRouter, useRoute } from 'vue-router'
 const router = useRouter()
+const route = useRoute()
 function goToProject(projectId: number) {
   // 用路由 name 跳转, 兼容任意嵌套父路径
   router.push({ name: 'ProjectDetail', params: { id: String(projectId) } })
@@ -1330,6 +1347,11 @@ onMounted(() => {
   loadQuestions()
   loadMyTasks()
   loadPipelines()
+  // 联动：支持从 Dashboard 通过 ?tab=tasks 跳转
+  if (route.query.tab === 'tasks') {
+    activeTab.value = 'tasks'
+    startTaskPolling()
+  }
 })
 
 onUnmounted(() => {
