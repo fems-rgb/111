@@ -1,19 +1,22 @@
-"""智研星枢 - 文件读写工具"""
+"""智研星枢 - 文件读写工具（Agent 产物固定落 backend/generated/agent_output/）"""
 import aiofiles
 import os
 import logging
-from app.config import settings
 from app.security.sanitizer import sanitize_filename
 from app.observability.tracer import Tracer
+from app.utils import paths
 
 logger = logging.getLogger(__name__)
+
+
+def _out_dir(project_id: int) -> str:
+    return str(paths.gen_dir("agent_output", f"project_{project_id}"))
 
 
 async def save_output(project_id: int, filename: str, content: str) -> dict:
     span = Tracer.create_span("tool_call", "文件保存", project_id=project_id)
     safe = sanitize_filename(filename)
-    d = os.path.join(settings.UPLOAD_DIR, f"project_{project_id}")
-    os.makedirs(d, exist_ok=True)
+    d = _out_dir(project_id)
     path = os.path.join(d, safe)
     try:
         async with aiofiles.open(path, 'w', encoding='utf-8') as f:
@@ -30,9 +33,13 @@ async def save_output(project_id: int, filename: str, content: str) -> dict:
 
 async def read_output(project_id: int, filename: str) -> dict:
     safe = sanitize_filename(filename)
-    path = os.path.join(settings.UPLOAD_DIR, f"project_{project_id}", safe)
+    path = os.path.join(_out_dir(project_id), safe)
     if not os.path.exists(path):
-        return {"success": False, "error": "文件不存在"}
+        # 历史遗留：早期 Agent 产物写在 uploads/project_{id}/
+        legacy = os.path.join(str(paths.UPLOADS_ROOT), f"project_{project_id}", safe)
+        if not os.path.exists(legacy):
+            return {"success": False, "error": "文件不存在"}
+        path = legacy
     try:
         async with aiofiles.open(path, 'r', encoding='utf-8') as f:
             content = await f.read()

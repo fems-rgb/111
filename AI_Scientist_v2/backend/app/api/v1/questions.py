@@ -9,6 +9,7 @@ from sqlalchemy import select, func
 from app.database.session import get_db
 from app.database.models import ScienceQuestion, QuestionTask, User
 from app.api.deps import get_current_user
+from app.utils import paths
 
 logger = logging.getLogger(__name__)
 
@@ -375,16 +376,15 @@ async def on_project_completed(project_id=None, user_id=None, **_kw):
             if not task:
                 return
 
-            report_path = _os.path.join(_os.getcwd(), "output", str(project_id), "report.md")
-            if _os.path.exists(report_path):
-                task.document_path = report_path
+            # 报告统一写 backend/generated/questions/task_<id>/report.md（固定根）；
+            # 先探测历史 output/<project_id>/report.md 以免重复生成
+            legacy_report = paths.resolve(f"reports/{project_id}/report.md", kind="reports")
+            if legacy_report:
+                task.document_path = str(legacy_report)
             elif project.final_output:
-                doc_dir = _os.path.join(_os.getcwd(), "output", "questions", str(task_id))
-                _os.makedirs(doc_dir, exist_ok=True)
-                doc_path = _os.path.join(doc_dir, "report.md")
-                with open(doc_path, "w", encoding="utf-8") as f:
-                    f.write(project.final_output)
-                task.document_path = doc_path
+                doc_path = paths.gen_file("questions", f"task_{task_id}", "report.md")
+                doc_path.write_text(project.final_output, encoding="utf-8")
+                task.document_path = str(doc_path)
 
             task.status = "completed"
             task.progress = 100
@@ -821,13 +821,9 @@ async def _execute_question_generation(
                 task.completed_at = datetime.now(timezone.utc)
 
                 # 写入文档文件并记录路径
-                import os as _os
-                _doc_dir = _os.path.join(_os.getcwd(), "output", "questions", str(task_id))
-                _os.makedirs(_doc_dir, exist_ok=True)
-                _doc_path = _os.path.join(_doc_dir, "report.md")
-                with open(_doc_path, "w", encoding="utf-8") as f:
-                    f.write(content)
-                task.document_path = _doc_path
+                _doc_path = paths.gen_file("questions", f"task_{task_id}", "report.md")
+                _doc_path.write_text(content, encoding="utf-8")
+                task.document_path = str(_doc_path)
 
                 await db.commit()
                 logger.info(f"直接生成完成: task_id={task_id}, content_len={len(content)}, doc={_doc_path}")
@@ -1012,12 +1008,11 @@ async def get_task_document(
     doc_path = task.document_path
     content_from_file = None
     if doc_path:
-        import os as _os
-        abs_path = doc_path if _os.path.isabs(doc_path) else _os.path.join(_os.getcwd(), doc_path)
-        if _os.path.exists(abs_path):
+        # 新报告在 generated/questions/…，老库里存的是当时 cwd 算出的绝对路径，resolve 两者都兼容
+        abs_path = paths.resolve(doc_path, kind="questions")
+        if abs_path:
             try:
-                with open(abs_path, "r", encoding="utf-8") as f:
-                    content_from_file = f.read()
+                content_from_file = abs_path.read_text(encoding="utf-8")
             except Exception as _read_err:
                 logger.debug("[doc] 读取文件失败 %s: %s", abs_path, _read_err)
 

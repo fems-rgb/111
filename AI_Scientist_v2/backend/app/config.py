@@ -1,5 +1,6 @@
 """智研星枢 v3.0 - 全局配置管理（单例模式）"""
 from app.utils.safe_json import safe_json_parse
+from app.utils import paths as _paths
 from pydantic_settings import BaseSettings
 from typing import List
 import json, os
@@ -39,9 +40,10 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = "admin123456"
     ADMIN_EMAIL: str = "admin@zhixing.ai"
 
-    # ── 路径 ──
-    UPLOAD_DIR: str = "uploads"
-    LOG_DIR: str = "logs"
+    # ── 路径（一律绝对、固定，见 app/utils/paths.py：换 cwd 启动也不会把文件写到别处）──
+    UPLOAD_DIR: str = str(_paths.UPLOADS_ROOT)      # 用户上传的原始文件
+    LOG_DIR: str = str(_paths.LOGS_ROOT)
+    GENERATED_DIR: str = str(_paths.GENERATED_ROOT)  # 一切生成/派生文件的唯一根目录
 
     @property
     def allowed_origins_list(self) -> List[str]:
@@ -60,6 +62,5 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# 确保必要目录存在
-for d in [settings.UPLOAD_DIR, settings.LOG_DIR]:
-    os.makedirs(d, exist_ok=True)
+# 确保必要目录存在（uploads / logs / generated 固定骨架 + .gitkeep）
+_paths.ensure_tree()

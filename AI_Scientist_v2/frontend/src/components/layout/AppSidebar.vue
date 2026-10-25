@@ -74,11 +74,14 @@ onMounted(() => { _pollExp(); _loadCourseBadge(); _expTimer = setInterval(_pollE
 onUnmounted(() => { if (_expTimer) clearInterval(_expTimer) })
 
 const navItems = computed(() => {
+  const canTeach = TEACHER_ROLES.includes(authStore.user?.role || '')
   const items = [
     { path: '/', icon: '📊', label: '工作台' },
     { path: '/chat', icon: '💬', label: 'AI对话' },
     { path: '/knowledge', icon: '📚', label: '资料库' },
     { path: '/courses', icon: '🎓', label: '课程中心', badge: staleCourses.value > 0 },
+    // 课件工坊：一级入口，避免“生成 PPT”藏在课程详情弹窗里找不到
+    ...(canTeach ? [{ path: '/courseware-studio', icon: '📽️', label: 'AI 生成 PPT', badge: false }] : []),
     { path: '/questions', icon: '🔬', label: '科学问题题库' },
     { path: '/experiment-lab', icon: '🧪', label: '实验模拟场', badge: expRunning.value },
     { path: '/skills', icon: '🛜', label: '技能市场' },

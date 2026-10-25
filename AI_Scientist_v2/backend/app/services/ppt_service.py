@@ -14,7 +14,7 @@ import os
 import logging
 from typing import Any
 
-from app.config import settings
+from app.utils import paths
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +25,14 @@ JPEG_QUALITY = 78
 MIN_IMAGE_BYTES = 8 * 1024  # 小于此说明是装饰图形，不值得单独存
 
 
-def _slides_dir(courseware_id: int) -> str:
-    """课件图片落盘目录（相对 UPLOAD_DIR）"""
-    rel = os.path.join("courses", f"c{courseware_id // 100 or 1}", f"cw{courseware_id}")
-    abs_dir = os.path.join(settings.UPLOAD_DIR, rel)
-    os.makedirs(abs_dir, exist_ok=True)
-    return rel, abs_dir
+def _slides_dir(courseware_id: int) -> tuple[str, str]:
+    """课件渲染图落盘目录：固定根 backend/generated/courseware/…
+
+    返回 (相对 GENERATED_ROOT 的入库路径, 绝对目录)，图片是派生产物不是用户上传，
+    因此不再写到 uploads/ 里。
+    """
+    abs_dir = paths.gen_dir("courseware", f"c{courseware_id // 100 or 1}", f"cw{courseware_id}")
+    return paths.rel("courseware", f"c{courseware_id // 100 or 1}", f"cw{courseware_id}"), str(abs_dir)
 
 
 def _compress_image(blob: bytes, out_abs: str, out_rel: str, name: str) -> tuple[str, int]:

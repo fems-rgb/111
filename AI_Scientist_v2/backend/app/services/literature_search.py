@@ -6,8 +6,9 @@ from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path("output/literature_cache")
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
+# 文献检索缓存也算生成文件 → 固定落 backend/generated/cache/literature
+from app.utils import paths as _paths
+CACHE_DIR = _paths.gen_dir("cache")
 
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False

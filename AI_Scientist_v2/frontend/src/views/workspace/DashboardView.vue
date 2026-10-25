@@ -44,7 +44,7 @@
       <div class="flex items-center gap-2">
         <span class="text-xl">🎓</span>
         <div>
-          <p class="text-sm font-semibold">课程中心</p>
+          <p class="text-sm font-semibold">课程中心 · 课件工坊</p>
           <p class="text-[11px] text-surface-500">
             {{ courseStat.published }} 门公开课 · 我教 {{ courseStat.my_courses }} · 我在学 {{ courseStat.my_enrollments }}
             <span v-if="courseStat.need_update_coursewares" class="text-orange-600">· ⚠️ {{ courseStat.need_update_coursewares }} 件课件待 AI 更新</span>
@@ -53,9 +53,13 @@
         </div>
       </div>
       <div class="flex flex-wrap gap-2 ml-auto">
+        <button v-if="canTeach" @click="$router.push('/courseware-studio')"
+                class="text-xs px-3 py-1.5 rounded-md bg-gradient-to-r from-primary-600 to-accent-600 text-white font-medium hover:opacity-90">
+          📽️ AI 生成 PPT 课件
+        </button>
         <button @click="$router.push('/courses')" class="text-xs px-3 py-1.5 rounded-md bg-surface-100 hover:bg-surface-200">浏览课程</button>
         <button @click="$router.push('/courses?scope=enrolled')" class="text-xs px-3 py-1.5 rounded-md bg-green-50 text-green-700 hover:bg-green-100 border border-green-200">我的学习</button>
-        <button v-if="canTeach" @click="$router.push('/courses?create=1')" class="text-xs px-3 py-1.5 rounded-md bg-primary-600 text-white hover:bg-primary-700">＋ 开课并 AI 做课件</button>
+        <button v-if="canTeach" @click="$router.push('/courses?create=1')" class="text-xs px-3 py-1.5 rounded-md bg-primary-600 text-white hover:bg-primary-700">＋ 开一门新课</button>
       </div>
     </div>
 

@@ -120,10 +120,49 @@ export interface StalenessItem {
   suggestion?: string
 }
 
+/** 课件工坊一键生成的返回 */
+export interface DeckResult {
+  ok: boolean
+  saved: boolean
+  course_id?: number
+  course_title?: string
+  courseware_id?: number
+  title?: string
+  slide_count?: number
+  version?: number
+  chapters?: Chapter[]
+  slides?: SlideMeta[]
+  cost?: number
+  pptx_url?: string
+  reader_url?: string
+  sources_used?: { kind: string; label: string; chars: number }[]
+}
+
+/** 工坊历史列表项 */
+export interface AiCoursewareItem {
+  id: number
+  title: string
+  course_id: number
+  course_title: string
+  slide_count: number
+  version: number
+  status: string
+  read_size_kb: number
+  created_at: string
+  pptx_url: string
+  reader_url: string
+}
+
 // ═══════ API ═══════
 
 /** 上传进度回调挂载点（供 CourseDetail 订阅） */
 export const uploadProgress: { cb: ((pct: number) => void) | null } = { cb: null }
+
+/** 下载类链接由浏览器直接发起（不会带 Authorization 头），所以用 query token 认证 */
+function _tokenQuery() {
+  const auth = useAuthStore()
+  return auth.token ? `?token=${encodeURIComponent(auth.token)}` : ''
+}
 
 export const courseApi = {
   list: (params?: { q?: string; domain?: string; scope?: string; limit?: number; offset?: number }) =>
@@ -194,8 +233,19 @@ export const coursewareApi = {
     return `/api/v1/coursewares/${id}/slides/${slideIndex}/image${t ? `?token=${t}` : ''}`
   },
 
-  ebookUrl: (id: number) => `/api/v1/coursewares/${id}/ebook`,
-  exportUrl: (id: number) => `/api/v1/coursewares/${id}/export/pptx`,
+  ebookUrl: (id: number) => `/api/v1/coursewares/${id}/ebook${_tokenQuery()}`,
+  exportUrl: (id: number) => `/api/v1/coursewares/${id}/export/pptx${_tokenQuery()}`,
+
+  /** 课件工坊：不需先建课程，一个主题直接出整套课件 + 可下载的 .pptx */
+  quickGenerate: (data: {
+    topic: string; title?: string; domain?: string; syllabus?: string
+    chapter_count?: number; slides_per_chapter?: number; style?: string; audience?: string
+    course_id?: number | null; sources?: MaterialSelection; auto_save?: boolean
+  }) => client.post<DeckResult>('/coursewares/quick-generate', data, { timeout: 600000 }),
+
+  /** 我在工坊里生成过的课件 */
+  aiMine: (limit = 30) =>
+    client.get<{ items: AiCoursewareItem[]; can_teach: boolean }>('/coursewares/ai-mine', { params: { limit } }),
 
   reportProgress: (id: number, slideIndex: number, completed = false) =>
     client.post(`/coursewares/${id}/progress`, { courseware_id: id, slide_index: slideIndex, completed }),

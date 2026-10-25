@@ -50,7 +50,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/export", tags=["赛题文档导出"])
 
 # ===== 自动PDF导出配置 =====
-AUTO_EXPORT_DIR = Path(__file__).resolve().parent.parent.parent.parent / "output" / "pdf_reports"
+# 生成文件统一落 backend/generated/pdf（固定绝对路径，不随启动 cwd 变化）
+from app.utils import paths as _paths
+AUTO_EXPORT_DIR = _paths.gen_dir("pdf")
 
 
 def md_to_pdf(md_content: str, pdf_path: str, title: str = "Report") -> bool:
@@ -633,9 +635,12 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
         # --- 图表去重 ---
         _seen=set();_uc=[]
         import base64 as _b64, os as _os, glob as _glob
-        # [fix] 动态定位本项目图表目录
+        # [fix] 图表目录：新产物在 generated/，历史产物兼容继续扫 output/
         _PROJ_ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
         _CANDIDATE_DIRS = [
+            str(_paths.gen_dir("deliverables", f"project_{project_id}", "charts")),
+            str(_paths.gen_dir("experiments", str(project_id), "charts")),
+            str(_paths.gen_dir("experiments", f"project_{project_id}", "charts")),
             _os.path.join(_PROJ_ROOT, 'output', 'deliverables', f'project_{project_id}', 'charts'),
             _os.path.join(_PROJ_ROOT, 'output', 'deliverables', f'project_{project_id}'),
             _os.path.join(_PROJ_ROOT, 'output', 'experiments', f'project_{project_id}', 'charts'),
@@ -1084,12 +1089,10 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
             project=proj, hypotheses=hyp_rows, questions=qs, charts=chart_files, problem_statement=ps, problem_statement_html=ps_html, datasets=datasets, baselines=bl, metrics=metrics, results=results, methods=methods, methods_html=methods_html, results_rows=results_rows, paper_title=paper_title, abstract_bg=abstract_bg, abstract_bg_html=abstract_bg_html, abstract_method=abstract_method, abstract_result=abstract_result, rationale=rationale, rationale_html=rationale_html, references=refs, model_stats=model_stats, hitl_rows=hitl_rows, iter_rows=iter_rows, review_html=review_html, reflection_html=reflection_html, total_tokens=total_tokens, total_cost=total_cost,
             generated_at=datetime.now().strftime('%Y-%m-%d %H:%M')
         ))
-        # [v40] 导出中间 HTML（纯文本，无 PDF 提取歧义）
+        # [v40] 导出中间 HTML（纯文本，无 PDF 提取歧义）→ generated/tmp
         try:
-            import os as _os40
-            _d40=_os40.path.join(_os40.path.dirname(_os40.path.dirname(_os40.path.dirname(_os40.path.abspath(__file__)))),'output')
-            _os40.makedirs(_d40,exist_ok=True)
-            open(_os40.path.join(_d40,'debug_render.html'),'w',encoding='utf-8').write(html)
+            _p40 = _paths.gen_file("tmp", "debug_render.html")
+            open(_p40, 'w', encoding='utf-8').write(html)
         except Exception as _dbg_err:
             logger.debug('[v40] debug_render.html 写盘失败（不影响 PDF）: %s', _dbg_err)
         out_dir = AUTO_EXPORT_DIR

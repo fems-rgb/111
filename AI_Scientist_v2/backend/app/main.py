@@ -9,6 +9,7 @@ if _sys.platform == "win32":
         pass
 from contextlib import asynccontextmanager
 from pathlib import Path
+import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -30,9 +31,15 @@ _candidates = [
 ]
 FRONTEND_DIST = next((p for p in _candidates if (p / "index.html").exists()), _candidates[0])
 
+logger = logging.getLogger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging(settings.DEBUG)
+    # 生成文件固定根目录：所有 AI/流水线/课件/实验/PDF 产物都落这里，与启动 cwd 无关
+    from app.utils import paths as _paths
+    _paths.ensure_tree()
+    logger.info(f"📁 生成文件目录（固定）: {_paths.GENERATED_ROOT}")
     await init_database()
     # 确保所有 ORM 模型对应的表都存在
     async with engine.begin() as conn:

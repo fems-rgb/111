@@ -7,6 +7,7 @@
     <button v-if="isExpert" class="tb-btn" title="流水线编排" @click="showPipeline=!showPipeline">⚙️</button>
     <button v-if="isExpert" class="tb-btn" title="提交反馈触发迭代" @click="showFeedback=!showFeedback">🔄</button>
     <button v-if="isExpert" class="tb-btn" title="粘贴图片" @click="triggerPaste">🖼️</button>
+    <button v-if="canTeach" class="tb-btn tb-teach" title="把本次对话做成 PPT 课件（跳转课件工坊）" @click="toStudio">📽️</button>
 
     <!-- 拖拽提示 -->
     <div v-if="dragOver" class="drop-hint">📂 释放以上传文件</div>
@@ -40,9 +41,11 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useRouter } from 'vue-router'
 import { submitFeedback } from '@/api/modules/hypothesis'
 import { uploadApi } from '@/api/modules/chat'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ projectId: number; steps?: string[] }>()
 const emit = defineEmits<{
@@ -54,8 +57,16 @@ const emit = defineEmits<{
 }>()
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
+const router = useRouter()
 const { mode } = storeToRefs(appStore)
 const isExpert = computed(() => mode.value === 'expert')
+const canTeach = computed(() => ['teacher', 'researcher', 'admin'].includes(authStore.user?.role || ''))
+
+/** 跨模块联动：把当前项目（含对话记录）作为素材带进课件工坊 */
+function toStudio() {
+  router.push({ path: '/courseware-studio', query: { project_id: String(props.projectId), chat: '1' } })
+}
 
 const showFeedback = ref(false)
 const showPipeline = ref(false)
@@ -155,6 +166,7 @@ async function doFeedback(){if(!feedbackText.value.trim())return;try{await submi
 .chat-toolbar{display:flex;gap:4px;padding:6px 10px;border-top:1px solid #e5e7eb;background:#fff;position:relative;align-items:center;flex-wrap:wrap}
 .tb-btn{background:none;border:1px solid transparent;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:16px;transition:all .15s}
 .tb-btn:hover{background:#f0f4ff;border-color:#d0d7ff}
+.tb-teach{font-size:15px;padding:4px 10px;background:linear-gradient(90deg,#eef2ff,#ecfeff);border:1px solid #c7d2fe;border-radius:8px}
 .drop-hint{position:absolute;inset:0;background:rgba(26,115,232,.08);border:2px dashed #1a73e8;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px;color:#1a73e8;font-weight:600;z-index:10}
 .file-chips{display:flex;gap:4px;flex-wrap:wrap;margin-left:8px}
 .file-chip{font-size:11px;padding:2px 8px;background:#f0f4ff;border-radius:12px;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}

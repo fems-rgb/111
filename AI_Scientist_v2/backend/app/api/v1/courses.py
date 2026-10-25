@@ -22,6 +22,7 @@ from app.database.models import (User, UserRole, Course, CourseStatus, Coursewar
 from app.api.deps import get_current_user, get_current_user_flexible
 from app.config import settings
 from app.security.sanitizer import sanitize_filename
+from app.utils import paths
 from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, GenerateDeckRequest,
                                  AiRefreshRequest, ProgressRequest, OutlineRequest,
                                  CoursewareUpdateRequest, SyncPipelineRequest)
@@ -430,6 +431,28 @@ async def _materialize_courseware(db: AsyncSession, cw: Courseware, src_path: st
 
 # ════════════════ 阅读端点（coursewares 路由） ════════════════
 
+@cw_router.get("/ai-mine")
+async def list_my_ai_coursewares(limit: int = Query(30, ge=1, le=100),
+                                user: User = Depends(get_current_user),
+                                db: AsyncSession = Depends(get_db)):
+    """课件工坊的「我生成过的课件」列表（AI 生成，含导出/阅读链接）
+
+    必须在 /{cw_id} 之前声明，否则 ai-mine 会被当成 cw_id。
+    """
+    stmt = (select(Courseware)
+            .join(Course, Course.id == Courseware.course_id)
+            .where(Course.teacher_id == user.id, Courseware.source_type == "ai_generated")
+            .order_by(desc(Courseware.id)).limit(limit))
+    rows = (await db.execute(stmt)).scalars().unique().all()
+    return {"items": [{
+        "id": c.id, "title": c.title, "course_id": c.course_id, "course_title": c.course.title,
+        "slide_count": c.slide_count, "version": c.version, "status": c.status,
+        "read_size_kb": c.read_size_kb, "created_at": c.created_at.isoformat() if c.created_at else "",
+        "pptx_url": f"/api/v1/coursewares/{c.id}/export/pptx",
+        "reader_url": f"/course/{c.course_id}/read/{c.id}",
+    } for c in rows], "can_teach": user.role in TEACHER_ROLES}
+
+
 @cw_router.get("/{cw_id}")
 async def get_courseware_meta(cw_id: int, user: User = Depends(get_current_user),
                               db: AsyncSession = Depends(get_db)):
@@ -475,17 +498,21 @@ async def get_slide_image(cw_id: int, slide_index: int,
                           )).scalar_one_or_none()
     if not s or not s.image_path:
         raise HTTPException(status_code=404, detail="该页无配图")
-    abs_path = os.path.join(settings.UPLOAD_DIR, s.image_path)
-    if not os.path.isfile(abs_path):
+    # 新产物在 generated/courseware/…，历史数据仍在 uploads/courses/…，resolve 自动兼容
+    abs_path = paths.resolve(s.image_path, kind="courseware")
+    if not abs_path or not abs_path.is_file():
         raise HTTPException(status_code=404, detail="图片文件缺失")
-    return FileResponse(abs_path, media_type="image/jpeg",
+    return FileResponse(str(abs_path), media_type="image/jpeg",
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
 @cw_router.get("/{cw_id}/ebook", response_class=PlainTextResponse)
-async def download_ebook(cw_id: int, user: User = Depends(get_current_user),
+async def download_ebook(cw_id: int, user: User = Depends(get_current_user_flexible),
                          db: AsyncSession = Depends(get_db)):
-    """连贯读物（Markdown）—— 真正的电子书形态"""
+    """连贯读物（Markdown）—— 真正的电子书形态
+
+    走 flexible 认证：下载由 <a href> 发起，不会带 Authorization 头，只能靠 ?token=
+    """
     cw = await _courseware_or_404(db, cw_id)
     slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
                                .order_by(Slide.slide_index))).scalars().all()
@@ -495,7 +522,7 @@ async def download_ebook(cw_id: int, user: User = Depends(get_current_user),
 
 
 @cw_router.get("/{cw_id}/export/pptx")
-async def export_pptx(cw_id: int, user: User = Depends(get_current_user),
+async def export_pptx(cw_id: int, user: User = Depends(get_current_user_flexible),
                       db: AsyncSession = Depends(get_db)):
     """反向导出原生 .pptx（课堂投影用，保留老师熟悉的工作流）"""
     cw = await _courseware_or_404(db, cw_id)
@@ -505,13 +532,43 @@ async def export_pptx(cw_id: int, user: User = Depends(get_current_user),
                 "notes": s.notes or ""} for s in slides]
     if not payload:
         raise HTTPException(status_code=400, detail="课件暂无内容页")
-    out_dir = os.path.join(settings.UPLOAD_DIR, "courses_export")
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, f"cw{cw_id}_v{cw.version}.pptx")
-    ppt_service.render_pptx(payload, cw.title, out_path)
-    return FileResponse(out_path,
+    # 导出的 pptx 属于生成文件 → 固定落在 backend/generated/exports/
+    out_path = paths.gen_file("exports", f"cw{cw_id}_v{cw.version}.pptx")
+    ppt_service.render_pptx(payload, cw.title, str(out_path))
+    return FileResponse(str(out_path),
                         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                         filename=f"{cw.title}_v{cw.version}.pptx")
+
+
+@cw_router.post("/quick-generate", status_code=201)
+async def quick_generate_courseware(req: GenerateDeckRequest,
+                                   user: User = Depends(require_teacher),
+                                   db: AsyncSession = Depends(get_db)):
+    """课件工坊：不需先建课程，一个主题直接生成整套课件并产出 .pptx
+
+    未指定 course_id 时自动创建一门仅自己可见的草稿课程来承载课件（不污染公开课列表）。
+    """
+    course = None
+    if req.course_id:
+        course = await _course_or_404(db, req.course_id)
+        if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+            raise HTTPException(status_code=403, detail="只有课程负责人可生成课件")
+    if course is None:
+        if not req.create_course:
+            raise HTTPException(status_code=400, detail="未指定 course_id")
+        course = Course(title=(req.title or req.topic)[:200], code="",
+                        description=f"课件工坊自动创建 · 主题：{req.topic}"[:2000],
+                        domain=req.domain or "", syllabus=req.syllabus or "",
+                        teacher_id=user.id, status=CourseStatus.DRAFT, visibility="private",
+                        cover_emoji="📽️")
+        db.add(course)
+        await db.commit()
+        await db.refresh(course)
+        logger.info(f"📽️ 课件工坊自动建课: #{course.id} {course.title} by {user.username}")
+    out = await _build_deck(db, course, req, user)
+    out["course_id"] = course.id
+    out["course_title"] = course.title
+    return out
 
 
 @cw_router.post("/{cw_id}/progress")
@@ -590,10 +647,16 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
     cw = await _courseware_or_404(db, cw_id)
     if cw.course and cw.course.teacher_id != user.id and user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="只有课程负责人可删除")
-    if cw.source_path:
-        p = os.path.join(settings.UPLOAD_DIR, cw.source_path)
+    # 教师上传的原件仍在 uploads/，派生渲染图在 generated/courseware/，两者都清掉
+    rows = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id))).scalars().all()
+    targets = [cw.source_path] + [f"courseware/c{cw.id // 100 or 1}/cw{cw.id}/s{s.slide_index:03d}.jpg"
+                                  for s in rows]
+    for stored in targets:
+        if not stored:
+            continue
+        p = paths.resolve(stored, kind="courseware")
         try:
-            if os.path.isfile(p):
+            if p and p.is_file():
                 os.remove(p)
         except OSError:
             pass
@@ -755,15 +818,9 @@ async def ai_refresh(cw_id: int, req: AiRefreshRequest,
 
 # ════════════════ AI：快速做课件（需求 4，多源素材驱动） ════════════════
 
-@router.post("/{course_id}/generate-courseware", status_code=201)
-async def generate_courseware(course_id: int, req: GenerateDeckRequest,
-                              user: User = Depends(require_teacher),
-                              db: AsyncSession = Depends(get_db)):
-    """依据大纲 + 多源素材生成整套课件，生成后即可电子书阅读，也可导出 pptx"""
-    course = await _course_or_404(db, course_id)
-    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="只有课程负责人可生成课件")
-
+async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest,
+                      user: User) -> dict:
+    """生成整套课件（课程内生成与课件工坊一键生成共用）"""
     material, provenance = await _resolve_material(
         db, user, req.sources, req.topic, req.reference_doc_id, req.project_id or course.project_id)
 
@@ -781,7 +838,7 @@ async def generate_courseware(course_id: int, req: GenerateDeckRequest,
         return {"ok": True, "saved": False, "slides": slides, "chapters": meta.get("chapters", []),
                 "cost": meta.get("cost", 0), "sources_used": provenance}
 
-    cw = Courseware(course_id=course_id, title=req.title or f"{req.topic} · AI 生成课件",
+    cw = Courseware(course_id=course.id, title=req.title or f"{req.topic} · AI 生成课件",
                     source_type="ai_generated", status="converting", slide_count=len(slides))
     db.add(cw)
     await db.commit()
@@ -802,10 +859,22 @@ async def generate_courseware(course_id: int, req: GenerateDeckRequest,
     await db.commit()
     logger.info(f"🎓 AI 生成课件 cw{cw.id} {len(slides)}页 (cost ¥{meta.get('cost', 0):.4f}, "
                 f"素材源 {len(provenance)} 个)")
-    return {"ok": True, "saved": True, "courseware_id": cw.id, "slide_count": cw.slide_count,
-            "chapters": meta.get("chapters", []), "cost": meta.get("cost", 0),
-            "tokens": meta.get("tokens", {}), "version": cw.version, "title": cw.title,
-            "sources_used": provenance}
+    return {"ok": True, "saved": True, "course_id": course.id, "courseware_id": cw.id,
+            "slide_count": cw.slide_count, "chapters": meta.get("chapters", []),
+            "cost": meta.get("cost", 0), "tokens": meta.get("tokens", {}), "version": cw.version,
+            "title": cw.title, "pptx_url": f"/api/v1/coursewares/{cw.id}/export/pptx",
+                        "reader_url": f"/course/{course.id}/read/{cw.id}", "sources_used": provenance}
+
+
+@router.post("/{course_id}/generate-courseware", status_code=201)
+async def generate_courseware(course_id: int, req: GenerateDeckRequest,
+                              user: User = Depends(require_teacher),
+                              db: AsyncSession = Depends(get_db)):
+    """依据大纲 + 多源素材生成整套课件，生成后即可电子书阅读，也可导出 pptx"""
+    course = await _course_or_404(db, course_id)
+    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只有课程负责人可生成课件")
+    return await _build_deck(db, course, req, user)
 
 
 @router.post("/{course_id}/sync-from-pipeline")

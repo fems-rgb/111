@@ -52,6 +52,9 @@ class GenerateDeckRequest(BaseModel):
     project_id: Optional[int] = None
     title: Optional[str] = Field(None, max_length=300)
     auto_save: bool = True
+    # 课件工坊：不传 course_id 时自动建一个仅自己可见的私有课程来承载课件
+    course_id: Optional[int] = None
+    create_course: bool = True
 
 
 class AiRefreshRequest(BaseModel):

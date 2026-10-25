@@ -8,10 +8,16 @@
           老师开课 · PPT 电子化阅读 · AI 陈旧度体检与自动更新 · 流水线产出转讲义
         </p>
       </div>
-      <button v-if="canTeach" @click="openCreate"
-              class="px-4 py-2 rounded-lg bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors">
-        ＋ 新建课程
-      </button>
+      <div class="flex flex-wrap gap-2" v-if="canTeach">
+        <button @click="$router.push('/courseware-studio')"
+                class="px-4 py-2 rounded-lg bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-medium hover:opacity-90 transition-opacity">
+          📽️ 一键生成 PPT
+        </button>
+        <button @click="openCreate"
+                class="px-4 py-2 rounded-lg bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors">
+          ＋ 新建课程
+        </button>
+      </div>
     </div>
 
     <!-- 统计卡片 -->
@@ -62,6 +68,8 @@
     <div v-else-if="!items.length" class="card p-12 text-center">
       <p class="text-4xl mb-3">📭</p>
       <p class="text-surface-500 text-sm mb-4">{{ emptyHint }}</p>
+      <button v-if="canTeach" @click="$router.push('/courseware-studio')"
+              class="px-4 py-2 rounded-lg bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm mr-2">📽️ 先让 AI 做一份 PPT</button>
       <button v-if="canTeach && scope === 'mine'" @click="openCreate"
               class="px-4 py-2 rounded-lg bg-primary-600 text-white text-sm">开设第一门课程</button>
       <button v-else-if="scope !== 'all'" @click="scope = 'all'; reload()"

@@ -29,7 +29,7 @@
           </template>
         </div>
         <div class="cmd-footer">
-          <span>💡 试试: <code>项目</code> · <code>题库</code> · <code>技能</code> · <code>流水线</code></span>
+          <span>💡 试试: <code>做 PPT</code> · <code>项目</code> · <code>题库</code> · <code>技能</code> · <code>流水线</code></span>
           <span class="cmd-footer-right">共 {{ filteredList.length }} 项</span>
         </div>
       </div>
@@ -72,6 +72,7 @@ const PAGES: Array<{ icon: string; title: string; subtitle: string; path: string
   { icon: '💬', title: 'AI 对话', subtitle: '与学术助手对话', path: '/chat', keywords: 'chat ai 对话' },
   { icon: '📚', title: '科学问题题库', subtitle: 'Science 125 · 生成研究方案', path: '/questions', keywords: 'question science 题库' },
   { icon: '🎓', title: '课程中心', subtitle: '开课 / 选课 / PPT 电子化阅读 / AI 更新课件', path: '/courses', keywords: 'course teaching 课程 课件 上课' },
+  { icon: '📽️', title: 'AI 生成 PPT 课件', subtitle: '课件工坊 · 一个主题直接出整套课件并下载 .pptx', path: '/courseware-studio', keywords: 'ppt powerpoint slide 课件 生成 工坊 做ppt studio deck' },
   { icon: '🗂️', title: '资料库', subtitle: '本地文件 + 外部学术搜索', path: '/knowledge', keywords: 'knowledge 资料库 文献' },
   { icon: '🛠️', title: '技能市场', subtitle: '内置/自定义/webhook 技能', path: '/skills', keywords: 'skill market 技能' },
   { icon: '⚙️', title: '自动化流水线', subtitle: '多 Agent 编排 · 定时 · 反馈迭代', path: '/automation', keywords: 'pipeline automation 流水线' },

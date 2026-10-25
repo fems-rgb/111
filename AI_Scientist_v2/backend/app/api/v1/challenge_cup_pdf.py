@@ -14,8 +14,10 @@ import base64, glob, json, os, re, time, uuid
 logger = logging.getLogger(__name__)
 
 TPL_DIR = Path(__file__).resolve().parent / "templates"
-_CDIR = Path(__file__).resolve().parent.parent.parent.parent / "output" / "pdf_reports"
-_CDIR.mkdir(parents=True, exist_ok=True)
+# 生成文件固定落 backend/generated/pdf（与 export.py 同一目录）
+from app.utils import paths as _paths
+_CDIR = _paths.gen_dir("pdf")
+_LEGACY_EXPERIMENTS = [Path(__file__).resolve().parent.parent.parent.parent / "output" / "experiments"]
 
 _env = None  # 延迟初始化，避免导入时 WeasyPrint 报错
 
@@ -41,17 +43,21 @@ def _latex(text):
 
 
 def _charts(project_id):
-    base = Path(__file__).resolve().parent.parent.parent.parent / "output" / "experiments"
+    """优先读 generated/experiments 的新产物，兼容旧 output/experiments 历史图"""
+    bases = [_paths.gen_dir("experiments")] + _LEGACY_EXPERIMENTS
     charts = []
-    for d in [base / f"project_{project_id}", base / f"{project_id}"]:
-        if d.exists():
-            for ext in ("*.png", "*.jpg", "*.jpeg"):
-                for p in glob.glob(str(d / ext)):
-                    try:
-                        with open(p, "rb") as f:
-                            charts.append({"name": Path(p).stem, "b64": base64.b64encode(f.read()).decode()})
-                    except Exception as _chart_err:
-                        logger.debug('[charts] 读图失败 %s: %s', p, _chart_err)
+    for base in bases:
+        for d in [base / f"project_{project_id}", base / f"{project_id}"]:
+            for sub in (d, d / "charts"):
+                if not sub.exists():
+                    continue
+                for ext in ("*.png", "*.jpg", "*.jpeg"):
+                    for p in glob.glob(str(sub / ext)):
+                        try:
+                            with open(p, "rb") as f:
+                                charts.append({"name": Path(p).stem, "b64": base64.b64encode(f.read()).decode()})
+                        except Exception as _chart_err:
+                            logger.debug('[charts] 读图失败 %s: %s', p, _chart_err)
     return charts
 
 

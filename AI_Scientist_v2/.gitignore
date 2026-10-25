@@ -56,6 +56,11 @@ backend/uploads/*
 backend/output/
 output/
 
+# 生成文件（固定根 backend/generated/，只保留目录骨架）
+backend/generated/**
+!backend/generated/**/
+!backend/generated/**/.gitkeep
+
 # 备份 / 临时脚本
 *.bak
 *.bak*

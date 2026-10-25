@@ -220,6 +220,8 @@ function applyPreselect(p?: MaterialSelection | null) {
   if (p.question_ids?.length) sel.question_ids = Array.from(new Set([...sel.question_ids, ...p.question_ids]))
   if (p.task_ids?.length) sel.task_ids = Array.from(new Set([...sel.task_ids, ...p.task_ids]))
   if (p.project_id) sel.project_ids = Array.from(new Set([...sel.project_ids, p.project_id]))
+  // 外部要求携带对话（如从 AI 对话页的「📽️ 做成课件」进来）
+  if (p.chat_project_id) withChat.value = true
   if (p.pipeline_run_id) sel.pipeline_run_ids = Array.from(new Set([...sel.pipeline_run_ids, p.pipeline_run_id]))
   if (p.skill_runs?.length) {
     for (const s of p.skill_runs) {

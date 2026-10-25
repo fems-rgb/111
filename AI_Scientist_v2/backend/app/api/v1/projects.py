@@ -1,7 +1,5 @@
 """项目 API（含物理删除）"""
 import logging
-import shutil
-from pathlib import Path
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -19,15 +17,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 def delete_project_physical_files(project_id: int):
-    """删除项目关联的物理文件"""
-    base_dir = Path("output")
-    proj_dir = base_dir / str(project_id)
-    if proj_dir.exists():
-        shutil.rmtree(proj_dir, ignore_errors=True)
-    pdf_dir = base_dir / "pdf_reports"
-    if pdf_dir.exists():
-        for f in pdf_dir.glob(f"*_project_{project_id}_*.pdf"):
-            f.unlink(missing_ok=True)
+    """删除项目关联的物理文件（委托给统一清理入口，覆盖 generated/ 与旧 output/）"""
+    clean_project_files(project_id)
 
 async def _get_project(db: AsyncSession, project_id: int, user_id: int) -> Project:
     result = await db.execute(

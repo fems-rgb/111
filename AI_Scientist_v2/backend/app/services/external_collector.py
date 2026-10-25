@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database.models import User, Document
 from app.config import settings
+from app.utils import paths
 from app.services.file_parser import parse_research_file
 
 logger = logging.getLogger(__name__)
@@ -219,8 +220,7 @@ async def fetch_url_content(url: str) -> Dict[str, Any]:
             if "pdf" in content_type or url.lower().endswith(".pdf"):
                 # 保存PDF到临时目录
                 saved_name = f"{uuid.uuid4().hex[:12]}.pdf"
-                save_dir = os.path.join(settings.UPLOAD_DIR, "_temp_external")
-                os.makedirs(save_dir, exist_ok=True)
+                save_dir = str(paths.gen_dir("tmp"))
                 save_path = os.path.join(save_dir, saved_name)
                 with open(save_path, "wb") as f:
                     f.write(resp.content)
@@ -251,8 +251,7 @@ async def fetch_url_content(url: str) -> Dict[str, Any]:
                 text_content = "\n".join(extractor.texts)[:10000]
                 # 保存为txt
                 saved_name = f"{uuid.uuid4().hex[:12]}.txt"
-                save_dir = os.path.join(settings.UPLOAD_DIR, "_temp_external")
-                os.makedirs(save_dir, exist_ok=True)
+                save_dir = str(paths.gen_dir("tmp"))
                 save_path = os.path.join(save_dir, saved_name)
                 with open(save_path, "w", encoding="utf-8") as f:
                     f.write(text_content)

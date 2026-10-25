@@ -23,8 +23,9 @@ services:
       - '8000:8000'
     volumes:
       - zhixing-data:/app/data
-      - ./backend/uploads:/app/uploads
-      - ./backend/output:/app/output
+      - ./backend/uploads:/app/uploads        # 用户上传原件
+      - ./backend/generated:/app/generated    # 生成文件唯一根目录（固定）
+      - ./backend/output:/app/output          # 历史产物（只读兼容）
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8000/api/health']

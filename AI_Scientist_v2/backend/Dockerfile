@@ -43,8 +43,8 @@ COPY ./scripts ./scripts/
 # 前端预构建产物（SPA 单端口部署）
 COPY ./static ./static/
 
-# 运行时目录
-RUN mkdir -p /app/data /app/uploads /app/logs /app/output/experiments
+# 运行时目录（generated 为一切生成文件的固定根，启动时会自动建齐骨架）
+RUN mkdir -p /app/data /app/uploads /app/logs /app/generated
 
 EXPOSE 8000
 

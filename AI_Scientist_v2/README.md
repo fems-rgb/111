@@ -1,83 +1,71 @@
-# 智研星枢 · AI Scientist v3.0
+# 智研星枢 · AI Scientist v3
 
-> **基于国产开源大模型（Qwen）的多智能体科研假设自动生成平台**
+> **基于国产开源大模型（Qwen）的多智能体科研平台 + 课程课件中心**
 >
-> 挑战杯「揭榜挂帅」专项赛参赛作品 · 题目编号 **XH-202619**  
-> 发榜单位：浙江阿里巴巴云计算有限公司  
-> 基座模型：通义千问 Qwen（qwen-max / qwen-plus / qwen-vl-max，全部国产开源）  
-> 调用平台：阿里云百炼（DashScope）
+> 挑战杯「揭榜挂帅」专项赛参赛作品 · 题目编号 **XH-202619**
+> 发榜单位：浙江阿里巴巴云计算有限公司
+> 基座模型：通义千问 Qwen（qwen-max / qwen-plus / qwen-vl-max）· 调用平台：阿里云百炼（DashScope）
 
 ---
 
-## 目录
+## 0. 功能模块地图（想做什么，直接看这张表）
 
-1. [项目简介](#1-项目简介)
-2. [快速开始](#2-快速开始)
-3. [赛题要求与方案映射](#3-赛题要求与方案映射)
-4. [评分标准对照](#4-评分标准对照100-分拆解)
-5. [系统架构](#5-系统架构)
-6. [技术栈](#6-技术栈)
-7. [多智能体架构](#7-多智能体架构16-agent)
-8. [九阶段流水线](#8-九阶段流水线从问题到假设)
-9. [实验执行引擎](#9-实验执行引擎与可验证性)
-10. [标准化输出](#10-标准化输出科学假设与研究计划)
-11. [多模态能力](#11-多模态能力)
-12. [认证与通信](#12-认证与前后端通信)
-13. [配置与环境变量](#13-配置与环境变量)
-14. [目录结构](#14-目录结构)
-15. [API 参考](#15-api-参考核心端点)
-16. [数据库 Schema](#16-数据库-schema)
-17. [真实案例演示](#17-真实案例演示)
-18. [Docker 部署](#18-docker-部署)
-19. [CI/CD](#19-cicd)
-20. [测试策略](#20-测试策略)
-21. [可观测性与安全](#21-可观测性与安全)
-22. [已知问题与排坑](#22-已知问题与排坑)
-23. [提交清单](#23-提交清单)
-24. [FAQ](#24-faq)
-25. [许可证与致谢](#25-许可证与致谢)
+| 模块 | 侧边栏入口 | 路由 | 能做什么 | 主要后端 |
+| --- | --- | --- | --- | --- |
+| 工作台 | 📊 工作台 | `/` | 研究计划设计器、科研动态流、跨模块快捷入口 | `api/v1/projects.py` |
+| AI 对话 | 💬 AI对话 | `/chat` | 多轮学术对话、文件/图片上传、`/skill` 指令派发技能 | `api/v1/chat.py` `stream.py` |
+| 资料库 | 🗂️ 资料库 | `/knowledge` | 本地文档解析入库 + 外部学术检索（arXiv 等） | `knowledge.py` `knowledge_external.py` |
+| **课程中心** | 🎓 课程中心 | `/courses` | 开课 / 选课 / 课程网站 / 学员进度 / PPT 电子化 | `courses.py`（`/courses`） |
+| **课件工坊（生成 PPT）** | **📽️ AI 生成 PPT** | **`/courseware-studio`** | **给一个主题 → AI 产出整套课件 → 下载 `.pptx`** | `POST /coursewares/quick-generate` |
+| 课件阅读 | （课程内点开） | `/course/{id}/read/{cwId}` | 电子书式逐页阅读、AI 陈旧体检、AI 更新、版本链、反向导出 pptx | `courses.py`（`/coursewares`） |
+| 科学问题题库 | 🔬 科学问题题库 | `/questions` | Science 2005 125 题、研究方案生成、报告导出 | `questions.py` |
+| 实验模拟场 | 🧪 实验模拟场 | `/experiment-lab` | 沙箱执行代码、产出图表/动画、模板复用 | `experiment_lab.py` |
+| 技能市场 | 🛠️ 技能市场 | `/skills` | 内置 / 自主 prompt / git 与网络搜集的 webhook 外接技能 | `skills.py` |
+| 自动化流水线 | ⚡ 自动化流水线 | `/automation` | 多 Agent 编排、定时触发、反馈迭代、断点续跑（retry-from） | `automation.py` `agents/orchestrator.py` |
+| Agent 中心 | 🤖 Agent中心 | `/agents` | 单 Agent Playground 调试 | `agents.py` |
+| 追踪 / 成本 | 🔍 追踪回放 · 💵 成本分析 | `/traces` `/cost` | Span 链路回放与 Token 花费统计 | `observability.py` |
+| 管理后台 | 🛡️ 管理后台 | `/admin` | 用户、配额、系统开关 | `admin.py` |
+
+**找「生成 PPT」的三个入口**：① 侧边栏 `📽️ AI 生成 PPT`（教师/研究员角色可见）；② 工作台「课程中心 · 课件工坊」条上的渐变主按钮；③ `Ctrl+K` 命令面板输入 `做 PPT`。
+AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记录）作为素材直接带进工坊。
 
 ---
 
 ## 1. 项目简介
 
-**智研星枢（AI Scientist）** 面向「AI for Science」，基于 **国产开源大模型 Qwen** 构建 **多智能体系统（Multi-Agent）架构**，实现从「科学问题输入」到「可验证科学假设输出」的全链路智能闭环。
+**智研星枢（AI Scientist）** 面向「AI for Science」，基于国产开源大模型 Qwen 构建多智能体系统，实现从「科学问题输入」到「可验证科学假设输出」的全链路闭环，并向下延伸到**教学场景**：把研究产出直接变成能上课的课件。
 
 ```
-科学问题（文献 / 数据）
+文献 / 数据 / 科学问题
    │
    ▼
-┌──────────────────────────────────────────────┐
-│  知识缺口识别 → 文献挖掘 → 假设生成          │
-│  → 逻辑论证 / 多轮迭代 → 实验设计与验证     │
-└──────────────────────────────────────────────┘
-   │
-   ▼
-《科学假设与研究计划》（符合赛题规范）
+知识缺口识别 → 文献挖掘 → 假设生成 → 逻辑论证 / 多轮迭代 → 实验设计与验证
+   │                                                            │
+   ▼                                                            ▼
+《科学假设与研究计划》（符合赛题规范）  ────联动────▶  课程中心 · 课件工坊（.pptx / 电子书）
 ```
 
 ### 核心特性
 
-- **🤖 多智能体协作**：16 Agent + Orchestrator，支持反思循环（Reflection）
-- **📚 文献挖掘与事实提取**：结构化信息抽取，避免断章取义
-- **💡 逻辑驱动假设生成**：归纳 + 演绎推理，基于已知事实生成假设
-- **🔄 多轮迭代与论证**：跨学科技术迁移、可行性论证、人在回路
-- **🧪 代码级可验证**：实验模拟场沙箱执行，产出图表 / 动画验证结果
-- **📄 标准化输出**：自动生成符合赛题规范的《科学假设与研究计划》
-- **🖼️ 多模态**：Qwen-VL 处理图像 / 科学图表
+- **🤖 多智能体协作**：Orchestrator + 15 项 Agent 注册（9 阶段默认流水线），支持反思循环
+- **🧪 代码级可验证**：实验模拟场沙箱执行，产出图表 / 动画，拒绝纸上谈兵
+- **🎓 课程与课件闭环**：开课选课、PPT 电子化、AI 陈旧度体检与自动更新、一个主题秒出整套课件
+- **🧩 跨模块素材**：课件生成可引用原资料、科学问题、研究报告、项目对话、流水线产出、技能结果
+- **🖼️ 多模态**：Qwen-VL 处理图像与科学图表；文档上传支持分片与解析
+- **🔁 一键复现**：Docker / pip + npm / 免 Node（预构建 SPA）/ Alembic 迁移
 - **🔐 自主可控**：全链路 Qwen，满足赛题「国产模型」要求
-- **🔁 一键复现**：Docker / pip + npm / 预构建 SPA / Alembic 迁移
 
-### 关键指标
+### 关键指标（脚本实测，非估算）
 
 | 指标 | 数值 |
-|---|---|
-| 后端 Python 代码 | ~14,000 行（110 文件） |
-| 前端 Vue/TS 代码 | ~8,300 行（54 文件） |
-| REST API 端点 | 97 个 |
-| Agent 数量 | 16 个 |
-| 数据库表 | 20+ |
+| --- | --- |
+| 后端 Python | 115 文件 / 16,727 行 |
+| 前端 Vue + TS | 61 文件 / 11,561 行 |
+| REST API | 148 个操作 / 126 条唯一路径（课程中心 26） |
+| 数据表 | 26 张 |
+| Agent | 15 项注册 · 9 阶段默认流水线 |
 | 内置科学问题 | 125 题（Science 2005 前沿难题） |
+| 前端视图 / 组件 / API 模块 | 20 / 12 / 13 |
 | 单元测试 | 12 用例 pytest 全通过 |
 
 ---
@@ -88,16 +76,16 @@
 
 ```powershell
 # 后端
-cd AI_Scientist_v2/backend
+cd AI_Scientist_v2\backend
 python -m venv .venv && .venv\Scripts\Activate
 pip install -r requirements.txt
-copy .env.example .env        # 填入 QWEN_API_KEY
+copy .env.example .env 2>nul || type nul > .env   # 至少写入 QWEN_API_KEY=sk-xxxx
 python -m app.database.init_db
-python run.py --reload        # → http://localhost:8000
+python run.py --reload          # → http://localhost:8000
 
 # 前端（新终端）
-cd AI_Scientist_v2/frontend
-npm ci && npm run dev         # → http://localhost:5173
+cd AI_Scientist_v2\frontend
+npm ci && npm run dev           # → http://localhost:5173
 ```
 
 ### 方式 B：Docker 一键
@@ -108,565 +96,338 @@ docker compose up --build
 # → http://localhost:8000 （前端 SPA + API 同端口）
 ```
 
-### 方式 C：无需 Node（预构建 SPA）
+### 方式 C：免 Node（预构建 SPA）
 
-`backend/static/` 已包含前端构建产物，`main.py` 自动检测并 serve。  
-仅需 Python 即可完整体验所有功能：
+`backend/static/` 已随仓库提供前端构建产物，`main.py` 自动检测并 serve：
 
 ```bash
 cd AI_Scientist_v2/backend
 pip install -r requirements.txt
 python run.py
-# 访问 http://localhost:8000
+```
+
+前端改动后的构建与同步：
+
+```bash
+cd AI_Scientist_v2/frontend && npm run build          # vue-tsc && vite build
+robocopy dist ..\backend\static /MIR                  # 同步进后端
 ```
 
 ---
 
-## 3. 赛题要求与方案映射
+## 3. 生成文件都落在哪（固定目录）
 
-### 3.1 核心任务
+**所有由系统生成的文件，统一写入 `backend/generated/`，与启动时的工作目录无关。**
+路径由 `app/utils/paths.py` 单点计算（`Path(__file__).resolve()` 上溯到 backend 根），不再使用 `os.getcwd()` 或相对路径 —— 从任意目录启动都不会把文件散落到 `C:\Windows\system32` 之类的地方。
 
-| 赛题核心任务 | 本方案实现 | 对应模块 |
-|---|---|---|
-| 基于国产开源大模型（Qwen）开发 | 基座模型全部为 Qwen，通过百炼调用 | `agents/qwen_client.py` |
-| 多智能体系统（Multi-Agent）架构 | 16 Agent + Orchestrator 编排 | `agents/orchestrator.py` |
-| 问题理解 | 科学问题解析、领域识别、约束提取 | `agents/knowledge_gap.py` |
-| 知识整合 | 文献挖掘、知识库检索、事实提取 | `agents/literature.py` + `services/literature_search.py` |
-| 关联发现 | 跨学科技术迁移、规律挖掘 | `agents/hypothesis.py` + `reflection.py` |
-| 可验证假设生成 | 假设生成 + 实验设计 + 代码验证闭环 | `agents/analysis.py` + `services/experiment_engine.py` |
-| 从「数据/文献输入」到「假设输出」闭环 | 题库流水线（9 阶段）端到端实现 | `api/v1/questions.py` |
+| 子目录 | 内容 | 主要产生方 |
+| --- | --- | --- |
+| `generated/reports/` | 项目研究报告（Markdown / PDF） | `agents/orchestrator.py` `api/v1/export.py` |
+| `generated/questions/` | 科学问题任务产物（`task_{id}/report.md`） | `api/v1/questions.py` |
+| `generated/deliverables/` | 赛题交付物（`project_{id}/`） | `orchestrator.py` `export.py` |
+| `generated/pdf/` | PDF 报告（含挑战杯 125 篇汇总） | `export.py` `challenge_cup_pdf.py` |
+| `generated/experiments/` | 实验沙箱输出（图表 PNG / 动画 / 数据） | `services/experiment_engine.py` |
+| `generated/courseware/` | 课件逐页渲染图（`c{n}/cw{id}/s{idx}.jpg`） | `services/ppt_service.py` |
+| `generated/exports/` | 反向导出的原生 `.pptx` | `GET /coursewares/{id}/export/pptx` |
+| `generated/agent_output/` | Agent 文件工具产出 | `agents/tools/file_tools.py` |
+| `generated/tmp/external/` | 外部采集临时文件 | `services/external_collector.py` |
+| `generated/cache/literature/` | 文献检索缓存 | `services/literature_search.py` |
 
-### 3.2 能力项
+要点：
 
-| 赛题能力项 | 本方案实现 |
-|---|---|
-| (一) 文献挖掘与事实提取 | LiteratureAgent + DocumentPlannerAgent，结构化抽取 + 引用溯源 |
-| (二) 逻辑驱动的假设生成 | HypothesisAgent（归纳）+ DesignAgent（演绎），Pydantic 契约约束 |
-| (三) 论证可行与多轮迭代 | ReflectionAgent 反思循环 + ReviewAgent 门禁 + IterationRecord |
-| (四) 智能体思辨与人在回路 | 评审反馈接口 + 假设修订 + 前端协作 UI |
-
-### 3.3 生成结果规范
-
-赛题要求《科学假设与研究计划》包含以下字段，本平台**全部支持并自动生成**：
-
-| 规范字段 | 对应字段 | 说明 |
-|---|---|---|
-| 待研究问题 | `Hypothesis.problem_statement` | 领域局限性 |
-| 解决思路 | `Hypothesis.rationale` | 逻辑推导链 |
-| 技术手段 | `Hypothesis.technical_details` | 具体方法 |
-| 数据集 | `Hypothesis.datasets` | Source + Target |
-| 标题/摘要/方法论 | `paper_title` / `abstract` / `methods` | 学术规范 |
-| 实验设计 | `Hypothesis.experiments` | 基线 + 指标 |
-| 实验结果 | `ExperimentRun` 产物 | 代码级验证 |
-| 参考论文 | `Hypothesis.references` | **严禁虚构，真实文献** |
-
-### 3.4 技术基础
-
-| 赛题要求 | 本方案 |
-|---|---|
-| 基座必须基于 Qwen | ✅ qwen-max / qwen-vl-max |
-| 通过百炼调用 | ✅ DashScope SDK |
-| 技术方案文档 ≤ 20 页 | ✅ `docs/技术方案.pdf`（15 页） |
-| 可交互前端 | ✅ Vue 3 SPA |
-| 源代码完整可复现 | ✅ 本仓库 |
+- 启动时 `paths.ensure_tree()` 自动建好整棵骨架，日志打印 `📁 生成文件目录（固定）: <绝对路径>`
+- **历史数据不会丢**：读取统一走 `paths.resolve(stored, kind=...)`，按「绝对路径 → generated → 旧 `output/` → 旧 `uploads/`」顺序探测，老库里存的相对/绝对路径都能打开
+- 数据库里只记录**相对路径**（`paths.rel()`，posix 风格），换机器、换部署目录都不影响
+- `uploads/` 只放**用户上传的原件**（课件源 `.pptx`、文档、图片），生成物一律不进 uploads
+- `generated/` 已整体 gitignore，仅保留 `.gitkeep` 骨架；Docker 里作为独立卷 `./backend/generated:/app/generated` 持久化
+- 路径穿越已被拦截：`paths` 拒绝绝对片段与 `..`，清理脚本 `utils/cleanup.py` 只能在生成根内删除
 
 ---
 
-## 4. 评分标准对照（100 分拆解）
+## 4. 课程中心与课件工坊（PPT 全链路）
 
-| 评分项 | 分值 | 本方案得分点 |
-|---|---|---|
-| 核心假设创新性与自洽性 | 20 | 多 Agent 交叉论证 + Reflection + 真实文献 |
-| 方案可落地验证性 | 20 | 实验模拟场代码级验证 + 125 题批量生成 |
-| 多智能体协作设计 | 15 | 16 Agent + Orchestrator + 反思循环 |
-| 多模态大模型处理成效 | 15 | Qwen-VL 解析科学图像 |
-| 实际场景问题支撑 | 10 | 自然科学 + 人文社科双赛道 |
-| 论文/专利转化潜力 | 10 | 标准化输出可直接投稿 |
-| 代码与结果可复现性 | 10 | Docker + CI + Alembic + pytest 全通过 |
-| **加分** 演示视频 + 国产模型 | +5 | 可交互前端 + 全链路 Qwen |
+### 4.1 课件工坊：不用先建课程
+
+`/courseware-studio` 是独立模块，填一个主题就能拿到可下载的 PPT：
+
+```
+主题 / 章节数 / 每章页数 / 风格 / 受众
+        +（可选）勾选多源素材 → 🧩 引用资料库·题目·报告·项目对话·流水线·技能
+        ↓
+POST /api/v1/coursewares/quick-generate
+        ↓
+①  未指定 course_id → 自动创建一门【仅自己可见】的草稿课程承载（不污染公开课列表）
+②  AI 逐章生成 slides → 落库 + 逐页渲染轻量配图
+③  返回 courseware_id / slide_count / cost / pptx_url / reader_url / sources_used
+        ↓
+⬇️ 下载 .pptx（原生 PowerPoint，课堂直接投影）  ·  📖 电子书阅读  ·  ✏️ 逐页微调  ·  🎓 发布为正式课程
+```
+
+右侧「🗂️ 我生成过的课件」来自 `GET /api/v1/coursewares/ai-mine`，随时回看、再下载、按同样参数重跑。
+
+> ⚠️ 路由顺序敏感：`/coursewares/ai-mine`、`/coursewares/quick-generate` 必须声明在 `/coursewares/{cw_id}` 之前，否则会被当成 `cw_id` 参数（FastAPI 按声明顺序匹配）。
+> 下载类端点（`export/pptx`、`ebook`）走 `get_current_user_flexible`，因为 `<a href>` 不会带 `Authorization` 头，前端用 `?token=` 认证。
+
+### 4.2 课程中心： teaching 场景闭环
+
+| 能力 | 说明 | 端点 |
+| --- | --- | --- |
+| 开课 / 课程网站 | 课程元信息、大纲、章节、封面 emoji、公开/私有、发布态 | `POST/PATCH /courses` |
+| 选课与进度 | 学生自助选课、逐页阅读进度折算、断点续读 | `/courses/{id}/enroll` `POST /coursewares/{id}/progress` |
+| **PPT 电子化** | 上传 `.pptx` → 拆成文本层 + 逐页瘦身图，首屏只加载几十 KB | `POST /courses/{id}/courseware` |
+| AI 陈旧度体检 | 逐页打风险分、给出过时原因与修改建议 | `POST /coursewares/{id}/staleness-scan` |
+| **AI 自动更新** | 只重写高风险页，生成新版本并保留版本链（原稿可回溯） | `POST /coursewares/{id}/ai-refresh` |
+| 快速做课件 | 依托课程大纲 + 多源素材生成整套 deck | `POST /courses/{id}/generate-courseware` |
+| 流水线转讲义 | 把研究流水线成功运行的产出变成课件 | `POST /courses/{id}/sync-from-pipeline` |
+| AI 拟大纲 | 从长文本抽课程标题、领域与章节 | `POST /courses/ai/outline` |
+| 电子书阅读 | 连贯读物 Markdown（真正的电子书形态） | `GET /coursewares/{id}/ebook` |
+| 反向导出 | 电子化后的课件仍可导出原生 `.pptx`，不改变老师的上课习惯 | `GET /coursewares/{id}/export/pptx` |
+
+### 4.3 跨模块联动
+
+| 从哪来 | 到哪去 | 效果 |
+| --- | --- | --- |
+| 资料库文件 | 课件工坊 / AI 更新 | 作为参考素材注入 prompt，并可追溯引用来源 |
+| 科学问题 / 研究报告 | 课件工坊 | 把题目与结论直接写进课件 |
+| AI 对话项目 | 课件工坊（`📽️` 按钮） | 带上项目上下文 + 最近对话记录 |
+| 自动化流水线 run | 课程中心 | 一次成功运行 → 一份讲义课件 |
+| 技能市场（内置 / 自主 / git·webhook 外接） | 课件生成 | 技能运行结果叠加进 deck |
+| 课件电子书 | 资料库 | 电子化后自动注册为文档，可被检索与引用 |
 
 ---
 
 ## 5. 系统架构
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                  浏览器 / 评审                                         │
-└──────────────────────┬───────────────────────────────────────────────┘
-                       │  HTTP / SSE / WebSocket
-                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  FastAPI 后端 (:8000)                                                 │
-│  ┌──────────────┐  ┌──────────────────┐  ┌────────────────────┐    │
-│  │  auth (JWT)  │  │  questions.py    │  │  experiment_lab.py  │    │
-│  │  登录 / 注册 │  │  题库流水线 ★    │  │  沙箱执行 / 图表     │    │
-│  └──────┬───────┘  └────────┬─────────┘  └─────────┬──────────┘    │
-│         │                    │                       │               │
-│         │            ┌───────▼────────┐              │               │
-│         │            │  Orchestrator  │──────────────┐              │
-│         │            │  (16 Agent)    │              │              │
-│         │            └───────┬────────┘              │              │
-│         │                    │ Qwen API               │              │
-│         │            ┌───────▼────────┐              │              │
-│         │            │ DashScope 百炼 │              │              │
-│         │            │ qwen-max       │              │              │
-│         │            │ qwen-vl-max    │              │              │
-│         │            └────────────────┘              │              │
-│         │                                            │              │
-│         ▼                                            ▼              │
-│  ┌─────────────────────────────────────────────────────────┐        │
-│  │  SQLAlchemy (async) → SQLite / PostgreSQL               │        │
-│  │  Alembic Migration (0001 → 0002)                        │        │
-│  └─────────────────────────────────────────────────────────┘        │
-│                                                                      │
-│  StaticFiles ← backend/static/ (前端 SPA 预构建)                    │
-└──────────────────────────────────────────────────────────────────────┘
+┌─ 浏览器（Vue 3 SPA，vite build 产物由后端 static 直出）
+│
+├─ FastAPI · /api/v1
+│   ├─ 认证 JWT（access / refresh，支持 ?token= 的 flexible 模式）
+│   ├─ SSE 实时通道（流水线进度、Token 流、实验状态）
+│   ├─ REST：projects · questions · courses · coursewares · automation
+│   │        skills · knowledge(+external) · documents · evidence · export
+│   │        chat · stream · multimodal · experiment-lab · observability · admin · team · batch
+│   └─ Orchestrator（多 Agent 编排 + 反思循环 + retry-from 断点续跑）
+│
+├─ 服务层：qwen_client · literature_search · experiment_engine · ppt_service
+│          course_ai_service · external_collector · skill_engine · …
+├─ 数据层：SQLAlchemy 2.x async + SQLite（aiosqlite），Alembic 迁移
+└─ 文件层：uploads/（用户原件） · generated/（系统产物，固定根） · logs/（滚动日志）
 ```
-
-**关键设计**：
-- 单端口部署：`main.py` 自动检测 `frontend/dist` 或 `backend/static`，无需额外 nginx
-- progress_sync 每 5s 聚合 AgentTask 完成度 → QuestionTask.progress
-- BackgroundTasks 异步执行流水线，前端 SSE/轮询获取状态
-
----
 
 ## 6. 技术栈
 
-| 层面 | 选型 | 说明 |
-|---|---|---|
-| **基座大模型** | Qwen（qwen-max / qwen-plus / qwen-vl-max） | 国产开源，百炼调用 |
-| 后端 | Python 3.12 + FastAPI 0.115 + Uvicorn | 异步高性能 |
-| ORM | SQLAlchemy 2.0 async + Alembic | SQLite/PostgreSQL |
-| 校验 | Pydantic 2 | 数据契约 |
-| 认证 | python-jose + passlib/bcrypt | JWT HS256 |
-| 科学计算 | numpy/pandas/scipy/matplotlib/seaborn | 实验验证 |
-| PDF 导出 | WeasyPrint 69 + Jinja2 | 技术方案 / 报告生成 |
-| 前端 | Vue 3.5 + TypeScript 5.7 + Vite 6 | SPA 可交互 |
-| UI | Element Plus 2.14 + Tailwind CSS 3.4 | 组件库 + 原子样式 |
-| 实时通信 | SSE + WebSocket + 轮询 | 进度推送 |
-| 国际化 | vue-i18n 11 | 中英双语 |
-| 文档渲染 | markdown-it + KaTeX + highlight.js | 公式 / 代码高亮 |
-| 容器化 | Docker 单容器 + docker-compose | 一键部署 |
-| CI | GitHub Actions | pytest + npm build |
+| 层 | 选型 |
+| --- | --- |
+| 前端 | Vue 3 + TypeScript + Vite 6 · Pinia · vue-router · TailwindCSS · Element Plus · KaTeX |
+| 后端 | Python 3.11+ · FastAPI · SQLAlchemy 2 (async) · Pydantic v2 · Alembic |
+| 模型 | Qwen-Max / Plus（文本）· Qwen-VL-Max（多模态）· DashScope SDK |
+| 课件 | python-pptx（解析与反向导出）· Pillow（逐页渲染与压缩） |
+| 实验 | matplotlib / numpy / pandas，子进程沙箱执行 |
+| 部署 | Docker Compose · 单端口同时提供 SPA 与 API |
 
----
+## 7. 多智能体与九阶段流水线
 
-## 7. 多智能体架构（16 Agent）
-
-### 7.1 Agent 总览
-
-| Agent | 文件 | 职责 |
-|---|---|---|
-| **Orchestrator** | `agents/orchestrator.py` | 中央编排器：状态机、调度、反思循环 |
-| KnowledgeGapAgent | `agents/knowledge_gap.py` | 识别知识缺口、问题结构化 |
-| LiteratureAgent | `agents/literature.py` | 文献检索、事实提取 |
-| HypothesisAgent | `agents/hypothesis.py` | 归纳/演绎生成假设 |
-| HypothesisValidator | `agents/hypothesis_validator.py` | 假设可证伪性校验 |
-| DesignAgent | `agents/design.py` | 实验方案设计 |
-| ExperimentPlanAgent | `agents/experiment_plan.py` | 实验步骤编排 |
-| AnalysisAgent | `agents/analysis.py` | 数据分析与统计 |
-| WritingAgent | `agents/writing.py` | 研究报告撰写 |
-| ReviewAgent | `agents/review.py` | 结果评审门禁 |
-| ReflectionAgent | `agents/reflection.py` | 反思迭代（人在回路核心） |
-| DocumentPlannerAgent | `agents/doc_planner.py` | 文档结构规划 |
-| QualityGateAgent | `agents/doc_quality.py` | 质量门禁 |
-| SectionReviewerAgent | `agents/doc_reviewer.py` | 章节级审阅 |
-| MultimodalEnricherAgent | `agents/doc_multimodal.py` | Qwen-VL 多模态增强 |
-| BaseAgent | `agents/base.py` | 抽象基类（共享 Qwen 调用） |
-
-### 7.2 协作模式
+默认工作流（可在自动化模块自定义顺序、增删步骤，支持从任意阶段续跑）：
 
 ```
-Orchestrator (中央状态机)
-    ├── knowledge_gap → literature → hypothesis → design → ...
-    │                                         ▲
-    │                    ┌────────────────────┘
-    │                    │
-    │              [QualityGate] ──fail──▶ [ReflectionAgent]
-    │                                          │
-    └──── pass ◀── 修订后重新假设生成 ◀────────┘
+knowledge_gap → literature → hypothesis → design → experiment_plan
+              → analysis → writing → review → reflection
 ```
 
-### 7.3 人在回路
+另有文档生成工作流（`document_planner → section_writer → quality_gate → revision → multimodal_enricher`）与
+`AGENT_REGISTRY` 中的 15 项注册（含 `experiment` 别名）。任一 Agent 都可在 Agent 中心单独调试并观察其 Trace。
 
-- `POST /api/v1/questions/feedback` — 评审反馈
-- `POST /api/v1/projects/{id}/review` — 项目评审
-- 前端协作 UI（评审 / 修订 / 采纳）
+## 8. 实验执行引擎
 
----
+`services/experiment_engine.py` 在 backend 生成的隔离目录中执行代码，产出图表、动画与指标，全部写入
+`generated/experiments/`；前端「实验模拟场」通过 `/experiment-lab/chart/{run}/{file}` 与 `/video/{run}` 懒加载。
+沙箱限制执行时长、内存与网络，失败信息回灌反思循环。
 
-## 8. 九阶段流水线（从问题到假设）
-
-| # | 阶段 | 对应赛题能力 |
-|---|---|---|
-| 1 | knowledge_gap | (一) 文献挖掘 |
-| 2 | literature | (一) 避免断章取义 |
-| 3 | hypothesis | (二) 逻辑驱动 |
-| 4 | design | (三) 论证可行 |
-| 5 | experiment_plan | (三) 多轮迭代 |
-| 6 | analysis | 可验证性 |
-| 7 | writing | 标准化输出 |
-| 8 | review | 自洽性 |
-| 9 | reflection | (四) 人在回路 |
-
-**内置模式**：
-
-| 模式 | 阶段范围 | 用途 |
-|---|---|---|
-| `builtin_default_mode` | 全部 9 阶段 | 完整科研闭环 |
-| `builtin_quick_analysis` | 1-3 | 快速分析 |
-| `builtin_literature_hypothesis` | 1-4 | 文献+假设 |
-
-内置 **125 题 Science 前沿科学问题**，覆盖自然科学 + 人文社科（赛题双赛道）。
-
----
-
-## 9. 实验执行引擎与可验证性
-
-```
-POST /api/v1/experiment-lab/run
-   │  { code, data_table, timeout, generate_video }
-   ▼
-_build_wrapper(): 动态生成 _run.py
-   • import numpy/pandas/matplotlib/seaborn
-   • df = pd.DataFrame(data_table)
-   • patch plt.savefig → 自动收集图表
-   • animation.FuncAnimation → 捕获视频
-   ▼
-subprocess 隔离运行（超时控制）
-   ▼
-ExperimentRun { status, output_text, charts, video_path }
-```
-
-**可验证性闭环**：假设 → 实验设计 → 代码执行 → 图表/视频产物 → 验证结论
-
----
-
-## 10. 标准化输出：《科学假设与研究计划》
-
-自动生成符合赛题规范，对应数据库 `Hypothesis` 模型：
-
-```json
-{
-  "problem_statement": "在[领域]中，现有方法存在[具体局限性]...",
-  "rationale": "基于[已知事实A、B]，通过[归纳/演绎]推导出...",
-  "technical_details": ["统计方法: ...", "ML: GNN/Transformer", ...],
-  "datasets": { "source": "...", "target": "..." },
-  "paper_title": "基于[方法]的[领域][现象]研究",
-  "abstract": "背景... 方法... 预期结果...",
-  "methods": "1. 数据清洗 2. 特征工程 3. 模型构建...",
-  "experiments": { "baselines": [...], "metrics": [...] },
-  "results": "通过[代码执行]验证...",
-  "references": [{"title": "真实文献", "doi": "...", "year": 2023}]
-}
-```
-
----
-
-## 11. 多模态能力
-
-- **模型**：qwen-vl-max（Qwen-VL）
-- **模块**：`agents/doc_multimodal.py`（MultimodalEnricherAgent, 134 行）
-- **能力**：解析实验图像/图表、提取定量信息、注入研究报告
-- **接口**：`POST /api/v1/multimodal/analyze-image`
-
----
-
-## 12. 认证与前后端通信
-
-**JWT 流程**：
-
-```
-POST /api/v1/auth/login { username, password }
-  → { access_token (24h), refresh_token (30d) }
-  → Authorization: Bearer <token>
-```
-
-**进度更新**：
-
-| 方式 | 场景 |
-|---|---|
-| 轮询 Polling | 题库/项目状态（`usePolling`） |
-| SSE | 实时事件流（`/api/v1/stream/events`） |
-| WebSocket | 实验运行 |
-
-**开发代理**：Vite `server.proxy['/api']` → `http://localhost:8000`
-
----
-
-## 13. 配置与环境变量
-
-所有变量在 `backend/.env`（样板 `backend/.env.example`），由 `app/config.py` 加载。
-
-| 变量 | 说明 |
-|---|---|
-| `QWEN_API_KEY` | **百炼 API Key（必填）** |
-| `QWEN_MODEL_NAME` | qwen-max |
-| `QWEN_VISION_MODEL` | qwen-vl-max |
-| `DATABASE_URL` | sqlite+aiosqlite:///./zhixing.db |
-| `SECRET_KEY` | JWT 密钥（⚠️ 生产必换随机字符串） |
-| `ADMIN_PASSWORD` | 初始管理员密码（⚠️ 部署前必换） |
-| `ALLOWED_ORIGINS` | CORS 白名单 |
-| `RATE_LIMIT_PER_MINUTE` | API 限流 60/min |
-
----
-
-## 14. 目录结构
+## 9. 目录结构
 
 ```
 AI_Scientist_v2/
 ├── backend/
-│   ├── run.py                  # 启动入口
-│   ├── requirements.txt        # 生产依赖
-│   ├── requirements-dev.txt    # 开发/测试依赖
-│   ├── .env.example            # 环境变量样板
-│   ├── Dockerfile              # 单容器镜像（含 SPA）
-│   ├── .dockerignore           # 构建忽略
-│   ├── alembic.ini             # 数据库迁移配置
-│   ├── migrations/             # Alembic 迁移版本 (0001→0002)
 │   ├── app/
-│   │   ├── main.py             # FastAPI 装配 + SPA 挂载
-│   │   ├── config.py           # pydantic-settings
-│   │   ├── api/v1/             # 97 个端点（auth/questions/projects/...）
-│   │   ├── agents/             # 16 Agent + Orchestrator
-│   │   ├── services/           # 业务逻辑（沙箱/文献/知识库/...）
-│   │   ├── database/           # SQLAlchemy 模型 + 初始化
-│   │   ├── schemas/            # Pydantic 数据契约
-│   │   ├── security/           # JWT / PromptGuard / 限流
-│   │   ├── core/              # progress_sync / exceptions
-│   │   └── observability/      # 链路追踪 + 成本统计
-│   ├── static/                 # 前端 SPA 预构建产物
-│   ├── scripts/                # 工具脚本（PDF 生成等）
-│   └── tests/                  # pytest 测试
+│   │   ├── agents/            # 23 个 Agent 文件 + orchestrator + tools
+│   │   ├── api/v1/            # 22 个端点模块（courses.py 含课程 + 课件双 router）
+│   │   ├── services/          # 14 个服务：qwen_client / ppt_service / course_ai_service / …
+│   │   ├── schemas/           # Pydantic 契约
+│   │   ├── database/          # models（26 表）· session · init_db · Alembic
+│   │   ├── core/ · security/  # 事件总线 · 加密 · JWT · 速率限制
+│   │   ├── utils/paths.py     # ★ 生成文件唯一路径入口
+│   │   ├── observability/     # tracer · 成本统计
+│   │   └── main.py            # 路由注册 · SPA 托管 · 启动建树
+│   ├── generated/             # ★ 所有系统生成文件（gitignore，保留骨架）
+│   ├── uploads/               # 用户上传原件
+│   ├── static/                # 前端构建产物（免 Node 运行）
+│   ├── logs/ · tests/ · migrations/
+│   └── run.py · requirements.txt · .env
 ├── frontend/
-│   ├── package.json / vite.config.ts
-│   └── src/
-│       ├── views/              # 页面组件
-│       ├── stores/             # Pinia 状态管理
-│       ├── api/modules/        # Axios 接口封装
-│       ├── components/         # 通用组件
-│       ├── composables/        # useSSE / usePolling
-│       ├── i18n/               # 中英双语
-│       └── data/               # 125 科学问题集
-├── docs/                       # 交付文档
-│   ├── 技术方案.md             # 评审核心（462 行）
-│   ├── 技术方案.pdf            # 15 页 PDF（≤20 页要求）
-│   ├── 快速开始.md             # 部署指南
-│   └── 提交清单.md             # 赛题材料对照
-├── .github/workflows/ci.yml    # GitHub Actions CI
-├── docker-compose.yml          # 单容器一键部署
-├── .gitignore
-└── README.md                   ← 你在这里
+│   └── src/{api,components,composables,router,stores,types,views,i18n,…}
+├── docker-compose.yml · Dockerfile
+└── README.md
 ```
 
----
+## 10. 配置与环境变量
 
-## 15. API 参考（核心端点）
+`backend/.env`（片段）：
 
-Base URL：`http://localhost:8000`，前缀 `/api/v1`。
-
-| 分组 | 方法 | 路径 | 说明 |
-|---|---|---|---|
-| 认证 | POST | `/auth/login` | 登录 |
-| 题库 | POST | `/questions/batch-generate` | **批量生成（流水线入口）** |
-| 题库 | GET | `/questions/tasks/{id}` | 任务状态/进度 |
-| 题库 | GET | `/questions/tasks/{id}/document` | 下载《科学假设与研究计划》 |
-| 题库 | POST | `/questions/feedback` | **人在回路反馈** |
-| 项目 | POST | `/projects/{id}/start` | 启动流水线 |
-| 项目 | POST | `/projects/{id}/review` | **人在回路评审** |
-| 实验场 | POST | `/experiment-lab/run` | 运行验证代码 |
-| 实验场 | GET | `/experiment-lab/status/{run_id}` | 结果/图表/视频 |
-| 多模态 | POST | `/multimodal/analyze-image` | **Qwen-VL 图像分析** |
-| 知识库 | POST | `/knowledge/upload` | 上传文档 |
-| 可观测 | GET | `/observability/cost` | 成本统计 |
-| 健康 | GET | `/api/health` | 健康检查 |
-
----
-
-## 16. 数据库 Schema
-
-核心定义在 `backend/app/database/models.py`（524 行，27 表）。
-
-| 模型 | 说明 |
-|---|---|
-| `User` | 用户/管理员 |
-| `Project` | 研究项目 |
-| `QuestionTask` | 题库任务（status/progress/document_path） |
-| `ScienceQuestion` | 科学问题库（125 题） |
-| `Hypothesis` | 生成假设（标准化 13 字段） |
-| `AgentTask` | 单步 Agent 任务 |
-| `ExperimentRun` | 实验运行（图表/视频） |
-| `TraceRecord` / `CostRecord` | 链路追踪/成本 |
-
-**迁移**：
-```bash
-cd backend
-python -m alembic upgrade head   # 0001→0002
-python -m alembic check          # 验证无 drift
+```ini
+APP_NAME=智研星枢
+APP_VERSION=3.0.0
+SECRET_KEY=change-me-in-prod
+DATABASE_URL=sqlite+aiosqlite:///./zhixing.db
+QWEN_API_KEY=sk-xxxx
+QWEN_MODEL=qwen-max
+QWEN_VL_MODEL=qwen-vl-max
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 ```
 
----
+路径类配置在 `app/config.py` 里已改为**绝对默认值**，通常无需覆盖：
 
-## 17. 真实案例演示
+| 配置 | 默认值 | 含义 |
+| --- | --- | --- |
+| `UPLOAD_DIR` | `<backend>/uploads` | 用户上传原件 |
+| `GENERATED_DIR` | `<backend>/generated` | 系统生成文件唯一根 |
+| `LOG_DIR` | `<backend>/logs` | 滚动日志 |
 
-### 案例 1：数学物理（Yang-Mills）
+## 11. API 参考
 
-- **Problem**：标准模型在 Yang-Mills 质量间隙问题上存在理论缺口
-- **Rationale**：基于规范场论 + Millennium 约束推导
-- **Technical Details**：代数几何 + 数值格点 QCD
-- **Experiments**：传统微扰论基线 + 质量间隙精度指标
-- **References**：Clay Institute 官方说明、Atiyah 相关论文
+统一前缀 `/api/v1`，除 `/api/health` 外均需 `Authorization: Bearer <token>`（下载/图片类端点可用 `?token=`）。
 
-### 案例 2：发展经济学（撒哈拉贫困）
+| 模块 | 前缀 | 端点数 | 代表端点 |
+| --- | --- | --- | --- |
+| 认证 | `/auth` | 5 | `POST /auth/login` · `/auth/refresh` |
+| 项目 | `/projects` | 13 | `POST /projects` · `/projects/{id}/pipeline` |
+| 科学问题 | `/questions` | 19 | `POST /questions/{qid}/research` · `GET /questions/{qid}/report` |
+| 课程中心 | `/courses` | 14 | `POST /courses` · `/{id}/courseware` · `/{id}/generate-courseware` · `/{id}/sync-from-pipeline` |
+| 课件 | `/coursewares` | 12 | `POST /quick-generate` · `GET /ai-mine` · `/{id}/staleness-scan` · `/{id}/ai-refresh` · `/{id}/export/pptx` · `/{id}/versions` |
+| 自动化 | `/automation` | 12 | `POST /{pid}/run` · `/{pid}/run-from` · 定时与反馈迭代 |
+| 实验模拟场 | `/experiment-lab` | 12 | `POST /run` · `GET /status/{run}` · `/chart/…` · `/video/{run}` |
+| 资料库 | `/knowledge` · `/knowledge/external` | 9 · 5 | 上传解析 · 检索 · 外部学术源 |
+| 技能市场 | `/skills` | 4 | 内置 / prompt 自主 / git·webhook 外接 |
+| 对话 · 推送 | `/chat` · `/stream` | 5 · 1 | 多轮对话 · SSE |
+| 多模态 · 文档 · 证据 | `/multimodal` · `/documents` · `/evidence` | 7 · 5 · 5 | 图文理解 · 分片上传 · 证据链 |
+| 观测 · 管理 | `/observability` · `/admin` | 3 · 3 | Trace 回放 · 成本 · 用户管理 |
+| 导出 · 批量 · 团队 | `/export` · `/batch` · `/projects(team)` | 1 · 2 · 2 | 赛题文档一键导出 |
 
-- 违规行为识别 + 风险预警假设
-- 行为数据/交易数据分析策略
-- 面板数据固定效应 + 工具变量法
+完整交互文档：启动后访问 `/docs`（Swagger）或 `/redoc`。
 
-> 全部 125 题均可一键批量生成：`POST /api/v1/batch_run/run-125`
+## 12. 数据库 Schema（26 表）
 
----
+| 分组 | 表（`__tablename__`） |
+| --- | --- |
+| 用户与协作 | `users` · `project_shares` · `notifications` · `audit_logs` |
+| 科研项目与执行 | `projects` · `agent_tasks` · `tool_calls` · `chat_messages` · `documents` · `upload_chunks` |
+| 观测与成本 | `trace_records` · `cost_records` |
+| 假设与迭代 | `hypotheses` · `iteration_records` |
+| 流水线 | `pipelines` · `pipeline_runs` · `pipeline_run_logs` |
+| 科学问题 | `science_questions` · `question_tasks` |
+| 实验 | `experiment_runs` · `experiment_templates` |
+| 技能 | `custom_skills` |
+| 课程与课件 | `courses` · `coursewares` · `slides` · `enrollments` |
 
-## 18. Docker 部署
+> 课件相关四表是课程中心的地基：`Courseware` 只存元数据与体积统计，页面正文存在 `Slide`（文本层 + 逐页图路径），
+> AI 更新不覆盖原稿而是新开一条 `Courseware` 并用 `parent_id` 串成版本链；`Enrollment` 记录选课、进度与断点。
 
-### 单容器模式（推荐）
+迁移：`alembic revision --autogenerate -m "..."` + `alembic upgrade head`；全新环境可直接 `python -m app.database.init_db`。
 
-```bash
-cd AI_Scientist_v2
-docker compose up --build
-```
+## 13. Docker 部署
 
-**docker-compose.yml**：
+`docker-compose.yml`（实际配置，单容器同时提供 SPA 与 API）：
 
 ```yaml
 services:
   app:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    env_file: ./backend/.env
-    ports: ['8000:8000']
+    build: { context: ./backend, dockerfile: Dockerfile }
+    env_file: ["./backend/.env"]
+    ports: ["8000:8000"]
     volumes:
-      - zhixing-data:/app/data
-      - ./backend/uploads:/app/uploads
-      - ./backend/output:/app/output
-    healthcheck:
-      test: ['CMD', 'curl', '-fsS', 'http://127.0.0.1:8000/api/health']
+      - zhixing-data:/app/data                    # SQLite（命名卷）
+      - ./backend/uploads:/app/uploads            # 用户上传原件
+      - ./backend/generated:/app/generated        # ★ 系统生成文件唯一根
+      - ./backend/output:/app/output             # 历史产物（只读兼容）
+    healthcheck: ["...", "http://127.0.0.1:8000/api/health"]
 ```
-
-### Dockerfile 特性
-
-- `python:3.12-slim` 基底
-- WeasyPrint 系统依赖（libpango/libcairo/libgdk-pixbuf）
-- 中文字体 `fonts-noto-cjk`
-- 前端 SPA 预构建产物 COPY 进镜像
-- Alembic 迁移目录包含
-- HealthCheck + 多 worker CMD
-
-**手动构建**：
 
 ```bash
-docker build -f backend/Dockerfile -t zhixing:3.0 backend/
-docker run --rm -p 8000:8000 --env-file backend/.env zhixing:3.0
+cd AI_Scientist_v2
+docker compose up --build     # → http://localhost:8000 ｜ /docs
 ```
 
----
+Dockerfile 已 `mkdir -p /app/generated`，容器内路径与本地完全一致；环境变量 `DATABASE_URL` 在容器内指向 `./data/zhixing.db`。
 
-## 19. CI/CD
+## 14. 质量闸门（本地执行）
 
-**`.github/workflows/ci.yml`**：
-
-| Job | 内容 |
-|---|---|
-| backend | Python 3.12 → apt 安装 WeasyPrint 系统依赖 → pip → pytest (SQLite) |
-| frontend | Node 20 → npm ci → npm run build → upload dist artifact |
-
-触发条件：push/PR to main/develop + workflow_dispatch。
-
----
-
-## 20. 测试策略
+项目未随仓提供 CI 配置文件；推荐在提交前执行下面三步（已验证均绿）：
 
 ```bash
-cd backend
-pip install -r requirements-dev.txt
-pytest -q           # 预期：12 passed
+cd AI_Scientist_v2/frontend && npm run build        # vue-tsc 类型检查 + vite build
+cd ../backend  && python -m pytest tests -q         # 12 用例
+robocopy ../frontend/dist ./static /MIR         # 同步免 Node 产物
 ```
 
-| 层级 | 工具 | 范围 |
-|---|---|---|
-| 冒烟 | pytest + httpx | config 加载、models import、async engine |
-| API | httpx.AsyncClient | 端点契约、认证、限流 |
-| E2E（建议） | Playwright | 登录→创建→运行→验证 |
+若需接入 CI，直接把上面三段写进 `.github/workflows/ci.yml` 即可。
 
----
+## 15. 测试
 
-## 21. 可观测性与安全
+```bash
+cd AI_Scientist_v2/backend
+pytest tests -q          # 12 用例，约 1s 跑完（不依赖外部 API Key）
+```
 
-**可观测**：
-- 链路追踪：每次 Qwen/工具调用 → `TraceRecord`
-- 成本统计：Token/金额实时追踪，超阈值自动告警
-- 端点：`GET /api/v1/observability/traces`、`/cost`
+| 文件 | 覆盖 |
+| --- | --- |
+| `tests/test_smoke.py` | `app.main` 可导入（无循环依赖/语法错误）· `AGENT_REGISTRY` 含 9 阶段全部 Agent · 每个 Agent 具备 `name/display_name/build_prompt/system_prompt` · `/api` 路由数量下限 · `/api/health` 返 ok+版本 |
+| `tests/test_experiment_engine.py` | 实验引擎：沙箱执行、图表产出、超时与失败回灌 |
 
-**安全**：
-- 全链路国产 Qwen（自主可控）
-- `.env` 不入仓，SECRET_KEY / ADMIN_PASSWORD 须更换
-- 实验代码沙箱隔离 + 超时
-- JWT + CORS + 限流（60 req/min）
-- Pydantic 严格输入校验
-- AuditLog 审计关键操作
+未覆盖部分（课程/课件、路径解析）目前以端到端冒烟脚本 + 人工验证为主；后续可为 `courses.py` 与
+`utils/paths.py` 补上 pytest（重点：跨角色权限、版本链不覆盖原稿、旧路径回退、`..` 穿越拒绝）。
 
----
+## 16. 可观测性与安全
 
-## 22. 已知问题与排坑
+- **Trace**：每个 Agent 步骤生成 span，落库后可在 `/traces` 逐层回放，含输入输出与耗时
+- **成本**：按模型统计 prompt/completion token 与金额，`/cost` 汇总，流水线级别可归因到项目
+- **认证**：JWT access + refresh（`python-jose`），密码 passlib/bcrypt 散列；student / teacher / researcher / admin 角色分级，课程与课件按 owner 校验
+- **文件安全**：文件名 sanitize + 扩展名白名单 + 大小上限；生成文件路径统一经 `paths` 校验，拒绝 `..` 与绝对路径注入
+- **执行安全**：实验代码在受限子进程运行，超时/超限即终止；外部 webhook 技能带签名与超时
+- **速率限制**：登录与生成类接口按 IP 限流
 
-| 问题 | 根因 | 修复 |
-|---|---|---|
-| 进度 100% 但未完成 | progress_sync 只写 progress 不写 status | 原子绑定 + 运行中上限 95% |
-| 阿里云欠费 Arrearage | DashScope 余额不足 | 充值 → 等待同步 → 重跑 |
-| seaborn 简洁写法报错 | `sns.scatterplot(x='col')` 未传 data | wrapper 自动注入 |
-| `_exec` 异常被吞 | BackgroundTask 未捕获 | try/except → status='failed' |
-| Windows GBK 编码 | 控制台默认 GBK | `sys.stdout.reconfigure(encoding="utf-8")` |
+## 17. 已知问题与排坑
 
----
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| Windows 下 `python -c "..."` 报 `unterminated string literal` | cmd 撕裂引号 | 写成临时脚本执行 |
+| 静态路由 404 / 422 | FastAPI 按声明顺序匹配，`/{id}` 在前会吞掉静态段 | 静态路径（`ai-mine`、`quick-generate`）先声明 |
+| `MissingGreenlet` | SQLAlchemy async 下懒加载关系 | 显式 `selectinload` 或 `.unique().all()` |
+| 生成的文件到处乱跑 | 曾使用 `os.getcwd()` / 相对路径 | 已全部改为 `app/utils/paths.py` 绝对根 |
+| 老课件图片打不开 | 历史数据存的是 `uploads/courses/…` 或绝对路径 | `paths.resolve()` 自动回退旧根，无需迁移 |
+| PPT 解析失败 | `.ppt` 旧二进制格式 | 先在 Office 里另存为 `.pptx` |
 
-## 23. 提交清单
+## 18. FAQ
 
-| 赛题提交项 | 本仓库对应 |
-|---|---|
-| 技术方案文档（PDF ≤ 20 页） | `docs/技术方案.pdf`（15 页） |
-| 源代码 | 本仓库 |
-| 可交互前端 | `frontend/` Vue 3 SPA |
-| 演示视频（≤10 分钟） | 录制后附入 |
-| 百炼调用凭证/截图 | `docs/` |
-| 报名表（盖章） | `docs/` |
+**Q：生成 PPT 的入口在哪？**
+A：侧边栏 `📽️ AI 生成 PPT`（`/courseware-studio`）。若看不到，说明当前账号不是 teacher/researcher/admin 角色 —— 学生账号只做阅读与选课。
 
-**截止**：2026 年 9 月 5 日  
-**提交地址**：https://survey.aliyun.com/apps/zhiliao/A4e_qqNGu
+**Q：工坊生成的课件会出现在公开课列表里吗？**
+A：不会。未指定课程时自动建一门 `visibility=private` 的草稿课程承载，你确认内容后再手动发布。
 
----
+**Q：AI 生成的课件能改吗？**
+A：能。逐页可编辑标题/要点/讲者备注（`PATCH /coursewares/{id}/slides`），改完仍导出为 `.pptx`。
 
-## 24. FAQ
+**Q：AI 会不会把原来的课件覆盖掉？**
+A：不会。AI 更新走「新版本 + 版本链」，`GET /coursewares/{id}/versions` 可看每一版并回溯原稿。
 
-**Q: 如何验证 Qwen 连通性？**  
-A: `python -c "import dashscope; ..."` 返回 Pong 即正常。
+**Q：能引用我自己的资料吗？**
+A：能，且不限于资料库 —— 原文件、科学问题、研究报告、项目对话、流水线成功运行、技能（含 git/网络搜集的外接 skill）都可勾选，结果里会列出实际注入的素材源。
 
-**Q: 不用 Node 能跑吗？**  
-A: 能。`backend/static/` 已包含预构建 SPA，直接 `python run.py` 即可访问完整前端。
+**Q：换台机器跑，历史文件还在吗？**
+A：只要 `backend/generated/`（产物）与 `backend/uploads/`（原件）以及 `zhixing.db` 一起搬走就都在；数据库中存的是相对路径。
 
-**Q: 如何切换 PostgreSQL？**  
-A: 改 `DATABASE_URL` + 装 asyncpg + `alembic upgrade head`。
+## 19. 许可证与致谢
 
-**Q: 假设的参考文献会虚构吗？**  
-A: 不会。全部来自 LiteratureAgent 真实检索。
-
-**Q: 算力成本如何控制？**  
-A: 阿里云 300 元/人补贴 + CostRecord 实时监控。
-
----
-
-## 25. 许可证与致谢
-
-- **竞赛专用**：挑战杯「揭榜挂帅」XH-202619 参赛作品
-- **基座模型**：通义千问 Qwen（Apache 2.0 / 通义千问开源协议）
-- **致谢**：阿里云算力补贴 + 百炼平台 + 中国科学院国家天文台 AI 推进委员会 + 他山学科交叉创新协会
+本项目为挑战杯「揭榜挂帅」专项赛参赛作品，基座模型为阿里巴巴通义千问 Qwen，通过阿里云百炼（DashScope）调用。
+感谢发榜单位浙江阿里巴巴云计算有限公司提供赛题与算力支持。

@@ -3,9 +3,9 @@ import os, sys, time, json, asyncio, logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-# [fix] 基于本文件位置计算 backend 根目录，避免依赖启动 cwd
-_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-OUTPUT_ROOT = os.path.join(_BACKEND_ROOT, 'output', 'experiments')
+# [fix] 沙箱输出统一落固定根 backend/generated/experiments（不依赖启动 cwd）
+from app.utils import paths as _paths
+OUTPUT_ROOT = str(_paths.gen_dir("experiments"))
 
 
 # ============================================================================

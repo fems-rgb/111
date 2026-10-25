@@ -368,12 +368,11 @@ class Orchestrator:
                                         try:
 
                                             import os as _os, shutil as _sh, glob as _glb
+                                            from app.utils import paths as _paths
 
                                             _exp_charts = _os.path.join(OUTPUT_ROOT, str(_run.id), 'charts')
 
-                                            _backend = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
-
-                                            _deli_charts = _os.path.join(_backend, 'output', 'deliverables', f'project_{project_id}', 'charts')
+                                            _deli_charts = str(_paths.gen_dir("deliverables", f"project_{project_id}", "charts"))
 
                                             if _os.path.isdir(_exp_charts):
 
@@ -548,12 +547,11 @@ class Orchestrator:
                         import traceback as _ae_tb
                         logger.error("[auto-export] 精美版生成失败(不再降级xhtml2pdf): %s\n%s", _ae_e, _ae_tb.format_exc())
                     
-                    # [fix] 落地到 deliverables/project_{id}/report.pdf（固定位置，前端/下载可预测）
+                    # 产出统一落固定根 backend/generated/deliverables/project_{id}/report.pdf
                     try:
                         import os as _ae_os_l, shutil as _ae_sh_l
-                        _ae_root_l = _ae_os_l.path.dirname(_ae_os_l.path.dirname(_ae_os_l.path.dirname(_ae_os_l.path.abspath(__file__))))
-                        _ae_dst_l = _ae_os_l.path.join(_ae_root_l, "output", "deliverables", f"project_{project_id}")
-                        _ae_os_l.makedirs(_ae_dst_l, exist_ok=True)
+                        from app.utils import paths as _paths
+                        _ae_dst_l = str(_paths.gen_dir("deliverables", f"project_{project_id}"))
                         _ae_report = _ae_os_l.path.join(_ae_dst_l, "report.pdf")
                         if _pdf_final and _ae_os_l.path.isfile(_pdf_final):
                             _ae_sh_l.copy(_pdf_final, _ae_report)
@@ -567,12 +565,11 @@ class Orchestrator:
                         import os as _ae_os2
                         import shutil as _ae_sh2
                         import glob as _ae_gl2
-                        _ae_root = _ae_os2.path.dirname(_ae_os2.path.dirname(_ae_os2.path.dirname(_ae_os2.path.abspath(__file__))))
-                        _ae_dst = _ae_os2.path.join(_ae_root, "output", "deliverables", "project_" + str(project_id))
-                        _ae_os2.makedirs(_ae_os2.path.join(_ae_dst, "charts"), exist_ok=True)
-                        _ae_pat = _ae_os2.path.join(_ae_root, "output", "experiments", "**", "charts", "*.png")
+                        from app.utils import paths as _paths2
+                        _ae_dst = str(_paths2.gen_dir("deliverables", "project_" + str(project_id), "charts"))
+                        _ae_pat = str(_paths2.GENERATED_ROOT / "experiments" / "**" / "charts" / "*.png")
                         for _ae_f in _ae_gl2.glob(_ae_pat, recursive=True):
-                            _ae_sh2.copy2(_ae_f, _ae_os2.path.join(_ae_dst, "charts", _ae_os2.path.basename(_ae_f)))
+                            _ae_sh2.copy2(_ae_f, _ae_os2.path.join(_ae_dst, _ae_os2.path.basename(_ae_f)))
                         logger.info("[auto-export] 图表已归集到 %s", _ae_dst)
                     except Exception as _ae_e2:
                         logger.warning("[auto-export] 图表归集失败: %s", _ae_e2)
