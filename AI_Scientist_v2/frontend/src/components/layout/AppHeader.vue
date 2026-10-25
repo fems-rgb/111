@@ -11,6 +11,14 @@
     </div>
 
     <div class="flex items-center gap-3">
+      <!-- 全局命令面板入口 -->
+      <button @click="openCmdPalette" title="搜索全局内容 (Ctrl+K)"
+              class="hidden md:flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg border border-surface-200 dark:border-surface-600 bg-surface-50 dark:bg-surface-800 hover:bg-surface-100 transition-colors">
+        <span>🔍</span>
+        <span class="text-surface-500">搜索…</span>
+        <kbd class="px-1.5 py-0.5 rounded bg-white dark:bg-surface-700 border border-surface-200 dark:border-surface-600 text-[10px] font-mono">Ctrl K</kbd>
+      </button>
+
       <!-- ✅ 工作空间选择器（联动 store） -->
       <select v-model="appStore.currentWorkspace"
               @change="onWorkspaceChange"
@@ -66,6 +74,10 @@ import { useAuthStore } from '@/stores/auth'
 const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
+
+function openCmdPalette() {
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+}
 
 const permissionLevel = computed(() => authStore.user?.role || 'student')
 const permissionLabel = computed(() => {

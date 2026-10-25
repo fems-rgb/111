@@ -7,6 +7,7 @@
         <router-view :key="$route.fullPath" />
       </main>
     </div>
+    <CommandPalette ref="cmdPaletteRef" />
     <!-- SSE状态 -->
     <div class="fixed bottom-4 right-4 z-40">
       <div :class="['flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium shadow-lg', connected ? 'bg-green-600 text-white' : 'bg-red-600 text-white']">
@@ -112,10 +113,13 @@
 <script setup lang="ts">
 import AppSidebar from './AppSidebar.vue'
 import AppHeader from './AppHeader.vue'
+import CommandPalette from '@/components/common/CommandPalette.vue'
 import { useAppStore } from '@/stores/app'
 import { useSSE } from '@/composables/useSSE'
+import { ref } from 'vue'
 const appStore = useAppStore()
 const { connected, connect } = useSSE()
+const cmdPaletteRef = ref<InstanceType<typeof CommandPalette>>()
 
 import { onMounted } from 'vue'
 onMounted(() => { connect() })

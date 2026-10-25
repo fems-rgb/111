@@ -39,6 +39,12 @@
           </span>
           <span class="text-[10px] text-surface-400 group-hover:text-primary-500 transition-colors">点击运行 →</span>
         </div>
+        <div class="mt-3 pt-3 border-t border-surface-100 flex items-center gap-2">
+          <button @click.stop="useSkillInChat(skill)" title="在对话中使用 /skill 命令"
+                  class="text-[11px] px-2 py-1 rounded bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200">💬 对话中调用</button>
+          <button @click.stop="addSkillToPipeline(skill)" title="作为新流水线的一步"
+                  class="text-[11px] px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200">⚙️ 加入流水线</button>
+        </div>
       </div>
     </div>
 
@@ -244,11 +250,20 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { skillsApi, type SkillInfo } from '@/api/modules/skills'
 import { useAppStore } from '@/stores/app'
 import { knowledgeApi, type KnowledgeDoc } from '@/api/modules/knowledge'
 
+const router = useRouter()
 const appStore = useAppStore()
+
+function useSkillInChat(skill: SkillInfo) {
+  router.push(`/chat?prefill=${encodeURIComponent('/skill ' + skill.id + ' ')}`)
+}
+function addSkillToPipeline(skill: SkillInfo) {
+  router.push(`/automation?addSkill=${encodeURIComponent(skill.id)}&addSkillName=${encodeURIComponent(skill.name)}`)
+}
 
 const skills = ref<SkillInfo[]>([])
 const loadingSkills = ref(false)

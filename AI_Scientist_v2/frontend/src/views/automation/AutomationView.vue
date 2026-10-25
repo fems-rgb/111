@@ -43,7 +43,7 @@
         <p>开启你的第一个自动化任务吧 —— 从上方模版一键创建</p>
       </div>
       <div v-else class="space-y-4">
-        <div v-for="p in pipelines" :key="p.id" class="card p-5 hover:ring-2 ring-primary-200 transition-all">
+        <div v-for="p in pipelines" :key="p.id" :data-pipeline-id="p.id" class="card p-5 hover:ring-2 ring-primary-200 transition-all">
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-3">
               <span class="text-xl">⚙️</span>
@@ -284,6 +284,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { automationApi, type Pipeline } from '@/api/modules/automation'
 import { useAppStore } from '@/stores/app'
 
@@ -506,4 +507,40 @@ async function saveSteps() {
 }
 
 onMounted(() => { loadPipelines(); loadTemplates() })
+
+// ── 跨模块联动：URL 参数处理 ──
+const route = useRoute()
+const router = useRouter()
+onMounted(async () => {
+  await new Promise(r => setTimeout(r, 300)) // 等 pipelines 加载完
+  const q = route.query
+  let touched = false
+  if (typeof q.prefillName === 'string' || typeof q.addSkill === 'string') {
+    showCreate.value = true
+    touched = true
+  }
+  if (typeof q.prefillName === 'string' && q.prefillName.trim()) {
+    newPipeline.name = q.prefillName
+  }
+  if (typeof q.projectId === 'string' && q.projectId) {
+    newPipeline.description = `关联项目 #${q.projectId}`
+  }
+  if (typeof q.sourceFileId === 'string' && q.sourceFileId) {
+    newPipeline.steps = newPipeline.steps.length ? newPipeline.steps : [{ agent_name: 'literature', name: '', params: `file_id=${q.sourceFileId}` }]
+  }
+  if (typeof q.addSkill === 'string' && q.addSkill) {
+    const label = typeof q.addSkillName === 'string' ? q.addSkillName : q.addSkill
+    newPipeline.steps = [
+      ...(newPipeline.steps || []),
+      { agent_name: 'literature', name: '', params: `/skill ${q.addSkill} ${label}` }
+    ]
+    appStore.showToast(`已预添技能: ${label}`, 'success')
+  }
+  if (typeof q.pipeline === 'string' && q.pipeline) {
+    const target = document.querySelector(`[data-pipeline-id="${q.pipeline}"]`)
+    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    touched = true
+  }
+  if (touched) router.replace({ path: route.path, query: {} })
+})
 </script>

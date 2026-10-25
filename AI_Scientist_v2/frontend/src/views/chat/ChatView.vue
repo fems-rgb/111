@@ -76,14 +76,15 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ChatToolbar from '@/components/chat/ChatToolbar.vue'
 import HypothesisPanel from '@/components/hypothesis/HypothesisPanel.vue'
 import { chatApi } from '@/api/modules/chat'
 import { knowledgeApi } from '@/api/modules/knowledge'
 
 const route = useRoute()
-const projectId = computed(()=>Number(route.params.projectId||route.query.projectId||0))
+const router = useRouter()
+const projectId = computed(()=>Number(route.params.projectId||route.query.projectId||route.query.project_id||0))
 
 interface Attachment { file_id?: string; filename: string; summary?: string }
 interface Msg {
@@ -351,7 +352,43 @@ async function submitFeedback() {
   }
 }
 
-onMounted(()=>{ pushMsg('assistant', '👋 新对话已开始，输入研究问题即可对话（/help 查看命令，📜 可加载历史记录）。'); scrollToBottom() })
+onMounted(async()=>{
+  pushMsg('assistant', '👋 新对话已开始，输入研究问题即可对话（/help 查看命令，📜 可加载历史记录）。')
+  scrollToBottom()
+  // ── 跨模块联动：URL 参数处理 ──
+  const q = route.query
+  // 1) 预填输入框
+  if (typeof q.prefill === 'string' && q.prefill.trim()) {
+    inputText.value = q.prefill
+  }
+  // 2) 自动附件注入（从知识库/Pipeline 直接开对话）
+  if (typeof q.attachments === 'string' && q.attachments.trim()) {
+    const ids = q.attachments.split(',').map(s => s.trim()).filter(Boolean)
+    for (const fid of ids) {
+      const isNum = /^\d+$/.test(fid)
+      let filename = `文件 #${fid}`
+      let summary = ''
+      if (isNum) {
+        try {
+          const res: any = await knowledgeApi.getDocContent(Number(fid))
+          const data = res?.data || {}
+          filename = data.filename || data.title || filename
+          summary = data.summary || data.content?.slice(0, 1500) || ''
+        } catch { /* ignore */ }
+      }
+      pendingAttachments.value.push({ file_id: fid, filename, summary })
+    }
+    pushMsg('assistant', `📎 已自动关联 ${pendingAttachments.value.length} 个附件，输入你的问题，AI 会基于附件内容回答。`)
+  }
+  // 3) 自动发送
+  if (q.auto === '1' && inputText.value.trim()) {
+    await send()
+  }
+  // 处理完后清理 query，避免刷新重复预填
+  if (q.prefill || q.attachments || q.auto) {
+    router.replace({ path: route.path, query: {} })
+  }
+})
 </script>
 
 <style scoped>

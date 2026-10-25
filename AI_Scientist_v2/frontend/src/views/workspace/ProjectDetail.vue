@@ -40,9 +40,23 @@
         <p class="text-sm font-medium text-surface-700 mb-1">研究问题</p>
         <p class="text-sm text-surface-600">{{ project.research_question }}</p>
       </div>
+      <!-- 跨模块联动工具条 -->
+      <div class="mt-4 flex flex-wrap gap-2 items-center">
+        <span class="text-xs text-surface-500 font-medium">🔗 在此项目上下文中：</span>
+        <button @click="$router.push(`/chat?projectId=${project.id}&prefill=${encodeURIComponent('针对这个项目，下一步应该如何推进？')}`)"
+                class="text-xs px-3 py-1.5 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200">💬 AI 对话</button>
+        <button @click="$router.push(`/knowledge?q=${encodeURIComponent(project.research_question || project.title || '')}`)"
+                class="text-xs px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200">🗂️ 搜索资料</button>
+        <button @click="$router.push(`/automation?projectId=${project.id}`)"
+                class="text-xs px-3 py-1.5 rounded-md bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200">⚙️ 流水线</button>
+        <button @click="$router.push(`/experiment-lab?projectId=${project.id}`)"
+                class="text-xs px-3 py-1.5 rounded-md bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200">🧪 实验场</button>
+        <button @click="$router.push(`/traces?projectId=${project.id}`)"
+                class="text-xs px-3 py-1.5 rounded-md bg-slate-50 text-slate-700 hover:bg-slate-100 border border-slate-200">📊 Trace</button>
+      </div>
     </div>
 
-    
+
     <!-- P1-P20赛题报告导出 -->
     <div class="card border-l-4 border-l-indigo-500 mt-4">
       <div class="flex items-center justify-between mb-3">

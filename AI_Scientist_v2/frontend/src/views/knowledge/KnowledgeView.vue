@@ -235,6 +235,8 @@
             <td class="p-3 text-surface-500">{{ formatDate(doc.created_at) }}</td>
             <td class="p-3 text-right space-x-2">
               <button class="text-xs text-primary-500 hover:underline" @click="previewDoc(doc)">预览</button>
+              <button class="text-xs text-blue-600 hover:underline" @click="useInChat(doc)" title="在 AI 对话中使用这份资料">💬 对话</button>
+              <button class="text-xs text-purple-600 hover:underline" @click="useInPipeline(doc)" title="作为流水线输入">⚙️ 流水线</button>
               <button class="text-xs text-red-500 hover:underline" @click="deleteDoc(doc.id)">删除</button>
             </td>
           </tr>
@@ -310,9 +312,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import type { ExternalPaper } from '@/api/modules/knowledge'
 import { knowledgeApi, type KnowledgeDoc } from '@/api/modules/knowledge'
 import { useAppStore } from '@/stores/app'
+
+const router = useRouter()
+const route = useRoute()
 
 const appStore = useAppStore()
 
@@ -686,7 +692,27 @@ const getStatusLabel = (s: string) => {
 }
 
 onMounted(() => {
+  // 支持 URL 参数联动: /knowledge?q=xxx&tab=external
+  const qParam = route.query.q
+  if (typeof qParam === 'string' && qParam.trim()) {
+    searchQuery.value = qParam
+    if (route.query.tab === 'external') {
+      activeTab.value = 'external'
+      extSearchQuery.value = qParam
+      doExternalSearch?.()
+    }
+  }
   loadDocs()
   loadStats()
 })
+
+// ── 跨模块联动函数 ──
+function useInChat(doc: any) {
+  const fid = doc.id || doc.file_id
+  router.push(`/chat?attachments=${encodeURIComponent(String(fid))}&prefill=${encodeURIComponent('请基于资料「' + (doc.title || '') + '」回答我的问题')}`)
+}
+function useInPipeline(doc: any) {
+  const fid = doc.id || doc.file_id
+  router.push(`/automation?prefillName=${encodeURIComponent('基于《' + (doc.title || '') + '》的自动流水线')}&sourceFileId=${encodeURIComponent(String(fid))}`)
+}
 </script>
