@@ -466,6 +466,101 @@ async def run_pipeline(
     }
 
 
+# ── 从指定步骤重试 ─────────────────────────────────────────
+class RetryFromRequest(BaseModel):
+    step_index: int  # 0-based，从哪一步开始重跑
+    run_id: str | None = None  # 可选关联历史 run，复用其前序步骤结果
+
+
+@router.post("/{pipeline_id}/retry-from")
+async def retry_from_step(
+    pipeline_id: str,
+    req: RetryFromRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """从指定步骤重试（保留前序步骤已有结果作为上下文）"""
+    import asyncio
+    p = await _get_user_pipeline(pipeline_id, user.id, db)
+    if p.status == "running":
+        raise HTTPException(status_code=409, detail="流水线正在执行中")
+    steps = p.steps or []
+    if req.step_index < 0 or req.step_index >= len(steps):
+        raise HTTPException(status_code=400, detail="步骤索引越界")
+
+    # 尝试复用上一次 run 的前序步骤结果
+    prior_results: list[dict] = []
+    if req.run_id:
+        old_run = await db.get(PipelineRun, req.run_id)
+        if old_run and old_run.steps_log:
+            prior_results = old_run.steps_log[:req.step_index]
+
+    run_id = uuid.uuid4().hex[:8]
+    run_record = PipelineRun(id=run_id, pipeline_id=p.id, status="running", steps_log=list(prior_results))
+    db.add(run_record)
+    p.status = "running"
+    p.last_run = datetime.now(timezone.utc)
+    p.run_count += 1
+    await db.commit()
+
+    async def _execute_retry():
+        from app.database.session import AsyncSessionLocal
+        from app.agents.orchestrator import AGENT_REGISTRY
+        cancel_event = _asyncio.Event()
+        _running_cancels[pipeline_id] = cancel_event
+        steps_log = list(prior_results)
+        all_ok = True
+        try:
+            async with AsyncSessionLocal() as session:
+                for i in range(req.step_index, len(steps)):
+                    if cancel_event.is_set():
+                        steps_log.append({"step": i+1, "agent": steps[i].get("agent_name","?"), "status": "cancelled", "duration_ms": 0})
+                        all_ok = False
+                        break
+                    step = steps[i]
+                    agent_name = step.get("agent_name", "unknown")
+                    t0 = datetime.now(timezone.utc)
+                    step_log = {"step": i+1, "agent": agent_name, "status": "running", "started_at": t0.isoformat()}
+                    steps_log.append(step_log)
+                    try:
+                        if agent_name in AGENT_REGISTRY:
+                            agent = AGENT_REGISTRY[agent_name]()
+                            rq = step.get("research_question") or step.get("params") or p.description or p.name
+                            prev_ctx = "\n\n".join(s.get("result_summary","") for s in steps_log if s.get("result_summary"))
+                            result = await agent.execute(research_question=rq, context=prev_ctx[:8000], model=step.get("model","qwen-max"))
+                            out = result.get("output","") if isinstance(result, dict) else str(result)
+                            step_log.update({"status":"completed","result_summary":out[:2000],"tokens":result.get("tokens",0) if isinstance(result,dict) else 0,"cost_yuan":round(result.get("cost",0.0),4) if isinstance(result,dict) else 0.0,"duration_ms":int((datetime.now(timezone.utc)-t0).total_seconds()*1000)})
+                        else:
+                            await asyncio.sleep(1.5)
+                            step_log.update({"status":"completed","result_summary":f"[{agent_name}] 模拟执行完成","duration_ms":int((datetime.now(timezone.utc)-t0).total_seconds()*1000)})
+                    except Exception as e:
+                        step_log.update({"status":"failed","error":str(e)[:500],"duration_ms":int((datetime.now(timezone.utc)-t0).total_seconds()*1000)})
+                        all_ok = False
+                        logger.error("[Retry] Step %d failed: %s", i+1, e)
+                    # 实时写回
+                    run = await session.get(PipelineRun, run_id)
+                    if run:
+                        run.steps_log = steps_log
+                        await session.commit()
+                run = await session.get(PipelineRun, run_id)
+                if run:
+                    run.steps_log = steps_log
+                    run.status = "completed" if all_ok else "failed"
+                    run.finished_at = datetime.now(timezone.utc)
+                    await session.commit()
+                pipe = await session.get(Pipeline, pipeline_id)
+                if pipe:
+                    pipe.status = "idle"
+                    await session.commit()
+        except Exception as e:
+            logger.error("[Retry] Pipeline %s retry failed: %s", pipeline_id, e, exc_info=True)
+        finally:
+            _running_cancels.pop(pipeline_id, None)
+
+    asyncio.create_task(_execute_retry())
+    return {"message": f"从第 {req.step_index+1} 步重试已启动", "run_id": run_id}
+
+
 @router.get("/{pipeline_id}/logs")
 async def get_pipeline_logs(
     pipeline_id: str,

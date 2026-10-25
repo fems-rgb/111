@@ -90,6 +90,10 @@ export const automationApi = {
   /** 删除流水线 */
   delete: (id: string) => client.delete(`/automation/${id}`),
 
+  /** 从指定步骤重试 */
+  retryFrom: (id: string, stepIndex: number, runId?: string) =>
+    client.post<{ message: string; run_id: string }>(`/automation/${id}/retry-from`, { step_index: stepIndex, run_id: runId }),
+
   /** 获取预设模板 */
   templates: () => client.get<{ templates: PipelineTemplate[] }>('/automation/templates'),
 

@@ -2,7 +2,10 @@
   <div class="space-y-6 animate-fade-in">
     <div class="flex items-center justify-between">
       <h1 class="text-2xl font-bold text-surface-800">⚙️ 自动化流水线</h1>
-      <button class="btn-primary text-sm" @click="showCreate = true">+ 新建 Pipeline</button>
+      <div class="flex gap-2">
+        <button class="btn-secondary text-sm" @click="importPipeline">📥 导入</button>
+        <button class="btn-primary text-sm" @click="showCreate = true">+ 新建 Pipeline</button>
+      </div>
     </div>
 
     <!-- Tab：定时任务 / 运行记录 -->
@@ -53,8 +56,10 @@
               <span :class="['px-2 py-0.5 rounded-full text-xs font-medium', statusClass(p.status)]">{{ statusLabel(p.status) }}</span>
               <button @click="openEditor(p)" class="btn-secondary text-xs px-3 py-1">✏️ 编辑</button>
               <button @click="runPipeline(p.id)" :disabled="p.status==='running'" class="btn-primary text-xs px-3 py-1">▶ 运行</button>
+              <button v-if="p.status==='running'" @click="stopPipeline(p.id)" class="btn-secondary text-xs px-3 py-1 text-orange-600">⏹ 停止</button>
               <button @click="viewLogs(p)" class="btn-secondary text-xs px-3 py-1">📊 日志</button>
-              <button @click="deletePipeline(p.id)" class="btn-secondary text-xs px-3 py-1 text-red-600">删除</button>
+              <button @click="exportPipeline(p)" class="btn-secondary text-xs px-3 py-1" title="导出为 JSON">📤</button>
+              <button @click="deletePipeline(p.id)" class="btn-secondary text-xs px-3 py-1 text-red-600">🗑️</button>
             </div>
           </div>
           <div class="flex items-center gap-4 text-xs text-surface-400">
@@ -75,7 +80,10 @@
         <div v-for="r in allRuns" :key="r.run_id" class="card p-4">
           <div class="flex items-center justify-between mb-2">
             <span class="text-sm font-medium">{{ r.pipeline_name || r.pipeline_id }} · Run #{{ r.run_id }}</span>
-            <span :class="runStatusClass(r.status)" class="text-xs font-medium px-2 py-0.5 rounded-full">{{ runStatusLabel(r.status) }}</span>
+            <div class="flex items-center gap-3">
+              <span class="text-xs text-surface-500">💰 ¥{{ (r.steps||[]).reduce((a:number,s:any)=>a+(s.cost_yuan||0),0).toFixed(4) }} · 🧮 {{ (r.steps||[]).reduce((a:number,s:any)=>a+(s.tokens||0),0) }} tokens</span>
+              <span :class="runStatusClass(r.status)" class="text-xs font-medium px-2 py-0.5 rounded-full">{{ runStatusLabel(r.status) }}</span>
+            </div>
           </div>
           <div class="text-xs text-surface-400 mb-2">{{ fmtTime(r.started_at) }} → {{ fmtTime(r.finished_at) }}</div>
           <div class="space-y-1">
@@ -84,7 +92,7 @@
               <span class="w-24">{{ step.agent }}</span>
               <span :class="stepStatusClass(step.status)">{{ stepStatusLabel(step.status) }}</span>
               <span class="text-surface-400">{{ step.duration_ms }}ms</span>
-              <span v-if="step.tokens" class="text-surface-400">· {{ step.tokens }} tokens</span>
+              <span v-if="step.tokens" class="text-surface-400">· {{ step.tokens }}t · ¥{{ (step.cost_yuan||0).toFixed(4) }}</span>
             </div>
           </div>
         </div>
@@ -175,10 +183,10 @@
       </div>
     </Teleport>
 
-    <!-- 日志弹窗 -->
+    <!-- 日志弹窗（增强版：可展开结果 + 成本汇总 + 重试按钮）-->
     <Teleport to="body">
       <div v-if="logPipeline" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="logPipeline=null">
-        <div class="bg-white rounded-2xl shadow-2xl w-[700px] max-h-[80vh] flex flex-col overflow-hidden">
+        <div class="bg-white rounded-2xl shadow-2xl w-[780px] max-h-[85vh] flex flex-col overflow-hidden">
           <div class="flex items-center justify-between px-6 py-4 border-b border-surface-200">
             <h3 class="font-semibold">📊 {{ logPipeline.name }} - 执行日志</h3>
             <button class="text-surface-400 hover:text-surface-700 text-xl" @click="logPipeline=null">&times;</button>
@@ -190,15 +198,28 @@
               <div v-for="(log,li) in pipelineLogs" :key="li" class="border border-surface-200 rounded-lg p-4">
                 <div class="flex items-center justify-between mb-2">
                   <span class="text-sm font-medium">Run #{{ log.run_id }}</span>
-                  <span :class="runStatusClass(log.status)" class="text-xs font-medium px-2 py-0.5 rounded-full">{{ runStatusLabel(log.status) }}</span>
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs text-surface-500">💰 ¥{{ (log.steps||[]).reduce((a:number,s:any)=>a+(s.cost_yuan||0),0).toFixed(4) }} · 🧮 {{ (log.steps||[]).reduce((a:number,s:any)=>a+(s.tokens||0),0) }} tokens</span>
+                    <span :class="runStatusClass(log.status)" class="text-xs font-medium px-2 py-0.5 rounded-full">{{ runStatusLabel(log.status) }}</span>
+                  </div>
                 </div>
-                <div class="text-xs text-surface-400 mb-2">{{ fmtTime(log.started_at) }} → {{ fmtTime(log.finished_at) }}</div>
-                <div class="space-y-1">
-                  <div v-for="step in (log.steps||[])" :key="step.step" class="flex items-center gap-2 text-xs">
-                    <span class="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold">{{ step.step }}</span>
-                    <span class="w-24">{{ step.agent }}</span>
-                    <span :class="stepStatusClass(step.status)">{{ stepStatusLabel(step.status) }}</span>
-                    <span class="text-surface-400">{{ step.duration_ms }}ms</span>
+                <div class="text-xs text-surface-400 mb-3">{{ fmtTime(log.started_at) }} → {{ fmtTime(log.finished_at) }}</div>
+                <div class="space-y-2">
+                  <div v-for="step in (log.steps||[])" :key="step.step" class="border border-surface-100 rounded-md overflow-hidden">
+                    <div class="flex items-center gap-2 px-3 py-2 bg-surface-50 cursor-pointer hover:bg-surface-100" @click="step._expanded = !step._expanded">
+                      <span class="w-5 h-5 rounded-full bg-primary-100 flex items-center justify-center text-primary-700 font-bold text-xs">{{ step.step }}</span>
+                      <span class="w-24 text-xs font-medium">{{ step.agent }}</span>
+                      <span :class="stepStatusClass(step.status)" class="text-xs">{{ stepStatusLabel(step.status) }}</span>
+                      <span class="text-xs text-surface-400">{{ step.duration_ms }}ms</span>
+                      <span v-if="step.tokens" class="text-xs text-surface-400">· {{ step.tokens }}t · ¥{{ (step.cost_yuan||0).toFixed(4) }}</span>
+                      <span class="ml-auto text-xs text-surface-400">{{ step._expanded ? '▲' : '▼' }}</span>
+                    </div>
+                    <div v-if="step._expanded" class="px-3 py-2 text-xs space-y-1 border-t border-surface-100">
+                      <p v-if="step.result_summary" class="text-surface-600 whitespace-pre-wrap max-h-40 overflow-auto">{{ step.result_summary }}</p>
+                      <p v-if="step.error" class="text-red-600">❌ {{ step.error }}</p>
+                      <p v-if="!step.result_summary && !step.error" class="text-surface-400">无详细信息</p>
+                      <button v-if="step.status==='failed'" @click.stop="retryFromStep(logPipeline!.id, step.step-1, log.run_id)" class="mt-2 px-3 py-1 bg-orange-500 text-white rounded-md text-xs hover:bg-orange-600">🔄 从此步重试</button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -282,6 +303,7 @@ const pipelineLogs = ref<any[]>([])
 const logsLoading = ref(false)
 const allRuns = ref<any[]>([])
 let logPollTimer: ReturnType<typeof setInterval> | null = null
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null
 
 const tplModal = ref<any>(null)
 const tplForm = reactive<{ name: string; params: Record<string, string>; trigger: string; cron: string; ack: boolean }>({ name: '', params: {}, trigger: 'manual', cron: '', ack: false })
@@ -375,6 +397,61 @@ async function deletePipeline(id: string) {
   try { await automationApi.delete(id); appStore.showToast('🗑️ 已删除', 'success'); await loadPipelines() }
   catch { appStore.showToast('删除失败', 'error') }
 }
+async function stopPipeline(id: string) {
+  try { await automationApi.stop(id); appStore.showToast('⏹ 停止信号已发送', 'success'); await loadPipelines() }
+  catch (e: any) { appStore.showToast(e?.response?.data?.detail || '停止失败', 'error') }
+}
+async function retryFromStep(pid: string, stepIndex: number, runId: string) {
+  try {
+    await automationApi.retryFrom(pid, stepIndex, runId)
+    appStore.showToast(`🔄 从第 ${stepIndex + 1} 步重试已启动`, 'success')
+    await loadPipelines()
+    // 刷新日志
+    const logs = (await automationApi.logs(pid)).data.logs || []
+    pipelineLogs.value = logs
+  } catch (e: any) { appStore.showToast('重试失败: ' + (e?.response?.data?.detail || e.message), 'error') }
+}
+function exportPipeline(p: Pipeline) {
+  const json = JSON.stringify({ name: p.name, description: p.description, steps: p.steps, trigger: p.trigger, schedule_cron: p.schedule_cron }, null, 2)
+  const blob = new Blob([json], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = `pipeline_${p.name.replace(/[^\w\u4e00-\u9fff]/g, '_')}.json`
+  a.click(); URL.revokeObjectURL(url)
+}
+function importPipeline() {
+  const input = document.createElement('input')
+  input.type = 'file'; input.accept = '.json'
+  input.onchange = async () => {
+    const file = input.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      if (!data.name || !data.steps) { appStore.showToast('JSON 格式不符合要求', 'error'); return }
+      await automationApi.create({ name: data.name, description: data.description || '', steps: data.steps, trigger: data.trigger || 'manual', schedule_cron: data.schedule_cron || undefined })
+      appStore.showToast('📥 导入成功', 'success')
+      await loadPipelines()
+    } catch (e: any) { appStore.showToast('导入失败: ' + (e.message || '文件解析错误'), 'error') }
+  }
+  input.click()
+}
+
+// ── 自动刷新运行中流水线 ──
+function startAutoRefresh() {
+  stopAutoRefresh()
+  autoRefreshTimer = setInterval(async () => {
+    if (pipelines.value.some(p => p.status === 'running')) {
+      await loadPipelines()
+    } else {
+      stopAutoRefresh()
+    }
+  }, 4000)
+}
+function stopAutoRefresh() { if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null } }
+watch(() => pipelines.value.some(p => p.status === 'running'), (anyRunning) => {
+  if (anyRunning) startAutoRefresh(); else stopAutoRefresh()
+})
 function stopLogPolling() { if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null } }
 function startLogPolling(pipelineId: string) {
   stopLogPolling()
@@ -386,7 +463,7 @@ function startLogPolling(pipelineId: string) {
   }, 2000)
 }
 watch(logPipeline, (v) => { if (!v) { stopLogPolling() } })
-onUnmounted(stopLogPolling)
+onUnmounted(() => { stopLogPolling(); stopAutoRefresh() })
 
 const editingPipeline = ref<Pipeline | null>(null)
 const editForm = ref({ name: '', description: '', steps: [] as any[], trigger: 'manual', cron: '', ack: true })
