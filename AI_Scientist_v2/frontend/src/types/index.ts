@@ -37,6 +37,10 @@ export interface Project {
   verification_method?: string
   visibility?: string
   evidence_files?: string[]
+  // [stageB] 项目卡片流水线进度条（后端 list_projects 补字段）
+  total_steps?: number
+  completed_steps?: number
+  progress?: number
 }
 
 export interface AgentTask {

@@ -5,10 +5,13 @@
 保留：_latex, _charts, _refs, _derive_rationale, _neutral_methods, _resolve_project, 入口签名
 新增：_strip_section_headings, _paragraphize, _clean_html, _neutral_methods_short
 """
+import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 import base64, glob, json, os, re, time, uuid
+
+logger = logging.getLogger(__name__)
 
 TPL_DIR = Path(__file__).resolve().parent / "templates"
 _CDIR = Path(__file__).resolve().parent.parent.parent.parent / "output" / "pdf_reports"
@@ -47,8 +50,8 @@ def _charts(project_id):
                     try:
                         with open(p, "rb") as f:
                             charts.append({"name": Path(p).stem, "b64": base64.b64encode(f.read()).decode()})
-                    except Exception:
-                        pass
+                    except Exception as _chart_err:
+                        logger.debug('[charts] 读图失败 %s: %s', p, _chart_err)
     return charts
 
 
@@ -167,8 +170,8 @@ def _resolve_project(project_or_id):
         try:
             if getattr(proj, "research_question", None):
                 return proj
-        except Exception:
-            pass
+        except Exception as _rq_err:
+            logger.debug('[_resolve_project] getattr research_question 失败: %s', _rq_err)
         class _W:
             def __getattr__(self, name):
                 return ""
@@ -181,8 +184,8 @@ def _resolve_project(project_or_id):
                   "baselines", "metrics"):
             try:
                 setattr(wrapped, f, getattr(proj, f, "" if f != "hypotheses" else None))
-            except Exception:
-                pass
+            except Exception as _sf_err:
+                logger.debug('[_resolve_project] setattr %s 失败: %s', f, _sf_err)
         return wrapped
 
     # 传 int → 从 DB 加载
@@ -199,8 +202,8 @@ def _resolve_project(project_or_id):
                 proj = row[0] if isinstance(row, tuple) else row
                 if getattr(proj, "research_question", None):
                     return proj
-    except Exception:
-        pass
+    except Exception as _db_err:
+        logger.debug('[_resolve_project] DB 加载 project %s 失败: %s', pid, _db_err)
 
     # DB 无记录 → 从题库取题目
     class _Min:
@@ -220,8 +223,8 @@ def _resolve_project(project_or_id):
                 m.research_question = (q["title"] or "") + (" —— " + q["description"] if q.get("description") else "")
                 m.title = q["title"] or ""
                 m.description = q.get("description") or q["title"] or ""
-    except Exception:
-        pass
+    except Exception as _sq_err:
+        logger.debug('[_resolve_project] science_questions 回退查询失败: %s', _sq_err)
     if not getattr(m, "research_question", ""):
         m.research_question = "该前沿科学问题"
     return m
@@ -233,8 +236,8 @@ def generate_challenge_cup_pdf(project, research_question: str = "") -> str:
     if research_question and not getattr(project, "research_question", ""):
         try:
             setattr(project, "research_question", research_question)
-        except Exception:
-            pass
+        except Exception as _setrq_err:
+            logger.debug('[generate_pdf] setattr research_question 失败: %s', _setrq_err)
     pid = getattr(project, "id", 0) or (project if isinstance(project, int) else 0)
     title = _latex(getattr(project, "title", "") or f"Project {pid}")
     desc = _latex(getattr(project, "description", "") or "（待补充）")

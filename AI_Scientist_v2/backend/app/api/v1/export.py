@@ -152,8 +152,8 @@ async def auto_export_pdf(project_id: int, db: AsyncSession) -> str | None:
         try:
             d = safe_json_parse(proj.competition_config, fallback={}, label="auto_export")
             team = TeamConfig(**{k: v for k, v in d.items() if k in TeamConfig.model_fields})
-        except Exception:
-            pass
+        except Exception as _team_err:
+            logger.debug('[auto_export] competition_config 解析失败，用默认 TeamConfig: %s', _team_err)
 
     # ★ [fix] 优先走 WeasyPrint 精美版（含图表、专业排版）
     try:
@@ -682,7 +682,8 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
             _v=getattr(_h,'variables',None)
             if isinstance(_v,str):
                 try: _v=_json.loads(_v)
-                except Exception: pass
+                except Exception as _vj:
+                    logger.debug('[stageE] hypothesis variables JSON 解析失败，保留原文: %s', _vj)
             if isinstance(_v,list): _v='、'.join(str(_x) for _x in _v)
             _ec=_re.sub(r'^["“”\']+|["“”\']+$','',str(getattr(_h,'evidence_chain','') or ''))
             hyp_rows.append({'hypo_id':_br(getattr(_h,'hypo_id','')),
@@ -1074,7 +1075,8 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
                 _vv=locals()[_vk]
                 if isinstance(_vv,str):
                     locals()[_vk]=_vv.replace('ΛCDM','ΛCDM').replace('ΛCDM','ΛCDM')
-            except Exception: pass
+            except Exception as _loc_err:
+                logger.debug('[v16] locals 变量 %s 清洗失败: %s', _vk, _loc_err)
         review_html=_pol(review_html);reflection_html=_pol(reflection_html)
 
         html = _final_clean_html(tpl.render(
@@ -1088,7 +1090,8 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
             _d40=_os40.path.join(_os40.path.dirname(_os40.path.dirname(_os40.path.dirname(_os40.path.abspath(__file__)))),'output')
             _os40.makedirs(_d40,exist_ok=True)
             open(_os40.path.join(_d40,'debug_render.html'),'w',encoding='utf-8').write(html)
-        except Exception: pass
+        except Exception as _dbg_err:
+            logger.debug('[v40] debug_render.html 写盘失败（不影响 PDF）: %s', _dbg_err)
         out_dir = AUTO_EXPORT_DIR
         out_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = out_dir / f"challenge_cup_project_{project_id}.pdf"

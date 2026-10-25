@@ -29,6 +29,22 @@ async def _find_task_by_project(db, project_id: int) -> "QuestionTask | None":
     return None
 
 
+def _clamp_progress(raw, status: str, completed_at=None) -> int:
+    """[P0-1 README 二十六章] 任务未完成时 progress 不能到 100。
+
+    规则：
+      - status == 'completed' 且 completed_at 存在 → 100
+      - 否则→ min(raw, 95)
+    """
+    try:
+        val = int(raw or 0)
+    except (TypeError, ValueError):
+        val = 0
+    if status == "completed" and completed_at:
+        return 100
+    return max(0, min(val, 95))
+
+
 async def _find_task_by_id(db, task_id: int) -> "QuestionTask | None":
     from sqlalchemy import select as _s
     return (await db.execute(
@@ -414,8 +430,8 @@ async def on_project_completed(project_id=None, user_id=None, **_kw):
                     task.error_message = f"结果回写失败: {str(e)[:200]}"
                     task.completed_at = datetime.now(timezone.utc)
                     await db.commit()
-            except Exception:
-                pass
+            except Exception as _fallback_err:
+                logger.debug(f"[fallback] task_id={task_id} 写回 failed 也失败: {_fallback_err}")
 async def on_agent_step_completed(project_id=None, task_id=None, **_kw):
     """每完成一个Agent步骤，按 已完成步数/总步数 实时更新题库任务进度"""
     from app.database.session import AsyncSessionLocal
@@ -959,7 +975,12 @@ async def get_task_status(
         "question_id": task.question_id,
         "question_title": question.title if question else None,
         "status": task.status,
-        "progress": (_real_progress if _real_progress is not None else task.progress) or 0,
+        # [P0-1] 非 completed 状态下的 progress 不能到 100，避免前端假完成
+        "progress": _clamp_progress(
+            _real_progress if _real_progress is not None else task.progress,
+            task.status,
+            completed_at=task.completed_at,
+        ),
         "result": task.result,
         "document_path": task.document_path,
         "version": task.version,

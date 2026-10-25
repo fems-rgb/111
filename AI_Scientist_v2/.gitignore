@@ -9,10 +9,18 @@ build/
 .venv/
 venv/
 env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage.xml
+.coverage
+htmlcov/
 
 # Database
 *.db
 *.sqlite3
+*.db-journal
+*.sqlite3-journal
 
 # Environment
 .env
@@ -22,6 +30,7 @@ env/
 # Node
 node_modules/
 frontend/dist/
+frontend/.vite/
 .npm
 *.tsbuildinfo
 
@@ -36,8 +45,33 @@ frontend/dist/
 Thumbs.db
 
 # Logs
+backend/logs/
 backend/logs/*.log
+logs/
+*.log
 
-# Uploads
+# Uploads / 运行时产物
 backend/uploads/*
 !backend/uploads/.gitkeep
+backend/output/
+output/
+
+# 备份 / 临时脚本
+*.bak
+*.bak_*
+*_backup.py
+*.tmp
+*.orig
+*.rej
+
+# 根目录截图 / 演示素材（仅顶层，不影响 frontend/public 下的图）
+/屏幕截图*.png
+/*.png
+/*.jpg
+/*.jpeg
+!README.md
+
+# 本地 dump
+config_dump.txt
+core_code_dump.txt
+_i18n_scan.json

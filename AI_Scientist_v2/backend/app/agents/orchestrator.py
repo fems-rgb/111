@@ -383,7 +383,8 @@ class Orchestrator:
 
                                                     try: _os.remove(_old)
 
-                                                    except Exception: pass
+                                                    except Exception as _re_del:
+                                                        logger.debug('[stageC] 旧图删除失败 %s: %s', _old, _re_del)
 
                                                 for _fn in sorted(_os.listdir(_exp_charts)):
 
@@ -411,8 +412,8 @@ class Orchestrator:
                                             "charts_count": len(_charts),
                                             "user_id": user_id,
                                         }})
-                                    except Exception:
-                                        pass
+                                    except Exception as _eb_err:
+                                        logger.debug('[stageC] event_bus.emit 失败(不阻塞): %s', _eb_err)
                                 else:
                                     logger.warning("[stageC] experiment_plan 输出未检测到 python 代码块，跳过模拟场")
                             except Exception as _ce:
@@ -603,8 +604,11 @@ class Orchestrator:
                         p.status = ProjectStatus.FAILED
                         await db.commit()
                         await event_bus.emit(Events.PROJECT_FAILED, {"project_id": project_id, "error": str(e)})
-            except Exception:
-                pass
+            except Exception as _mark_fail_err:
+                logger.warning(
+                    '项目 %s 堆到 FAILED 回写失败（不阻断 finally 释放）: %s',
+                    project_id, _mark_fail_err, exc_info=True,
+                )
         finally:
             self._running_projects.pop(project_id, None)
 

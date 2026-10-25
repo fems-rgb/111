@@ -331,7 +331,7 @@ const extSourceCounts = ref('')
 const selectedExtIds = ref<number[]>([])
 const extImporting = ref(false)
 const extImportProgress = ref({ current: 0, total: 0 })
-const quickImportingId = ref<string | null>(null)
+const quickImportingId = ref<string | number | null>(null)
 
 // ===== URL抓取状态 =====
 const urlInput = ref('')
@@ -371,7 +371,7 @@ function toggleExtSelect(idx: number) {
 
 async function quickImportOne(paper: ExternalPaper) {
   if (quickImportingId.value === paper.id) return
-  quickImportingId.value = paper.id
+  quickImportingId.value = paper.id ?? null
   try {
     const res = await knowledgeApi.importPaper(paper)
     appStore.showToast('✅ 已导入: ' + (res.data?.filename || paper.title.slice(0, 30)), 'success')

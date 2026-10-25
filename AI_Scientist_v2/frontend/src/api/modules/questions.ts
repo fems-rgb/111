@@ -13,12 +13,15 @@ export interface QuestionItem {
 
 export interface QuestionDetail extends QuestionItem {
   created_at?: string
+  updated_at?: string
   task_history: Array<{
     task_id: number
     status: string
   progress?: number
     version: number
     document_path?: string
+    pipeline_name?: string
+    result?: Record<string, any>
     created_at?: string
     completed_at?: string
   }>
@@ -40,9 +43,11 @@ export interface TaskStatus {
   task_id: number
   question_id: number
   question_title?: string
+  title?: string
   status: string
   progress?: number
   result?: Record<string, any>
+  pipeline_name?: string
   document_path?: string
   version: number
   feedback?: string
@@ -55,8 +60,11 @@ export interface MyTaskItem {
   task_id: number
   question_id: number
   question_title?: string
+  title?: string
   status: string
   progress?: number
+  result?: Record<string, any>
+  pipeline_name?: string
   version: number
   document_path?: string
   created_at?: string

@@ -1,4 +1,12 @@
 """智研星枢 v3.0 - FastAPI主入口"""
+import sys as _sys
+if _sys.platform == "win32":
+    # Windows cmd 默认 GBK，中文字体/emoji print 会 UnicodeEncodeError
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8")
+        _sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, Request
@@ -15,8 +23,12 @@ from app.core.exceptions import global_exception_handler, AppException
 from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents
 from app.api.v1.experiment_lab import router as experiment_lab_router
 
-# 前端构建产物路径（相对于 backend/ 目录）
-FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+# 前端构建产物路径（优先 frontend/dist 开发模式，后补 backend/static 预构建分发）
+_candidates = [
+    Path(__file__).resolve().parent.parent.parent / "frontend" / "dist",
+    Path(__file__).resolve().parent.parent / "static",
+]
+FRONTEND_DIST = next((p for p in _candidates if (p / "index.html").exists()), _candidates[0])
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

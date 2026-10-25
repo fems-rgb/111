@@ -33,3 +33,7 @@ numpy>=1.24.0
 scipy>=1.11.0
 pandas>=2.0.0
 Pillow>=10.0.0
+
+# ═══ PDF 报告导出（README 十五 export / challenge_cup_pdf 依赖）═══
+weasyprint==69.0
+Jinja2>=3.1.0

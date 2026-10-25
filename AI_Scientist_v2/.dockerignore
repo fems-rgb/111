@@ -1,0 +1,37 @@
+# 智研星枢 - Docker 构建上下文忽略（放在项目根，服务多 context）
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# 本地数据/产物
+**/*.db
+**/*.sqlite3
+backend/logs/
+backend/uploads/
+backend/output/
+backend/.env
+frontend/dist/
+frontend/node_modules/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git / CI
+.git/
+.github/
+*.md
+!README.md
+
+# 杂物
+**/*.bak
+**/*.bak_*
+**/*_backup.py
+**/*.log
+**/screenshots/
+**/屏幕截图*

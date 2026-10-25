@@ -11,6 +11,7 @@ export interface KnowledgeDoc {
 }
 
 export interface ExternalPaper {
+  id?: string | number
   title: string
   authors: string[]
   year: number | null

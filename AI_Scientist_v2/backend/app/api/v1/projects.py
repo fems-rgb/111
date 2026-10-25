@@ -1,4 +1,5 @@
 """项目 API（含物理删除）"""
+import logging
 import shutil
 from pathlib import Path
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
@@ -12,6 +13,8 @@ from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectInfo, Proje
 from app.agents.orchestrator import orchestrator
 from app.services.project_service import get_project_stats
 from app.utils.cleanup import clean_project_files
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -310,8 +313,8 @@ async def delete(
                     select(_SQ.question_id).where(_SQ.title == (project.title or ""))
                 ) if False else select(_QT2.id)
             ))).scalars().all()] if False else []
-        except Exception:
-            pass
+        except Exception as _qt_err:
+            logger.debug("[cascade-B] QuestionTask 反查失败（不阻断删除）: %s", _qt_err)
 
     except Exception as e:
         print(f"[cascade-B] 异常(不阻塞): {e}")

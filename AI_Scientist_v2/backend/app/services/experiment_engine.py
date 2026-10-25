@@ -333,8 +333,8 @@ def _auto_generate_charts(charts_dir: str, run_id, data_table=None):
             ax.plot(df[xc].astype(float).values,
                     c[0] * df[xc].astype(float).values + c[1], "r-", lw=2,
                     label="y=%.2fx+%.2f" % (c[0], c[1]))
-        except Exception:
-            pass
+        except Exception as _pe:
+            logger.debug("[autochart] run %s 拟合直线失败(忽略): %s", run_id, _pe)
         ax.set_title("relation %s vs %s (run %s)" % (xc, yc, run_id))
         ax.set_xlabel(xc); ax.set_ylabel(yc); ax.legend()
         plt.tight_layout(); plt.savefig(path, dpi=150, bbox_inches="tight"); plt.close()
@@ -458,8 +458,10 @@ async def run_experiment(code: str, run_id: int, timeout: int = 60,
                 'video_path': video_path, 'data_table': data_table,
                 'error': serr_clean if serr_clean else None, 'duration_ms': dur}
     except asyncio.TimeoutError:
-        try: proc.kill()
-        except: pass
+        try:
+            proc.kill()
+        except Exception as _ke:
+            logger.debug("[run_experiment] kill 超时进程失败: %s", _ke)
         return {'success': False, 'output_text': '', 'error': f'\u6267\u884c\u8d85\u65f6({timeout}\u79d2)',
                 'charts': [], 'video_path': None, 'data_table': None,
                 'duration_ms': int((time.time()-start)*1000)}

@@ -63,9 +63,9 @@
                 class="px-3 py-1.5 rounded-lg bg-accent-600 text-white hover:bg-accent-700 disabled:opacity-40 transition-colors text-sm">
           🚀 批量生成 ({{ selectedIds.size }})
         </button>
-              <button v-if="selectedIds.length > 0" @click="handleBatchDelete"
+              <button v-if="selectedIds.size > 0" @click="handleBatchDelete"
                 class="px-4 py-2 rounded-lg text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-all">
-                🗑️ 批量删除 ({{ selectedIds.length }})
+                🗑️ 批量删除 ({{ selectedIds.size }})
               </button>
               <button @click="handleDeleteAll"
                 class="px-4 py-2 rounded-lg text-sm font-medium text-red-600 border border-red-300 hover:bg-red-50 transition-all">
@@ -227,7 +227,7 @@
     <Teleport to="body">
       <div v-if="detailData" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="detailData = null">
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-3xl p-0 max-h-[90vh] overflow-hidden flex flex-col">
-          
+
           <!-- 顶部标题栏 -->
           <div class="flex items-center justify-between px-6 py-4 border-b border-surface-100 bg-gradient-to-r from-primary-50 to-blue-50">
             <div class="flex items-center gap-3">
@@ -239,10 +239,10 @@
             </div>
             <button @click="detailData = null" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface-200 text-surface-400 hover:text-surface-600 transition-colors">✕</button>
           </div>
-          
+
           <!-- 可滚动内容区 -->
           <div class="flex-1 overflow-y-auto px-6 py-4 space-y-5">
-            
+
             <!-- 标签行 -->
             <div class="flex items-center gap-2 flex-wrap">
               <span class="px-2.5 py-1 rounded-full text-xs font-medium bg-primary-100 text-primary-700">{{ detailData.category }}</span>
@@ -254,19 +254,19 @@
                 📝 {{ detailData.task_history.length }} 次生成
               </span>
             </div>
-            
+
             <!-- 题目标题 -->
             <div>
               <h3 class="text-xl font-bold text-surface-800 leading-relaxed">{{ detailData.title }}</h3>
               <p v-if="detailData.title_en" class="text-sm text-surface-400 italic mt-1">{{ detailData.title_en }}</p>
             </div>
-            
+
             <!-- 详细描述 -->
             <div v-if="detailData.description" class="p-4 bg-surface-50 rounded-xl border border-surface-100">
               <h4 class="text-xs font-semibold text-surface-500 uppercase tracking-wide mb-2">📖 问题描述</h4>
               <p class="text-sm text-surface-700 whitespace-pre-wrap leading-relaxed">{{ detailData.description }}</p>
             </div>
-            
+
             <!-- 关键词 -->
             <div v-if="detailData.keywords?.length">
               <h4 class="text-xs font-semibold text-surface-500 uppercase tracking-wide mb-2">🏷️ 关键词</h4>
@@ -275,7 +275,7 @@
                       class="px-3 py-1 rounded-full text-xs bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100 transition-colors cursor-default">#{{ kw }}</span>
               </div>
             </div>
-            
+
             <!-- 元数据信息 -->
             <div class="grid grid-cols-2 gap-3">
               <div class="p-3 bg-surface-50 rounded-xl border border-surface-100">
@@ -287,14 +287,14 @@
                 <p class="text-sm text-surface-700 mt-0.5">{{ formatDate(detailData.updated_at || detailData.created_at) }}</p>
               </div>
             </div>
-            
+
             <!-- 该题目的任务历史 -->
             <div class="pt-2">
               <h4 class="text-sm font-semibold text-surface-600 mb-3 flex items-center gap-2">
                 📝 生成历史
                 <span v-if="detailData.task_history?.length" class="text-xs font-normal text-surface-400">({{ detailData.task_history.length }})</span>
               </h4>
-              
+
               <div v-if="detailData.task_history?.length" class="space-y-2">
                 <div v-for="(th, idx) in detailData.task_history" :key="th.task_id"
                      class="relative pl-6 pb-4 last:pb-0">
@@ -302,7 +302,7 @@
                   <div class="absolute left-2 top-1.5 w-2.5 h-2.5 rounded-full border-2"
                        :class="th.status === 'completed' ? 'bg-green-500 border-green-500' : th.status === 'failed' ? 'bg-red-500 border-red-500' : 'bg-blue-500 border-blue-500 animate-pulse'"></div>
                   <div v-if="idx < detailData.task_history.length - 1" class="absolute left-[12px] top-4 w-0.5 h-full bg-surface-200"></div>
-                  
+
                   <div class="flex items-center justify-between p-3 bg-surface-50 rounded-xl border border-surface-100 hover:border-primary-200 transition-colors">
                     <div class="space-y-1">
                       <div class="flex items-center gap-2">
@@ -321,14 +321,14 @@
                   </div>
                 </div>
               </div>
-              
+
               <div v-else class="p-6 bg-surface-50 rounded-xl border border-dashed border-surface-200 text-center">
                 <p class="text-surface-400 text-sm">暂无生成记录</p>
                 <p class="text-surface-300 text-xs mt-1">点击下方按钮开始生成研究文档</p>
               </div>
             </div>
           </div>
-          
+
           <!-- 底部操作栏 -->
           <div class="flex items-center justify-between px-6 py-4 border-t border-surface-100 bg-surface-50">
             <button @click="detailData = null" class="px-4 py-2 rounded-lg text-sm text-surface-600 hover:bg-surface-200 transition-colors">
@@ -721,6 +721,7 @@ function showToast(msg: string, type: 'success' | 'error' | 'info' = 'info', dur
 
 // ─── 生成进度跟踪（已提升到 appStore 全局管理） ───
 const appStore = useAppStore()
+const projectStore = useProjectStore()
 function closeGenProgress() {
   appStore.closeGenProgress()
   loadMyTasks()
@@ -750,7 +751,7 @@ function stopTaskPolling() {
 // ─── Tab ───
 // [stageA] 持久化到 appStore.questionsView（跨路由/刷新不丢失）
 const activeTab = computed<'questions' | 'tasks'>({
-  get: () => appStore.questionsView.activeTab,
+  get: () => appStore.questionsView.activeTab as 'questions' | 'tasks',
   set: (v) => { appStore.questionsView.activeTab = v },
 })
 
@@ -831,7 +832,7 @@ watch(page, () => { selectedIds.value = new Set() })
 // ─── 题目详情弹窗 ───
 // [stageA] 持久化到 appStore
 const detailData = computed<QuestionDetail | null>({
-  get: () => appStore.questionsView.detailData,
+  get: () => appStore.questionsView.detailData as QuestionDetail | null,
   set: (v) => { appStore.questionsView.detailData = v },
 })
 const detailSourceQuestion = ref<QuestionItem | null>(null)
@@ -864,13 +865,13 @@ const showGenDialog = computed<boolean>({
 })
 // [stageA] 持久化到 appStore
 const genTarget = computed<QuestionItem | null>({
-  get: () => appStore.questionsView.genTarget,
+  get: () => appStore.questionsView.genTarget as QuestionItem | null,
   set: (v) => { appStore.questionsView.genTarget = v },
 })
 const genPrompt = ref('')
 // [stageA] 持久化到 appStore
 const genMode = computed<'direct' | 'pipeline'>({
-  get: () => appStore.questionsView.genMode,
+  get: () => appStore.questionsView.genMode as 'direct' | 'pipeline',
   set: (v) => { appStore.questionsView.genMode = v },
 })
 const genPipelineId = ref('builtin_default_mode')
@@ -975,7 +976,7 @@ async function importScience125() {
 }
 
 const handleBatchDelete = async () => {
-  if (!confirm(`确定删除选中的 ${selectedIds.value.length} 道题目？`)) return
+  if (!confirm(`确定删除选中的 ${selectedIds.value.size} 道题目？`)) return
   try {
     const res = await batchDeleteQuestions([...selectedIds.value])
     alert(res.data?.message || '删除成功')
@@ -1268,7 +1269,6 @@ async function submitTaskFeedback() {
 
 // ─── 跳转到工作台项目 ───
 import { useRouter } from 'vue-router'
-import { useAppStore } from '@/stores/app'
 const router = useRouter()
 function goToProject(projectId: number) {
   // 用路由 name 跳转, 兼容任意嵌套父路径
