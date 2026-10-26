@@ -559,8 +559,14 @@ async def download_ebook(cw_id: int, user: User = Depends(get_current_user_flexi
     cw = await _courseware_or_404(db, cw_id)
     slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
                                .order_by(Slide.slide_index))).scalars().all()
-    payload = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
-                "notes": s.notes or "", "tables": s.tables or []} for s in slides]
+    extras_map = (cw.staleness_report or {}).get("_deck_extras") or {}
+    payload = []
+    for s in slides:
+        row = {"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+               "notes": s.notes or "", "tables": s.tables or []}
+        # 与 pptx 导出一致：带上版式语义，卡片/对比/数据/金句才会出现在电子书里
+        row.update(extras_map.get(str(s.slide_index)) or {})
+        payload.append(row)
     return ppt_service.build_ebook_markdown(payload, cw.title)
 
 
@@ -610,6 +616,9 @@ def _handout_markdown(cw: Courseware, course, rows: list[dict], rep: dict, teach
                 text = str((b or {}).get("text", "")).strip()
                 if text:
                     out.append(f"{'- ' if lvl == 0 else '  - '}{text}")
+            # 卡片/对比/数据/金句页的正文不在 bullets 里，摊平后补进来
+            for lvl, text in ppt_service.layout_points(r):
+                out.append(f"{'- ' if lvl == 0 else '  - '}{text}")
             # tables 结构：[表格, ...]，每个表格 = [行, ...]，每行 = [单元格, ...]（首行为表头）
             for tbl in (r.get("tables") or [])[:1]:
                 if not tbl or len(tbl) < 2:
@@ -670,6 +679,9 @@ async def download_handout(cw_id: int, audience: str = "student",
              "risk_score": s.risk_score or 0, "risk_category": s.risk_category or "",
              "ai_reason": s.ai_reason or "", "ai_suggestion": s.ai_suggestion or "",
              "chapter": str(chap_map.get(str(s.slide_index), "")) or ""} for s in slides]
+    extras_map = rep.get("_deck_extras") or {}
+    for r in rows:
+        r.update(extras_map.get(str(r["slide_index"])) or {})
     return _handout_markdown(cw, course, rows, rep, teacher=str(audience).lower() == "teacher")
 
 
@@ -884,7 +896,8 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
     cw = await _courseware_or_404(db, cw_id)
     if cw.course and cw.course.teacher_id != user.id and user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="只有课程负责人可删除")
-    # 教师上传的原件仍在 uploads/，派生渲染图在 generated/courseware/，两者都清掉
+    # 教师上传的原件仍在 uploads/，派生渲染图在 generated/courseware/，导出的 pptx 在
+    # generated/exports/，三处都清掉，避免删完还留着磁盘垃圾
     rows = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id))).scalars().all()
     targets = [cw.source_path] + [f"courseware/c{cw.id // 100 or 1}/cw{cw.id}/s{s.slide_index:03d}.jpg"
                                   for s in rows]
@@ -897,6 +910,13 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
                 os.remove(p)
         except OSError:
             pass
+    # 导出缓存文件名固定为 cw{id}_v{version}.pptx，按前缀清理（历史版本也一并清）
+    try:
+        exports_dir = paths.gen_dir("exports")
+        for f in exports_dir.glob(f"cw{cw_id}_v*.pptx"):
+            f.unlink(missing_ok=True)
+    except OSError as e:
+        logger.debug(f"export cleanup skipped: {e}")
     await db.delete(cw)
     await db.commit()
     return {"ok": True}
@@ -979,6 +999,14 @@ async def ai_refresh(cw_id: int, req: AiRefreshRequest,
             "image_kb": s.image_kb, "risk_score": s.risk_score or 0,
             "risk_category": s.risk_category or "", "ai_reason": s.ai_reason or "",
             "ai_suggestion": s.ai_suggestion or ""} for s in slides]
+    # 旧版式语义与章节映射要一并带进改写链路，否则新版本会退回项目符号页、讲义丢分组
+    rep_old = cw.staleness_report or {}
+    extras_old = rep_old.get("_deck_extras") or {}
+    chap_old = rep_old.get("_chapter_map") or {}
+    for r in old:
+        r.update(extras_old.get(str(r["slide_index"])) or {})
+        if not r.get("chapter"):
+            r["chapter"] = str(chap_old.get(str(r["slide_index"]), ""))
 
     if not any((s.risk_score or 0) > 0 for s in slides):
         report = await course_ai_service.scan_staleness(
@@ -1037,7 +1065,9 @@ async def ai_refresh(cw_id: int, req: AiRefreshRequest,
         if s.get("updated_by_ai"):
             try:
                 path, kb = ppt_service._render_slide_only(
-                    s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
+                    s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg",
+                    deck_title=new_cw.title,
+                    audience=(cw.staleness_report or {}).get("audience") or "")
                 s["image_path"], s["image_kb"] = path, kb
             except Exception as e:
                 logger.debug(f"refresh slide render skipped: {e}")
@@ -1045,6 +1075,11 @@ async def ai_refresh(cw_id: int, req: AiRefreshRequest,
     rep = dict(new_cw.staleness_report or {})
     rep["sources_used"] = provenance
     rep["refreshed_from"] = cw_id
+    # 新版本同样要带版式语义与章节映射，否则阅读器/导出会退回项目符号页
+    rep["_deck_extras"] = _deck_extras(new_slides)
+    rep["_chapter_map"] = {str(s["slide_index"]): s.get("chapter", "")
+                           for s in new_slides if s.get("chapter")}
+    rep["audience"] = (cw.staleness_report or {}).get("audience", "")
     new_cw.staleness_report = rep
     await db.commit()
     return {"ok": True, "updated": usage["updated"], "new_courseware_id": new_cw.id,

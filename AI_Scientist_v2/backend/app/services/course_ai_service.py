@@ -224,6 +224,11 @@ async def refresh_slides(old_slides: list[dict], report_items: list[dict],
         upd = updated_map.get(s["slide_index"])
         if upd:
             base.update(upd)
+            # 改写过的页文字全新，旧版式语义（卡片/对比/数据/金句）已与新文字对不上，
+            # 清掉后退回项目符号版式，避免渲染出过时内容
+            for k in ("layout", "kicker", "lead", "cards", "metrics", "compare",
+                      "quote", "quote_by", "takeaway"):
+                base.pop(k, None)
             base["updated_by_ai"] = True
             base["risk_score"] = 0.0
             base["risk_category"] = "已更新"

@@ -182,6 +182,49 @@ def convert_pptx_to_slides(pptx_path: str, courseware_id: int) -> list[dict[str,
     return results
 
 
+def layout_points(slide: dict[str, Any]) -> list[tuple[int, str]]:
+    """把版式语义（卡片/对比/数据/金句）摊平成「层级 + 文本」
+
+    网页阅读器与 pptx 用版式渲染，而电子书与课堂讲义是线性 Markdown。
+    这里做一次降维，避免这些内容在非版式产物里凭空消失。
+    """
+    out: list[tuple[int, str]] = []
+    for c in slide.get("cards") or []:
+        title = str(c.get("title") or "").strip()
+        desc = str(c.get("desc") or "").strip()
+        if title:
+            out.append((0, f"{title}：{desc}" if desc else title))
+    comp = slide.get("compare") or {}
+    for side in ("left", "right"):
+        data = comp.get(side) or {}
+        head = str(data.get("title") or "").strip()
+        if head:
+            out.append((0, head))
+        for item in data.get("items") or []:
+            text = str(item).strip()
+            if text:
+                out.append((1, text))
+    for m in slide.get("metrics") or []:
+        value = str(m.get("value") or "").strip()
+        if not value:
+            continue
+        unit = str(m.get("unit") or "").strip()
+        label = str(m.get("label") or "").strip()
+        head = f"{value}{unit}"
+        out.append((0, f"{head}｜{label}" if label else head))
+    quote = str(slide.get("quote") or "").strip()
+    if quote:
+        out.append((0, f"「{quote}」"))
+        by = str(slide.get("quote_by") or "").strip()
+        if by:
+            out.append((1, f"— {by}"))
+    for t in slide.get("takeaway") or []:
+        text = str(t).strip()
+        if text:
+            out.append((0, text))
+    return out
+
+
 def build_ebook_markdown(slides: list[dict[str, Any]], deck_title: str = "") -> str:
     """把散页拼成连贯读物（Markdown），这是「电子书体验」的核心"""
     lines = [f"# {deck_title}" if deck_title else "# 课件读物", ""]
@@ -194,6 +237,12 @@ def build_ebook_markdown(slides: list[dict[str, Any]], deck_title: str = "") -> 
             for b in bullets:
                 lvl = min(int(b.get("level", 0) or 0), 3)
                 lines.append(f"{'  ' * lvl}- {b.get('text', '')}")
+            lines.append("")
+        # 卡片/对比/数据/金句页的内容不在 bullets 里，摊平后补进来
+        points = layout_points(s)
+        for lvl, text in points:
+            lines.append(f"{'  ' * min(lvl, 3)}- {text}")
+        if points:
             lines.append("")
         for tbl in (s.get("tables") or [])[:1]:
             if tbl and len(tbl) > 1:
