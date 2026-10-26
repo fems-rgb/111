@@ -910,6 +910,14 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
                 os.remove(p)
         except OSError:
             pass
+    # 图目录删空后一并移除，避免每删一份课件就留下一串空目录
+    try:
+        cw_dir = paths.GENERATED_ROOT / paths.rel("courseware", f"c{cw.id // 100 or 1}", f"cw{cw.id}")
+        for d in (cw_dir, cw_dir.parent):
+            if d.is_dir() and not any(d.iterdir()):
+                d.rmdir()
+    except OSError as e:
+        logger.debug(f"slide dir cleanup skipped: {e}")
     # 导出缓存文件名固定为 cw{id}_v{version}.pptx，按前缀清理（历史版本也一并清）
     try:
         exports_dir = paths.gen_dir("exports")
@@ -917,7 +925,16 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
             f.unlink(missing_ok=True)
     except OSError as e:
         logger.debug(f"export cleanup skipped: {e}")
+    # 联动生成的「课件电子化」文档也要删，否则知识库里会不断堆积已删课件的孤儿文档。
+    # 顺序很重要：coursewares.doc_id 外键指向 documents，必须先删课件行再删文档
+    doc_id = cw.doc_id
     await db.delete(cw)
+    await db.flush()
+    if doc_id:
+        doc = (await db.execute(select(Document).where(Document.id == doc_id)
+                                )).scalar_one_or_none()
+        if doc:
+            await db.delete(doc)
     await db.commit()
     return {"ok": True}
 
