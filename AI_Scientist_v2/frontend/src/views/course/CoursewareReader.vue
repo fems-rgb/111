@@ -29,14 +29,18 @@
               🖥️ 幻灯片
             </button>
             <button @click="viewMode = 'book'"
-                    :class="['px-2.5 py-1.5', viewMode === 'book' ? 'bg-primary-600 text-white' : 'bg-white text-surface-600 hover:bg-surface-50']">
-              📖 读物
+                    :class="['px-2.5 py-1.5', viewMode === 'book' ? 'bg-primary-600 text-white' : 'bg-white text-surface-600 hover:bg-surface-50']"
+                    title="章节连读：在同一页里快速通读全部内容">
+              📄 连读
             </button>
           </div>
+          <button @click="openEbook"
+                  class="text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700"
+                  title="在线电子书：封面 + 目录 + 分章阅读，可调字号/主题">📖 电子书</button>
           <button @click="showVersions = true" class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">🕘 版本</button>
           <a :href="coursewareApi.ebookUrl(cwId, 'pdf')" target="_blank" rel="noopener"
              class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200"
-             title="电子书 PDF：封面 + 目录 + 页码，可打印、手机可读">📕 电子书</a>
+             title="电子书 PDF：封面 + 目录 + 页码，可打印、手机可读">📕 PDF</a>
           <a :href="coursewareApi.ebookUrl(cwId, 'epub')" target="_blank" rel="noopener"
              class="text-xs px-2 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200 text-surface-500"
              title="EPUB：导入手机/阅读器，带可跳转目录">EPUB</a>
@@ -364,6 +368,11 @@ function markRead(i: number) {
 }
 
 function goBack() { router.push(courseId.value ? `/course/${courseId.value}` : '/courses') }
+
+/** 在线电子书：独立阅读页（封面/目录/分章/字号与主题） */
+function openEbook() {
+  router.push({ name: 'CoursewareEbook', params: { courseId: courseId.value, cwId: cwId.value } })
+}
 
 // ═══ 删除课件 ═══
 const deleting = ref(false)

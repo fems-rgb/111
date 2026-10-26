@@ -6,7 +6,7 @@
         <h1 class="text-2xl font-bold flex items-center gap-2">📽️ 课件工坊</h1>
         <p class="text-sm text-surface-500 mt-1">
           不用先建课程 —— 给一个主题，AI 直接产出整套 PPT 课件（全程进度可视），可下载 <span class="font-mono">.pptx</span> 投影，
-          导出电子书 PDF/EPUB 送手机，也能生成学生/教师讲义（Word / PDF）直接打印
+          也能按封面/目录/分章在线读电子书、导出 PDF/EPUB 送手机，还能生成学生/教师讲义（Word / PDF）直接打印
         </p>
       </div>
       <button @click="$router.push('/courses')"
@@ -25,7 +25,7 @@
       </div>
       <div class="card p-4">
         <p class="text-xs font-semibold text-primary-600">第 3 步 · 拿课件</p>
-        <p class="text-[11px] text-surface-500 mt-1.5 leading-relaxed">生成时实时显示阶段/章节/页数进度；完成后 ⬇️ .pptx、📕 电子书 PDF/EPUB、📄 学生或教师讲义（Word/PDF）、✏️ 逐页微调，并自动归入一门课程（默认仅自己可见）</p>
+        <p class="text-[11px] text-surface-500 mt-1.5 leading-relaxed">生成时实时显示阶段/章节/页数进度；完成后 ⬇️ .pptx、📖 在线电子书（也可导 PDF/EPUB）、📄 学生或教师讲义（Word/PDF）、✏️ 逐页微调，并自动归入一门课程（默认仅自己可见）</p>
       </div>
     </div>
 
@@ -174,9 +174,13 @@
                  class="text-xs px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium">
                 ⬇️ 下载 .pptx
               </a>
+              <button v-if="result.courseware_id"
+                      @click="$router.push({ name: 'CoursewareEbook', params: { courseId: result.course_id || 0, cwId: result.courseware_id } })"
+                      class="text-xs px-3 py-2 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                      title="在线电子书：封面 + 目录 + 分章阅读，可调字号/夜间模式">📖 在线电子书</button>
               <a v-if="result.courseware_id" :href="coursewareApi.ebookUrl(result.courseware_id, 'pdf')" target="_blank" rel="noopener"
-                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50"
-                 title="电子书 PDF：封面 + 目录 + 页码，可打印、手机可读">📕 电子书</a>
+                 class="text-xs px-2.5 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50 text-surface-500"
+                 title="电子书 PDF：封面 + 目录 + 页码，可打印、手机可读">PDF</a>
               <a v-if="result.courseware_id" :href="coursewareApi.ebookUrl(result.courseware_id, 'epub')" target="_blank" rel="noopener"
                  class="text-xs px-2.5 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50 text-surface-500"
                  title="EPUB：导入手机/阅读器">EPUB</a>
@@ -239,8 +243,8 @@
             <div class="flex gap-1.5 mt-2">
               <button @click="$router.push(h.reader_url)"
                       class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1">📖 阅读</button>
-              <a :href="coursewareApi.ebookUrl(h.id, 'pdf')" target="_blank" rel="noopener"
-                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="电子书 PDF">📕</a>
+              <button @click="$router.push({ name: 'CoursewareEbook', params: { courseId: h.course_id, cwId: h.id } })"
+                      class="text-[10px] px-2 py-1 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex-1" title="在线电子书">📕</button>
               <a :href="coursewareApi.handoutUrl(h.id, 'student', 'docx')" target="_blank" rel="noopener"
                  class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="学生讲义 Word">📄</a>
               <a :href="coursewareApi.exportUrl(h.id)" :download="`课件_${h.id}.pptx`"

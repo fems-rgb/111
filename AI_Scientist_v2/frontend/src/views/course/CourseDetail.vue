@@ -181,9 +181,12 @@
                   📖 阅读
                 </button>
                 <div class="flex gap-1.5">
+                  <button @click="openEbook(w.id)" :disabled="w.status !== 'ready'"
+                          class="text-[11px] px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 disabled:opacity-40"
+                          title="在线电子书：封面 + 目录 + 分章阅读，可调字号/夜间模式">📕 电子书</button>
                   <a :href="coursewareApi.ebookUrl(w.id, 'pdf')" target="_blank" rel="noopener"
-                     class="text-[11px] px-2.5 py-1 rounded-md bg-surface-100 text-surface-600 hover:bg-surface-200 text-center"
-                     title="电子书 PDF：带封面、目录与页码，可打印、手机可读">📕 电子书</a>
+                     class="text-[11px] px-2 py-1 rounded-md bg-surface-100 text-surface-500 hover:bg-surface-200 text-center"
+                     title="电子书 PDF：带封面、目录与页码，可打印、手机可读">PDF</a>
                   <a :href="coursewareApi.ebookUrl(w.id, 'epub')" target="_blank" rel="noopener"
                      class="text-[11px] px-2 py-1 rounded-md bg-surface-100 text-surface-500 hover:bg-surface-200 text-center"
                      title="EPUB：可导入手机/阅读器，带可跳转目录">EPUB</a>
@@ -544,6 +547,10 @@ async function loadMaterials() {
 }
 
 function openReader(cwId: number) { router.push(`/course/${courseId.value}/read/${cwId}`) }
+/** 在线电子书（独立阅读页，不是下载） */
+function openEbook(cwId: number) {
+  router.push({ name: 'CoursewareEbook', params: { courseId: courseId.value, cwId } })
+}
 
 // ═══ 选课 ═══
 async function toggleEnroll() {
