@@ -624,3 +624,30 @@ class Enrollment(Base):
 
     course = relationship("Course", back_populates="enrollments")
     student = relationship("User", foreign_keys=[student_id])
+
+
+class GenerateJob(Base):
+    """课件生成作业进度（持久化）
+
+    内存表只在进程内且有 TTL，服务重启/超期即查不到；本表低频镜像作业状态，
+    让前端在服务重启或作业完成很久后仍能轮询到最终结果。启动时把残留 running 判为失败。
+    """
+    __tablename__ = "generate_jobs"
+
+    job_id = Column(String(32), primary_key=True)
+    user_id = Column(Integer, nullable=True, index=True)
+    topic = Column(String(500), default="")
+    course_id = Column(Integer, nullable=True)
+    course_title = Column(String(500), default="")
+    status = Column(String(20), default="running")           # running / done / failed
+    stage = Column(String(30), default="queued")             # queued/material/outline/chapter/summary/render/persist/done/failed
+    percent = Column(Integer, default=0)                     # 0-100
+    message = Column(String(500), default="")
+    chapters_done = Column(Integer, default=0)
+    chapters_total = Column(Integer, default=0)
+    slides_done = Column(Integer, default=0)
+    slides_total = Column(Integer, default=0)
+    result = Column(JSON, default=dict)                      # 完成时放 _build_deck 返回值
+    error = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

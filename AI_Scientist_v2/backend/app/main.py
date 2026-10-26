@@ -53,6 +53,11 @@ async def lifespan(app: FastAPI):
     from app.agents.orchestrator import orchestrator
     async with AsyncSessionLocal() as db:
         await orchestrator.cleanup_zombies(db)
+    # 课件生成作业对账：上次进程遗留的 running 后台任务已随进程消失，判为失败并清理过期记录
+    from app.services import generate_progress as _gp
+    _n_job = await _gp.reconcile_on_startup()
+    if _n_job:
+        logger.info(f"🧹 课件生成作业：重启时标记 {_n_job} 个中断作业为失败")
     # 初始化实验模板
     from app.api.v1.experiment_lab import seed_builtin_templates
     from app.database.session import AsyncSessionLocal as _ASL

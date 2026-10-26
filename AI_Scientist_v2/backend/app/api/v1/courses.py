@@ -684,8 +684,9 @@ async def quick_generate_courseware(req: GenerateDeckRequest,
 
     payload = (req.model_dump() if hasattr(req, "model_dump") else req.dict())
     payload["course_id"] = course.id  # 后台任务直接用这门课，不再重复建课
-    job_id = gp.new_job(topic=req.topic, course_id=course.id, course_title=course.title,
-                        chapters_total=max(1, min(int(req.chapter_count or 6), 12)))
+    job_id = await gp.new_job(topic=req.topic, course_id=course.id, course_title=course.title,
+                              user_id=user.id,
+                              chapters_total=max(1, min(int(req.chapter_count or 6), 12)))
     asyncio.create_task(_run_generate_job(job_id, payload, user.id))
     return {"ok": True, "job_id": job_id, "course_id": course.id,
             "course_title": course.title,
@@ -694,8 +695,11 @@ async def quick_generate_courseware(req: GenerateDeckRequest,
 
 @cw_router.get("/quick-generate/{job_id}")
 async def quick_generate_status(job_id: str, user: User = Depends(get_current_user)):
-    """轮询课件生成进度；status=done 时 result 就是完整生成结果（含 courseware_id）"""
-    snap = gp.snapshot(job_id)
+    """轮询课件生成进度；status=done 时 result 就是完整生成结果（含 courseware_id）
+
+    先查内存，内存没有则回数据库（服务重启 / 超过内存 TTL 后仍可查到最终结果）。
+    """
+    snap = await gp.snapshot(job_id)
     if snap is None:
         raise HTTPException(status_code=404,
                             detail="作业记录不存在或已过期，可在「我生成过的课件」里查看结果")
@@ -703,30 +707,30 @@ async def quick_generate_status(job_id: str, user: User = Depends(get_current_us
 
 
 async def _run_generate_job(job_id: str, payload: dict, user_id: int) -> None:
-    """后台生成作业：自建 session（请求级 db 已关闭），进度写内存作业表"""
+    """后台生成作业：自建 session（请求级 db 已关闭），进度写内存并低频镜像到数据库"""
     async def on_progress(stage, percent, message, extra):
-        gp.update(job_id, stage=stage, percent=percent, message=message, **(extra or {}))
+        await gp.update(job_id, stage=stage, percent=percent, message=message, **(extra or {}))
 
     try:
         async with AsyncSessionLocal() as db:
             user = await db.get(User, user_id)
             course = await db.get(Course, int(payload.get("course_id") or 0))
             if not user or not course:
-                gp.update(job_id, status="failed", stage="failed", message="生成失败：会话已失效",
-                          error="user or course not found")
+                await gp.update(job_id, status="failed", stage="failed", message="生成失败：会话已失效",
+                                error="user or course not found")
                 return
             req = GenerateDeckRequest(**payload)
-            gp.update(job_id, stage="start", percent=1, message="开始生成…",
-                      course_id=course.id, course_title=course.title)
+            await gp.update(job_id, stage="start", percent=1, message="开始生成…",
+                            course_id=course.id, course_title=course.title)
             out = await _build_deck(db, course, req, user, on_progress=on_progress)
             out.setdefault("course_id", course.id)
             out["course_title"] = course.title
-            gp.update(job_id, status="done", stage="done", percent=100,
-                      message=f"已生成 {out.get('slide_count', 0)} 页课件", result=out)
+            await gp.update(job_id, status="done", stage="done", percent=100,
+                            message=f"已生成 {out.get('slide_count', 0)} 页课件", result=out)
     except Exception as e:
         logger.exception(f"quick-generate 作业失败 job={job_id}")
-        gp.update(job_id, status="failed", stage="failed",
-                  message=f"生成失败：{str(e)[:120]}", error=str(e)[:400])
+        await gp.update(job_id, status="failed", stage="failed",
+                        message=f"生成失败：{str(e)[:120]}", error=str(e)[:400])
 
 
 @cw_router.post("/{cw_id}/progress")

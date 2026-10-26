@@ -62,7 +62,7 @@ AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记
 | 后端 Python（`backend/app`） | 101 文件 / 15,829 行 |
 | 前端 Vue + TS（`frontend/src`） | 59 文件 / 11,723 行 |
 | REST API | 150 个操作 / 127 条唯一路径（课程中心 27：`/courses` 13 · `/coursewares` 14） |
-| 数据表 | 26 张 |
+| 数据表 | 27 张 |
 | Agent | 15 项注册 · 9 阶段默认流水线 |
 | 内置科学问题 | 125 题（Science 2005 前沿难题） |
 | 前端视图 / 组件 / API 模块 | 18 / 12 / 13 |
@@ -159,7 +159,7 @@ POST /api/v1/coursewares/quick-generate   →  立即返回 job_id（202，不�
 ①  未指定 course_id → 自动创建一门【仅自己可见】的草稿课程承载（不污染公开课列表）
 ②  AI 先出大纲，再逐章撰写 slides（分章调用，避免一次性输出 80 页被 max_tokens 截断）
 ③  生成小结页 + 课后思考题 + 延伸阅读 → 逐页渲染轻量配图 → 落库→电子书文本入资料库
-        ↓  每一阶段写进进程内作业表（services/generate_progress.py）
+        ↓  每一阶段写内存作业表，并低频镜像到数据库 generate_jobs 表（services/generate_progress.py）
 GET /api/v1/coursewares/quick-generate/{job_id}   ← 前端每 1.2s 轮询，驱动真实进度条
         ↓
 ④  status=done 时 result 里拿到 courseware_id / slide_count / cost /
@@ -170,8 +170,9 @@ GET /api/v1/coursewares/quick-generate/{job_id}   ← 前端每 1.2s 轮询，�
 
 **进度可视化**：阶段枚举 `material → outline → chapter → summary → render → persist`，
 前端（`views/course/CoursewareStudio.vue` 与课程详情页的生成弹窗）展示百分比进度条、
-已完成章节数 `x/y`、已产出页数与逐条阶段日志；作业进度只存内存 30 分钟（服务重启或过期后
-结果仍可在右侧「我生成过的课件」与课程页拿到）。
+已完成章节数 `x/y`、已产出页数与逐条阶段日志；作业进度同时存内存与数据库
+`generate_jobs` 表，因此服务重启或超过内存 30 分钟 TTL 后仍能轮询到最终结果（内存未命中自动回查数据库）；
+启动时会把上次进程遗留的 `running` 作业对账为 `failed`（后台 asyncio 任务已随进程消失）。
 
 右侧「🗂️ 我生成过的课件」来自 `GET /api/v1/coursewares/ai-mine`，随时回看、再下载、按同样参数重跑。
 
@@ -265,7 +266,7 @@ AI_Scientist_v2/
 │   │   ├── api/v1/            # 22 个端点模块（courses.py 含课程 + 课件双 router）
 │   │   ├── services/          # 16 个服务：qwen_client / ppt_service / course_ai_service / generate_progress / …
 │   │   ├── schemas/           # Pydantic 契约
-│   │   ├── database/          # models（26 表）· session · init_db · Alembic
+│   │   ├── database/          # models（27 表）· session · init_db · Alembic
 │   │   ├── core/ · security/  # 事件总线 · 加密 · JWT · 速率限制
 │   │   ├── utils/paths.py     # ★ 生成文件唯一路径入口
 │   │   ├── observability/     # tracer · 成本统计
@@ -417,7 +418,7 @@ pytest tests -q          # 12 用例，约 1s 跑完（不依赖外部 API Key�
 | 生成的文件到处乱跑 | 曾使用 `os.getcwd()` / 相对路径 | 已全部改为 `app/utils/paths.py` 绝对根 |
 | 老课件图片打不开 | 历史数据存的是 `uploads/courses/…` 或绝对路径 | `paths.resolve()` 自动回退旧根，无需迁移 |
 | PPT 解析失败 | `.ppt` 旧二进制格式 | 先在 Office 里另存为 `.pptx` |
-| 刷新页面后生成进度条消失 | 作业进度只存进程内（TTL 30 分钟），服务重启即失效 | 生成结果已落库，去「我生成过的课件」或课程页拿；无需重新生成 |
+| 刷新页面后生成进度条消失 | 内存作业表有 TTL 且进程重启即清空 | 作业状态已低频镜像到 `generate_jobs` 表，轮询内存未命中自动回查数据库；启动时残留 running 对账为 failed；结果本身也已落库，可去课程页拿 |
 | 后台生成报错但页面不提示 | 失败信息写在作业表的 `error` 字段 | 轮询到 `status=failed` 会显示红色提示；也可 `GET /coursewares/quick-generate/{job_id}` 直查 |
 | 聚合报告写进大模型时报 `SyntaxError: '(' was never closed` | f-string 里嵌了同种引号（PEP 701 仅 Py3.12+ 合法），如 `f"{'、'.join(x)}"` | 先在外部算好变量再插值 |
 | 讲义/电子书里表格只剩一行表头 | `Slide.tables` 是 `[表格[行[单元格]]]` 三层，易误当成单行 | 按 `tbl[0]` 表头、`tbl[1:]` 正文渲染，单元格内的竖线自动转全角｜ |
