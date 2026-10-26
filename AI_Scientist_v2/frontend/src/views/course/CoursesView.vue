@@ -116,6 +116,9 @@
           <span v-if="staleOf(c)" class="ml-auto text-[11px] px-2 py-1 rounded-md bg-orange-50 text-orange-700 border border-orange-200">
             ⚠️ {{ staleOf(c) }} 件待更新
           </span>
+          <button v-if="canTeach && c.is_teacher" @click.stop="removeCourse(c)"
+                  :class="['text-[11px] px-2 py-1 rounded-md text-red-500 hover:bg-red-50', staleOf(c) ? '' : 'ml-auto']"
+                  title="删除这门课程及其课件、派生资料">🗑 删除</button>
         </div>
       </div>
     </div>
@@ -293,6 +296,18 @@ async function reload() {
 
 async function loadStats() {
   try { Object.assign(stats, (await courseApi.stats()).data) } catch { /* ignore */ }
+}
+
+/** 卡片上直接删课：不需再进详情页找删除入口（草稿课往往是 AI 自动建的，更需要快速清理） */
+async function removeCourse(c: Course) {
+  if (!confirm(`确定删除课程「${c.title}」？\n\n其课件、渲染图与派生到资料库的文档会一并清理，且不可恢复。`)) return
+  if (c.status === 'published' && !confirm('这门课已发布，学生可能正在学。再确认一次：真的要删除吗？')) return
+  try {
+    await courseApi.remove(c.id)
+    await Promise.all([reload(), loadStats()])
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '删除失败，请稍后重试')
+  }
 }
 
 function goDetail(c: Course) {

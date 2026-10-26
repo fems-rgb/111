@@ -4,9 +4,10 @@ import uuid
 import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, Form, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, update as sa_update
+from sqlalchemy.exc import IntegrityError
 from app.database.session import get_db
-from app.database.models import User, Document
+from app.database.models import User, Document, Courseware
 from app.config import settings
 from app.security.sanitizer import sanitize_filename
 from app.security.prompt_guard import prompt_guard
@@ -110,8 +111,15 @@ async def delete_document(
                 os.remove(path)
         except OSError:
             pass  # 文件删除失败不影响数据库记录删除
+    # ★ 课件电子化会生成 doc_id 指向本文档的虚拟记录（coursewares.doc_id），
+    #   SQLite 外键是 NO ACTION，不先解除引用就会 FOREIGN KEY constraint failed
+    await db.execute(sa_update(Courseware).where(Courseware.doc_id == doc_id).values(doc_id=None))
     await db.delete(doc)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="该资料仍被其他内容引用，无法删除")
     return {"ok": True}
 
 

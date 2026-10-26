@@ -56,6 +56,8 @@ export const useAppStore = defineStore('app', () => {
     toastMsg.value = msg
     toastType.value = type
     setTimeout(() => { toastMsg.value = '' }, 3000)
+    // 全局只渲染 toasts 数组（AppLayout），单写 toastMsg 是看不到任何提示的
+    showToastMulti(msg, type)
   }
   const toasts = ref<Array<{ id: number; message: string; type: 'success' | 'error' | 'info' | 'warning' }>>([])
   let toastId = 0

@@ -140,7 +140,11 @@ async def list_courses(
     enrolled_ids = set((await db.execute(
         select(Enrollment.course_id).where(Enrollment.student_id == user.id))).scalars().all())
 
-    return {"items": [_course_out(c, {"is_enrolled": c.id in enrolled_ids}) for c in rows],
+    return {"items": [_course_out(c, {
+        "is_enrolled": c.id in enrolled_ids,
+        # ★ 列表也要带 is_teacher，否则前端卡片上的“我的课程”徽标、删除按钮永不显示
+        "is_teacher": c.teacher_id == user.id or user.role == UserRole.ADMIN,
+    }) for c in rows],
             "total": total, "can_teach": user.role in TEACHER_ROLES}
 
 
@@ -277,7 +281,15 @@ async def delete_course(course_id: int, user: User = Depends(get_current_user),
     course = await _course_or_404(db, course_id)
     if course.teacher_id != user.id and user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="只有课程负责人可以删除")
+    # 课件电子化会往资料库写一份派生文档，课程删除时一并清掉，
+    # 否则资料库会堆一堆无主文档（且其被课件引用时删不掉）
+    doc_ids = {w.doc_id for w in (course.coursewares or []) if w.doc_id}
     await db.delete(course)
+    await db.flush()
+    for did in doc_ids:
+        doc = (await db.execute(select(Document).where(Document.id == did))).scalar_one_or_none()
+        if doc:
+            await db.delete(doc)
     await db.commit()
     return {"ok": True}
 

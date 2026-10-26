@@ -407,6 +407,50 @@ function stopTimers() {
   if (tickTimer) { window.clearInterval(tickTimer); tickTimer = null }
 }
 
+// ═══ 作业记忆：刷新页面后接着看同一份生成进度 ═══
+// 生成在后端是 asyncio 任务，刷新只是前端断了轮询；把 job_id 落本地，
+// 重新进入课件工坊时就能重新接上进度条，而不是“刚开始的进程没了”
+const JOB_KEY = 'cw_gen_job'
+
+function rememberJob(jobId: string) {
+  try { localStorage.setItem(JOB_KEY, JSON.stringify({ job_id: jobId, at: Date.now() })) } catch { /* 隐私模式忽略 */ }
+}
+function forgetJob() {
+  try { localStorage.removeItem(JOB_KEY) } catch { /* ignore */ }
+}
+
+/** 回到工坊时恢复未完成的生成作业（接着轮询），已完成的直接把结果摆出来 */
+async function resumeJob() {
+  let saved: { job_id?: string; at?: number } | null = null
+  try { saved = JSON.parse(localStorage.getItem(JOB_KEY) || 'null') } catch { saved = null }
+  const jobId = saved?.job_id
+  if (!jobId) return
+  if (Date.now() - (saved?.at || 0) > 6 * 3600_000) { forgetJob(); return }
+  try {
+    const r = await coursewareApi.generateStatus(jobId)
+    const s = r.data
+    if (s.status === 'running') {
+      busy.value = true
+      cancelling.value = false
+      job.value = { ...s, job_id: jobId }
+      elapsed.value = Math.max(0, Math.round((Date.now() - (saved?.at || Date.now())) / 1000))
+      tickTimer = window.setInterval(() => { elapsed.value += 1 }, 1000)
+      pollTimer = window.setInterval(() => void pollJob(jobId), 1200)
+      await pollJob(jobId)
+    } else if (s.status === 'done' && s.result) {
+      result.value = s.result
+      job.value = { ...s, job_id: jobId, percent: 100 }
+      forgetJob()
+      if (s.result.courseware_id) await loadPreview(s.result.courseware_id)
+      await loadHistory()
+    } else {
+      forgetJob()
+    }
+  } catch (e: any) {
+    if (e?.response?.status === 404) forgetJob()
+  }
+}
+
 /** 拉一次作业状态：进度只增不减，完成后停下轮询并接结果 */
 async function pollJob(jobId: string) {
   try {
@@ -421,6 +465,7 @@ async function pollJob(jobId: string) {
       stopTimers()
       busy.value = false
       cancelling.value = false
+      forgetJob()
       result.value = s.result
       job.value = { ...s, percent: 100 }
       if (s.result.courseware_id) await loadPreview(s.result.courseware_id)
@@ -429,11 +474,13 @@ async function pollJob(jobId: string) {
       stopTimers()
       busy.value = false
       cancelling.value = false
+      forgetJob()
       errMsg.value = s.error ? `生成失败：${s.error}` : '生成失败，请重试或换个主题'
     } else if (s.status === 'cancelled') {
       stopTimers()
       busy.value = false
       cancelling.value = false
+      forgetJob()
       noticeMsg.value = '已停止生成。已落库的部分不会计入「我生成过的课件」，调好参数后可直接重新发起。'
     }
   } catch (e: any) {
@@ -480,6 +527,7 @@ async function generate() {
     const jobId = res.data.job_id
     if (!jobId) throw new Error('服务端未返回 job_id')
     job.value = { ...job.value, job_id: jobId }
+    rememberJob(jobId)
     void pollJob(jobId)
     pollTimer = window.setInterval(() => void pollJob(jobId), 1200)
   } catch (e: any) {
@@ -544,6 +592,6 @@ async function loadHistory() {
 onMounted(() => {
   if (route.query.topic) form.topic = String(route.query.topic)
   if (route.query.course_id) form.course_id = Number(route.query.course_id) || null
-  if (canTeach.value) { loadMyCourses(); loadHistory(); loadModels() }
+  if (canTeach.value) { loadMyCourses(); loadHistory(); loadModels(); void resumeJob() }
 })
 </script>
