@@ -52,6 +52,8 @@ class GenerateDeckRequest(BaseModel):
     project_id: Optional[int] = None
     title: Optional[str] = Field(None, max_length=300)
     auto_save: bool = True
+    # 课件生成可选模型（为空则用后端默认模型；不在白名单内也会回退默认）
+    model: Optional[str] = Field(None, max_length=60)
     # 课件工坊：不传 course_id 时自动建一个仅自己可见的私有课程来承载课件
     course_id: Optional[int] = None
     create_course: bool = True

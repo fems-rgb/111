@@ -13,10 +13,25 @@ import re
 from typing import Any
 
 from app.agents.qwen_client import call_qwen
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 8  # 每次体检喂给 LLM 的页数，控制上下文长度
+
+# 课件生成可选模型（与 AgentPlayground 下拉保持一致）；不在表内的一律回退到默认模型，
+# 避免把任意字符串透传给通义千问 API。默认值跟随 settings.QWEN_MODEL_NAME。
+SUPPORTED_MODELS = ("qwen-turbo", "qwen-plus", "qwen-max", "qwen-max-longcontext")
+
+
+def resolve_model(model: str | None) -> str:
+    """校验前端传入的模型名：命中白名单则用之，否则回退默认（不传死值）"""
+    m = (model or "").strip()
+    return m if m in SUPPORTED_MODELS else settings.QWEN_MODEL_NAME
+
+
+class GenerationCancelled(Exception):
+    """用户中途停止生成作业（由 should_cancel 探测后抛出，_run_generate_job 捕获落 cancelled 终态）"""
 
 
 def _extract_json(text: str) -> Any:
@@ -263,13 +278,20 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
                         slides_per_chapter: int = 4, style: str = "标准",
                         audience: str = "本科生", domain: str = "",
                         reference_material: str = "", project_id: int = None,
-                        on_progress=None) -> tuple[list[dict], dict]:
+                        on_progress=None, model: str = None,
+                        should_cancel=None) -> tuple[list[dict], dict]:
     """新课程快速做课件：先出大纲，再逐章生成，全程上报进度
 
     on_progress(stage, percent, message, extra) 由调用方传入（课件工坊的作业循环），
     让前端进度条显示“第几章/共几页”这种真实进展，而不是一个转圈的盲等。
     分章生成还顺带解决了旧版一次性输出 80 页时被 max_tokens 截断的问题。
+    model：命白名单则用该模型，否则用默认；should_cancel() 为真时抛 GenerationCancelled。
     """
+    mdl = resolve_model(model)
+
+    def _cancelled() -> bool:
+        return bool(should_cancel and should_cancel())
+
     async def _emit(stage: str, percent: int, message: str, **extra):
         if on_progress:
             try:
@@ -285,6 +307,8 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
     ref_block = ("\n参考资料（优先吸收其中的事实与数据）：\n" + reference_material[:5000]) if reference_material else ""
 
     # ── 1. 大纲 ──
+    if _cancelled():
+        raise GenerationCancelled()
     await _emit("outline", 6, "正在设计章节大纲…")
     res = await call_qwen(_OUTLINE_SYSTEM, f"""主题：{topic}
 领域：{domain or '通用'}
@@ -292,7 +316,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 风格：{style}
 章节数：{chapter_count}，每章约 {slides_per_chapter} 页{syl_block}{ref_block}
 
-只输出 JSON。""", project_id=project_id, max_tokens=1600)
+只输出 JSON。""", project_id=project_id, max_tokens=1600, model=mdl)
     cost += res.get("cost", 0)
     tin += res["tokens"]["input"]
     tout += res["tokens"]["output"]
@@ -313,6 +337,8 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
     # ── 2. 逐章生成 ──
     base, span = 10, 78
     for i, ch in enumerate(chapters):
+        if _cancelled():
+            raise GenerationCancelled()
         chapter_name = str(ch.get("title", f"第 {i + 1} 部分"))[:200]
         await _emit("chapter", base + int(span * i / len(chapters)),
                     f"正在生成第 {i + 1}/{len(chapters)} 章：{chapter_name[:24]}",
@@ -326,7 +352,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 请输出 {slides_per_chapter} 页{ref_block if i == 0 else ''}
 
 只输出 {{"slides": [...]}}。""", project_id=project_id,
-                              max_tokens=min(6000, 800 + slides_per_chapter * 600))
+                              max_tokens=min(6000, 800 + slides_per_chapter * 600), model=mdl)
         cost += cres.get("cost", 0)
         tin += cres["tokens"]["input"]
         tout += cres["tokens"]["output"]
@@ -345,6 +371,8 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
                     slides_done=len(slides), slides_total=cap)
 
     # ── 3. 小结页 + 思考题 + 延伸阅读（讲义要用后两项）──
+    if _cancelled():
+        raise GenerationCancelled()
     await _emit("summary", 92, "正在生成小结、思考题与延伸阅读…")
     def _line(j: int, c: dict) -> str:
         pts = "、".join(str(p)[:40] for p in (c.get("points") or [])[:4])
@@ -360,7 +388,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
             '"exercises": ["思考题"], "reading": ["延伸阅读"]}',
             f"课程主题：{topic}（面向 {audience}）\n章节与知识点：\n{outline_txt}\n\n"
             f"请给出：结课小结页（回收全课主线，3-6 条要点）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
-            project_id=project_id, max_tokens=1400)
+            project_id=project_id, max_tokens=1400, model=mdl)
         cost += sres.get("cost", 0)
         tin += sres["tokens"]["input"]
         tout += sres["tokens"]["output"]
@@ -383,6 +411,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
         "objectives": objectives,
         "exercises": exercises,
         "reading": reading,
+        "model": mdl,
         "cost": round(cost, 6),
         "tokens": {"input": tin, "output": tout},
     }

@@ -443,6 +443,7 @@ async def list_my_ai_coursewares(limit: int = Query(30, ge=1, le=100),
     必须在 /{cw_id} 之前声明，否则 ai-mine 会被当成 cw_id。
     """
     stmt = (select(Courseware)
+            .options(selectinload(Courseware.course))
             .join(Course, Course.id == Courseware.course_id)
             .where(Course.teacher_id == user.id, Courseware.source_type == "ai_generated")
             .order_by(desc(Courseware.id)).limit(limit))
@@ -454,6 +455,25 @@ async def list_my_ai_coursewares(limit: int = Query(30, ge=1, le=100),
         "pptx_url": f"/api/v1/coursewares/{c.id}/export/pptx",
         "reader_url": f"/course/{c.course_id}/read/{c.id}",
     } for c in rows], "can_teach": user.role in TEACHER_ROLES}
+
+
+@cw_router.get("/generate-models")
+async def list_generate_models():
+    """课件生成可选模型列表（供前端下拉）；必须在 /{cw_id} 之前声明，否则会被当成 cw_id
+
+    默认值跟随后端配置 settings.QWEN_MODEL_NAME。
+    """
+    default = settings.QWEN_MODEL_NAME
+    labels = {
+        "qwen-turbo": ("Qwen-Turbo（快速）", "速度快、成本低，适合初稿"),
+        "qwen-plus": ("Qwen-Plus（均衡）", "质量与速度均衡，推荐"),
+        "qwen-max": ("Qwen-Max（强力）", "质量最高，较慢较贵"),
+        "qwen-max-longcontext": ("Qwen-Max 长文", "适合超长大纲/参考资料"),
+    }
+    items = [{"value": m, "label": labels.get(m, (m, ""))[0],
+              "desc": labels.get(m, ("", ""))[1], "is_default": m == default}
+             for m in course_ai_service.SUPPORTED_MODELS]
+    return {"ok": True, "default": default, "items": items}
 
 
 @cw_router.get("/{cw_id}")
@@ -706,11 +726,33 @@ async def quick_generate_status(job_id: str, user: User = Depends(get_current_us
     return {"ok": True, "job_id": job_id, **snap}
 
 
+@cw_router.post("/quick-generate/{job_id}/cancel")
+async def cancel_quick_generate(job_id: str, user: User = Depends(get_current_user)):
+    """停止一个正在运行的课件生成作业（可调控）
+
+    只能停自己发起的作业（admin 可停任意）；置位后生成循环会在下一个
+    await 边界（通预先一次 LLM 调用之间）停下，作业转 cancelled 终态，可随时重新发起。
+    """
+    owner = gp.owner_of(job_id)
+    if owner is not None and owner != user.id and user.role != UserRole.ADMIN:
+        raise HTTPException(status_code=403, detail="只能停止自己发起的生成作业")
+    if not gp.request_cancel(job_id):
+        raise HTTPException(status_code=409, detail="作业不在运行中（已结束或已过期）")
+    await gp.update(job_id, stage="cancelling", message="正在停止…（会在当前步骤结束后停下）")
+    return {"ok": True, "job_id": job_id, "cancelled": True}
+
+
 async def _run_generate_job(job_id: str, payload: dict, user_id: int) -> None:
-    """后台生成作业：自建 session（请求级 db 已关闭），进度写内存并低频镜像到数据库"""
+    """后台生成作业：自建 session（请求级 db 已关闭），进度写内存并低频镜像到数据库
+
+    开跑前登记一个取消 Event：前端点「停止」会命中取消端点置位，
+    生成循环（大纲/逐章/小结/逐页配图）在每次 await 之间检查，及时抛 GenerationCancelled 停下。
+    """
     async def on_progress(stage, percent, message, extra):
         await gp.update(job_id, stage=stage, percent=percent, message=message, **(extra or {}))
 
+    gp.register_cancel(job_id)
+    should_cancel = lambda: gp.is_cancelled(job_id)  # noqa: E731
     try:
         async with AsyncSessionLocal() as db:
             user = await db.get(User, user_id)
@@ -722,15 +764,22 @@ async def _run_generate_job(job_id: str, payload: dict, user_id: int) -> None:
             req = GenerateDeckRequest(**payload)
             await gp.update(job_id, stage="start", percent=1, message="开始生成…",
                             course_id=course.id, course_title=course.title)
-            out = await _build_deck(db, course, req, user, on_progress=on_progress)
+            out = await _build_deck(db, course, req, user, on_progress=on_progress,
+                                    should_cancel=should_cancel)
             out.setdefault("course_id", course.id)
             out["course_title"] = course.title
             await gp.update(job_id, status="done", stage="done", percent=100,
                             message=f"已生成 {out.get('slide_count', 0)} 页课件", result=out)
+    except course_ai_service.GenerationCancelled:
+        logger.info(f"quick-generate 已手动停止 job={job_id}")
+        await gp.update(job_id, status="cancelled", stage="cancelled",
+                        message="已停止生成，可调整参数后重新发起")
     except Exception as e:
         logger.exception(f"quick-generate 作业失败 job={job_id}")
         await gp.update(job_id, status="failed", stage="failed",
                         message=f"生成失败：{str(e)[:120]}", error=str(e)[:400])
+    finally:
+        gp.unregister_cancel(job_id)
 
 
 @cw_router.post("/{cw_id}/progress")
@@ -981,7 +1030,7 @@ async def ai_refresh(cw_id: int, req: AiRefreshRequest,
 # ════════════════ AI：快速做课件（需求 4，多源素材驱动） ════════════════
 
 async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest,
-                      user: User, on_progress=None) -> dict:
+                      user: User, on_progress=None, should_cancel=None) -> dict:
     """生成整套课件（课程内生成与课件工坊一键生成共用）
 
     on_progress(stage, percent, message, extra)：素材聚合 → 大纲 → 逐章 → 逐页配图 → 落库，
@@ -1003,7 +1052,8 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
         chapter_count=req.chapter_count, slides_per_chapter=req.slides_per_chapter,
         style=req.style, audience=req.audience,
         domain=req.domain or course.domain or "", reference_material=material,
-        project_id=req.project_id or course.project_id, on_progress=on_progress)
+        project_id=req.project_id or course.project_id, on_progress=on_progress,
+        model=req.model, should_cancel=should_cancel)
 
     if not slides:
         raise HTTPException(status_code=500, detail="AI 未返回可用课件内容，请调整大纲后重试")
@@ -1020,6 +1070,8 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
     rel, abs_dir = ppt_service._slides_dir(cw.id)
     total = len(slides)
     for idx, s in enumerate(slides):
+        if should_cancel and should_cancel():
+            raise course_ai_service.GenerationCancelled()
         try:
             path, kb = ppt_service._render_slide_only(s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
             s["image_path"], s["image_kb"] = path, kb
@@ -1050,6 +1102,7 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
     return {"ok": True, "saved": True, "course_id": course.id, "courseware_id": cw.id,
             "slide_count": cw.slide_count, "chapters": meta.get("chapters", []),
             "cost": meta.get("cost", 0), "tokens": meta.get("tokens", {}), "version": cw.version,
+            "model": meta.get("model", ""),
             "title": cw.title, "exercises": meta.get("exercises", []),
             "reading": meta.get("reading", []),
             "pptx_url": f"/api/v1/coursewares/{cw.id}/export/pptx",

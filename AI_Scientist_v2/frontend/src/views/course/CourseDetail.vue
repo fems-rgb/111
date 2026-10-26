@@ -286,6 +286,13 @@
                 </div>
               </div>
               <div>
+                <label class="block text-[11px] font-medium text-surface-600 mb-1">🧠 生成模型（可选）</label>
+                <select v-model="gen.model" class="input-field text-sm">
+                  <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
+                  <option v-for="m in models" :key="m.value" :value="m.value">{{ m.label }} — {{ m.desc }}</option>
+                </select>
+              </div>
+              <div>
                 <label class="block text-xs font-medium text-surface-600 mb-1">补充要求（可选）</label>
                 <textarea v-model="gen.syllabus" class="input-field text-sm h-20"
                           :placeholder="course.syllabus ? '留空则使用课程大纲：' + course.syllabus.slice(0, 60) + '…' : '例如：需要包含 2 个课堂练习与 1 个前沿论文案例'"></textarea>
@@ -315,12 +322,16 @@
               </ul>
             </div>
             <div class="px-5 py-4 border-t border-surface-100 flex items-center justify-between">
-              <span v-if="genMsg" class="text-xs" :class="genErr ? 'text-red-500' : 'text-green-600'">{{ genMsg }}</span>
+              <span v-if="genMsg" class="text-xs" :class="genCancelled ? 'text-amber-600' : genErr ? 'text-red-500' : 'text-green-600'">{{ genMsg }}</span>
               <div class="flex gap-2 ml-auto">
                 <button @click="showGenerate = false" class="px-4 py-2 rounded-lg text-sm bg-surface-100 hover:bg-surface-200">关闭</button>
-                <button @click="runGenerate" :disabled="genBusy || !gen.topic"
+                <button v-if="genBusy" @click="stopGen" :disabled="!genJob?.job_id || genCancelling"
+                        class="px-4 py-2 rounded-lg text-sm bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-50">
+                  {{ genCancelling ? '⏹ 正在停止…' : '⏹ 停止生成' }}
+                </button>
+                <button v-else @click="runGenerate" :disabled="!gen.topic"
                         class="px-4 py-2 rounded-lg text-sm bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50">
-                  {{ genBusy ? '🤖 生成中…（进度见上）' : '✨ 开始生成' }}
+                  ✨ 开始生成
                 </button>
               </div>
             </div>
@@ -454,7 +465,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection, type GenerateJobStatus } from '@/api/modules/courses'
+import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection, type GenerateJobStatus, type GenerateModelItem } from '@/api/modules/courses'
 import { useAuthStore } from '@/stores/auth'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
 
@@ -596,10 +607,14 @@ const genErr = ref(false)
 const genJob = ref<GenerateJobStatus | null>(null)
 const genLog = ref<string[]>([])
 const genElapsed = ref(0)
+const genCancelling = ref(false)
+const genCancelled = ref(false)
+const models = ref<GenerateModelItem[]>([])
+const defaultModel = ref('')
 let genPoll: number | null = null
 let genTick: number | null = null
-const gen = reactive<{ topic: string; syllabus: string; chapter_count: number; slides_per_chapter: number; style: string; audience: string; sources: MaterialSelection }>({
-  topic: '', syllabus: '', chapter_count: 6, slides_per_chapter: 4, style: '标准', audience: '本科生', sources: {},
+const gen = reactive<{ topic: string; syllabus: string; chapter_count: number; slides_per_chapter: number; style: string; audience: string; sources: MaterialSelection; model: string }>({
+  topic: '', syllabus: '', chapter_count: 6, slides_per_chapter: 4, style: '标准', audience: '本科生', sources: {}, model: '',
 })
 function countSources(s: MaterialSelection) {
   return (s.doc_ids?.length || 0) + (s.question_ids?.length || 0) + (s.task_ids?.length || 0) +
@@ -610,6 +625,7 @@ watch(showGenerate, (v) => {
   if (v) {
     gen.topic = gen.topic || (course.value?.title ? `${course.value.title} · 新章节` : '')
     loadMaterials()
+    loadModels()
   }
 })
 
@@ -632,6 +648,8 @@ async function pollGenerate(jobId: string) {
     if (s.status === 'done' && s.result) {
       stopGenTimers()
       genBusy.value = false
+      genCancelling.value = false
+      genCancelled.value = false
       const d: any = s.result
       genMsg.value = `✅ 已生成 ${d.slide_count} 页 · 花费 ¥${(d.cost || 0).toFixed(4)}` +
         (d.sources_used?.length ? ` · 引用 ${d.sources_used.length} 个素材源` : '')
@@ -640,8 +658,15 @@ async function pollGenerate(jobId: string) {
     } else if (s.status === 'failed') {
       stopGenTimers()
       genBusy.value = false
+      genCancelling.value = false
       genErr.value = true
       genMsg.value = s.error ? `生成失败：${s.error}` : '生成失败，请稍后重试'
+    } else if (s.status === 'cancelled') {
+      stopGenTimers()
+      genBusy.value = false
+      genCancelling.value = false
+      genCancelled.value = true
+      genMsg.value = '已停止生成。调好参数后可直接重新开始。'
     }
   } catch (e: any) {
     if (e?.response?.status === 404) {
@@ -657,6 +682,8 @@ async function runGenerate() {
   genBusy.value = true
   genMsg.value = ''
   genErr.value = false
+  genCancelled.value = false
+  genCancelling.value = false
   genLog.value = []
   genElapsed.value = 0
   genJob.value = {
@@ -670,6 +697,7 @@ async function runGenerate() {
       topic: gen.topic, syllabus: gen.syllabus, chapter_count: gen.chapter_count,
       slides_per_chapter: gen.slides_per_chapter, style: gen.style, audience: gen.audience,
       domain: course.value?.domain, sources: gen.sources, course_id: courseId.value, auto_save: true,
+      model: gen.model || undefined,
     })
     const jobId = res.data.job_id
     if (!jobId) throw new Error('服务端未返回 job_id')
@@ -683,6 +711,28 @@ async function runGenerate() {
     genErr.value = true
     genMsg.value = e?.response?.data?.detail || '生成失败，请稍后重试'
   }
+}
+
+/** 停止当前生成作业（服务端等当前步骤结束后停下）*/
+async function stopGen() {
+  const jobId = genJob.value?.job_id
+  if (!jobId || genCancelling.value) return
+  genCancelling.value = true
+  try {
+    await coursewareApi.cancelGenerate(jobId)
+  } catch (e: any) {
+    genCancelling.value = false
+    if (e?.response?.status !== 409) genMsg.value = e?.response?.data?.detail || '停止失败，请重试'
+  }
+}
+
+async function loadModels() {
+  if (models.value.length) return
+  try {
+    const r = await coursewareApi.generateModels()
+    models.value = r.data?.items || []
+    defaultModel.value = r.data?.default || ''
+  } catch { /* ignore */ }
 }
 
 // ═══ 流水线转讲义 ═══

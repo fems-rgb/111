@@ -10,6 +10,7 @@
 """
 import time
 import uuid
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import update as sa_update, delete as sa_delete, select
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 TTL_SECONDS = 1800          # 内存作业保留时长
 MAX_JOBS = 200              # 内存上限，防止无限增长
 DB_RETENTION_DAYS = 7       # 数据库终态记录保留天数，启动时顺带清理
+
+# 取消标志（进程内，仿自动化流水线的 _running_cancels）：
+# 生成是「大纲 1 次 LLM + 逐章 n 次」的 await 链，在每次调用之间检查 Event 即可及时停下。
+_CANCELS: dict[str, asyncio.Event] = {}
 
 # 内存视图/数据库列共有的标量字段（result/error 只在终态写，避免大图反复落库）
 _COLS = ("topic", "course_id", "course_title", "user_id", "status", "stage",
@@ -54,7 +59,7 @@ async def new_job(**fields) -> str:
     now = time.time()
     job = {
         "job_id": job_id,
-        "status": "running",       # running / done / failed
+        "status": "running",       # running / done / failed / cancelled
         "stage": "queued",         # queued / material / outline / chapter / summary / render / persist / done
         "percent": 0,              # 0-100
         "message": "已排队，等待生成…",
@@ -86,7 +91,7 @@ async def update(job_id: str, **fields) -> None:
         _gc()
     else:
         job = {"job_id": job_id, **fields}
-    await _db_write(job_id, job, terminal=fields.get("status") in ("done", "failed"))
+    await _db_write(job_id, job, terminal=fields.get("status") in ("done", "failed", "cancelled"))
 
 
 async def _db_write(job_id: str, job: dict, terminal: bool) -> None:
@@ -147,3 +152,36 @@ async def reconcile_on_startup() -> int:
     except Exception as e:
         logger.warning(f"generate_job 启动对账跳过: {e}")
         return 0
+
+
+# ── 取消（停止）控制：仿自动化流水线的可停止语义 ──────────────────
+def register_cancel(job_id: str) -> asyncio.Event:
+    """作业开跑前登记一个取消 Event，供生成循环轮询、供取消端点置位。"""
+    ev = asyncio.Event()
+    _CANCELS[job_id] = ev
+    return ev
+
+
+def is_cancelled(job_id: str) -> bool:
+    ev = _CANCELS.get(job_id)
+    return bool(ev and ev.is_set())
+
+
+def request_cancel(job_id: str) -> bool:
+    """置位取消标志。返回 True 表示确实命中一个正在跑的作业。"""
+    ev = _CANCELS.get(job_id)
+    if ev and not ev.is_set():
+        ev.set()
+        return True
+    return False
+
+
+def unregister_cancel(job_id: str) -> None:
+    """作业结束（成功/失败/取消）后清理，避免 Event dict 无限增长。"""
+    _CANCELS.pop(job_id, None)
+
+
+def owner_of(job_id: str) -> int | None:
+    """取作业创建者 user_id（仅内存命中时可用，供取消端点做归属校验）。"""
+    job = _JOBS.get(job_id)
+    return job.get("user_id") if job else None

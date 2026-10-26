@@ -146,7 +146,7 @@ export interface DeckResult {
 export interface GenerateJobStatus {
   ok: boolean
   job_id: string
-  status: 'running' | 'done' | 'failed'
+  status: 'running' | 'done' | 'failed' | 'cancelled'
   stage: string
   percent: number
   message: string
@@ -159,6 +159,14 @@ export interface GenerateJobStatus {
   course_title?: string
   result?: DeckResult | null
   error?: string
+}
+
+/** 课件生成可选模型（/coursewares/generate-models） */
+export interface GenerateModelItem {
+  value: string
+  label: string
+  desc: string
+  is_default: boolean
 }
 
 /** 工坊历史列表项 */
@@ -259,13 +267,21 @@ export const coursewareApi = {
   startGenerate: (data: {
     topic: string; title?: string; domain?: string; syllabus?: string
     chapter_count?: number; slides_per_chapter?: number; style?: string; audience?: string
-    course_id?: number | null; sources?: MaterialSelection; auto_save?: boolean
+    course_id?: number | null; sources?: MaterialSelection; auto_save?: boolean; model?: string
   }) => client.post<{ ok: boolean; job_id: string; course_id: number; course_title: string; status_url: string }>(
     '/coursewares/quick-generate', data, { timeout: 120000 }),
 
   /** 轮询生成进度 */
   generateStatus: (jobId: string) =>
     client.get<GenerateJobStatus>(`/coursewares/quick-generate/${jobId}`, { timeout: 30000 }),
+
+  /** 停止一个正在生成的作业（可调控） */
+  cancelGenerate: (jobId: string) =>
+    client.post<{ ok: boolean; cancelled: boolean }>(`/coursewares/quick-generate/${jobId}/cancel`, null, { timeout: 30000 }),
+
+  /** 可选模型列表 */
+  generateModels: () =>
+    client.get<{ ok: boolean; default: string; items: GenerateModelItem[] }>('/coursewares/generate-models'),
 
   /** 我在工坊里生成过的课件 */
   aiMine: (limit = 30) =>

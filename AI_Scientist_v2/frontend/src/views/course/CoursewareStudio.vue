@@ -87,6 +87,17 @@
           </div>
 
           <div>
+            <label class="block text-xs font-medium text-surface-600 mb-1">🧠 生成模型（可选）</label>
+            <div class="flex items-center gap-2">
+              <select v-model="form.model" class="input-field text-sm py-1.5 max-w-xs">
+                <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
+                <option v-for="m in models" :key="m.value" :value="m.value">{{ m.label }}</option>
+              </select>
+              <span v-if="selectedModelDesc" class="text-[11px] text-surface-400">{{ selectedModelDesc }}</span>
+            </div>
+          </div>
+
+          <div>
             <label class="block text-xs font-medium text-surface-600 mb-1">
               课程大纲（可选 · 留空则由 AI 自行拟大纲；也可在课程中心用「AI 拟大纲」生成后粘过来）
             </label>
@@ -97,11 +108,15 @@
           <MaterialSourcePicker v-model="form.sources" :preselect="preselect" />
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
-            <button @click="generate" :disabled="busy || !form.topic"
+            <button v-if="!busy" @click="generate" :disabled="!form.topic"
                     class="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
-              {{ busy ? '⏳ AI 正在逐章撰写…' : `🚀 生成课件（约 ${totalPages} 页）` }}
+              🚀 生成课件（约 {{ totalPages }} 页）
             </button>
-            <span v-if="busy" class="text-xs text-surface-500">下面实时显示进度，可以先去处理别的事，生成完会自动出现在这里</span>
+            <button v-else @click="stop" :disabled="!job?.job_id || cancelling"
+                    class="px-5 py-2.5 rounded-lg bg-red-50 text-red-600 border border-red-200 text-sm font-medium hover:bg-red-100 transition-colors disabled:opacity-40">
+              {{ cancelling ? '⏹ 正在停止…' : '⏹ 停止生成' }}
+            </button>
+            <span v-if="busy" class="text-xs text-surface-500">实时显示进度，可随时停止；停止后调参再重新发起</span>
             <span v-else class="text-xs text-surface-400">也可以按 Ctrl+Enter 直接生成</span>
           </div>
 
@@ -138,6 +153,7 @@
           </div>
 
           <p v-if="errMsg" class="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{{ errMsg }}</p>
+          <p v-if="noticeMsg" class="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">{{ noticeMsg }}</p>
         </div>
 
         <!-- ═══ 生成结果 ═══ -->
@@ -236,7 +252,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   courseApi, coursewareApi,
   type AiCoursewareItem, type Course, type DeckResult, type GenerateJobStatus,
-  type MaterialSelection, type SlideMeta,
+  type GenerateModelItem, type MaterialSelection, type SlideMeta,
 } from '@/api/modules/courses'
 
 const STYLES = ['标准', '精炼讲稿', '详尽讲义', '研究进展', '科普通识']
@@ -262,10 +278,16 @@ const form = reactive({
   topic: '', title: '', domain: '', syllabus: '',
   chapter_count: 6, slides_per_chapter: 4, style: '标准', audience: '本科生',
   course_id: null as number | null, sources: {} as MaterialSelection,
+  model: '',
 })
+const models = ref<GenerateModelItem[]>([])
+const defaultModel = ref('')
+const selectedModelDesc = computed(() => models.value.find(m => m.value === form.model)?.desc || '')
 
 const busy = ref(false)
 const errMsg = ref('')
+const noticeMsg = ref('')
+const cancelling = ref(false)
 const result = ref<DeckResult | null>(null)
 const slides = ref<SlideMeta[]>([])
 const previewLoading = ref(false)
@@ -348,6 +370,7 @@ async function pollJob(jobId: string) {
     if (s.status === 'done' && s.result) {
       stopTimers()
       busy.value = false
+      cancelling.value = false
       result.value = s.result
       job.value = { ...s, percent: 100 }
       if (s.result.courseware_id) await loadPreview(s.result.courseware_id)
@@ -355,7 +378,13 @@ async function pollJob(jobId: string) {
     } else if (s.status === 'failed') {
       stopTimers()
       busy.value = false
+      cancelling.value = false
       errMsg.value = s.error ? `生成失败：${s.error}` : '生成失败，请重试或换个主题'
+    } else if (s.status === 'cancelled') {
+      stopTimers()
+      busy.value = false
+      cancelling.value = false
+      noticeMsg.value = '已停止生成。已落库的部分不会计入「我生成过的课件」，调好参数后可直接重新发起。'
     }
   } catch (e: any) {
     if (e?.response?.status === 404) {
@@ -369,6 +398,8 @@ async function pollJob(jobId: string) {
 
 async function generate() {
   errMsg.value = ''
+  noticeMsg.value = ''
+  cancelling.value = false
   if (!form.topic) { errMsg.value = '请先填写讲授主题'; return }
   busy.value = true
   result.value = null
@@ -394,6 +425,7 @@ async function generate() {
       course_id: form.course_id,
       sources: form.sources,
       auto_save: true,
+      model: form.model || undefined,
     })
     const jobId = res.data.job_id
     if (!jobId) throw new Error('服务端未返回 job_id')
@@ -409,6 +441,32 @@ async function generate() {
 }
 
 onUnmounted(stopTimers)
+
+/** 停止当前生成作业（服务端会等当前步骤结束后停下）*/
+async function stop() {
+  const jobId = job.value?.job_id
+  if (!jobId || cancelling.value) return
+  cancelling.value = true
+  try {
+    await coursewareApi.cancelGenerate(jobId)
+  } catch (e: any) {
+    if (e?.response?.status === 409) {
+      // 已结束：下一轮轮询会拉到终态，这里不报错
+      cancelling.value = false
+    } else {
+      cancelling.value = false
+      errMsg.value = e?.response?.data?.detail || '停止失败，请重试'
+    }
+  }
+}
+
+async function loadModels() {
+  try {
+    const r = await coursewareApi.generateModels()
+    models.value = r.data?.items || []
+    defaultModel.value = r.data?.default || ''
+  } catch { /* ignore：下拉会退化为“默认模型” */ }
+}
 
 /** 用历史课件的同样参数再跑一次（换主题即可批量出不同章节） */
 function reuse(h: AiCoursewareItem) {
@@ -436,6 +494,6 @@ async function loadHistory() {
 onMounted(() => {
   if (route.query.topic) form.topic = String(route.query.topic)
   if (route.query.course_id) form.course_id = Number(route.query.course_id) || null
-  if (canTeach.value) { loadMyCourses(); loadHistory() }
+  if (canTeach.value) { loadMyCourses(); loadHistory(); loadModels() }
 })
 </script>
