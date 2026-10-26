@@ -182,18 +182,21 @@ def convert_pptx_to_slides(pptx_path: str, courseware_id: int) -> list[dict[str,
     return results
 
 
-def layout_points(slide: dict[str, Any]) -> list[tuple[int, str]]:
+def layout_points(slide: dict[str, Any], include_core: bool = True) -> list[tuple[int, str]]:
     """把版式语义（卡片/对比/数据/图/流程/金句）摊平成「层级 + 文本」
 
     网页阅读器与 pptx 用版式渲染，而电子书与课堂讲义是线性 Markdown。
     这里做一次降维，避免这些内容在非版式产物里凭空消失。
+
+    include_core=False 时不摊平 detail/example —— 讲义与 Word 会单独用
+    「讲透」「案例」两个小标题排版，重复摊平会出现两遍。
     """
     out: list[tuple[int, str]] = []
     detail = str(slide.get("detail") or "").strip()
-    if detail:
+    if detail and include_core:
         out.append((0, detail))
     example = str(slide.get("example") or "").strip()
-    if example:
+    if example and include_core:
         out.append((0, f"案例：{example}"))
     chart = slide.get("chart") or {}
     values = chart.get("values") or []
@@ -271,7 +274,7 @@ def build_ebook_markdown(slides: list[dict[str, Any]], deck_title: str = "") -> 
                     lines.append("| " + " | ".join(row) + " |")
                 lines.append("")
         if s.get("notes"):
-            lines.append(f"> 🗣️ 讲义备注：{s['notes']}")
+            lines.append(f"> 讲师备注：{s['notes']}")
             lines.append("")
     return "\n".join(lines)
 

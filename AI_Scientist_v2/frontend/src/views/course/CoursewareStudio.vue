@@ -5,7 +5,8 @@
       <div>
         <h1 class="text-2xl font-bold flex items-center gap-2">📽️ 课件工坊</h1>
         <p class="text-sm text-surface-500 mt-1">
-          不用先建课程 —— 给一个主题，AI 直接产出整套 PPT 课件（全程进度可视），可下载 <span class="font-mono">.pptx</span> 投影、当电子书阅读，也能一键打印成课堂讲义
+          不用先建课程 —— 给一个主题，AI 直接产出整套 PPT 课件（全程进度可视），可下载 <span class="font-mono">.pptx</span> 投影，
+          导出电子书 PDF/EPUB 送手机，也能生成学生/教师讲义（Word / PDF）直接打印
         </p>
       </div>
       <button @click="$router.push('/courses')"
@@ -24,7 +25,7 @@
       </div>
       <div class="card p-4">
         <p class="text-xs font-semibold text-primary-600">第 3 步 · 拿课件</p>
-        <p class="text-[11px] text-surface-500 mt-1.5 leading-relaxed">生成时实时显示阶段/章节/页数进度；完成后 ⬇️ .pptx、📕 电子书、📄 学生或教师讲义、✏️ 逐页微调，并自动归入一门课程（默认仅自己可见）</p>
+        <p class="text-[11px] text-surface-500 mt-1.5 leading-relaxed">生成时实时显示阶段/章节/页数进度；完成后 ⬇️ .pptx、📕 电子书 PDF/EPUB、📄 学生或教师讲义（Word/PDF）、✏️ 逐页微调，并自动归入一门课程（默认仅自己可见）</p>
       </div>
     </div>
 
@@ -173,16 +174,27 @@
                  class="text-xs px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium">
                 ⬇️ 下载 .pptx
               </a>
-              <a v-if="result.courseware_id" :href="coursewareApi.ebookUrl(result.courseware_id)" target="_blank" rel="noopener"
-                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">📕 电子书</a>
-              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'student')" target="_blank" rel="noopener"
-                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50" title="要点 + 留白笔记 + 课后思考题">📄 学生讲义</a>
-              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'teacher')" target="_blank" rel="noopener"
-                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50" title="另含讲师速记、时长建议与陈旧警示">🗒️ 教师讲义</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.ebookUrl(result.courseware_id, 'pdf')" target="_blank" rel="noopener"
+                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50"
+                 title="电子书 PDF：封面 + 目录 + 页码，可打印、手机可读">📕 电子书</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.ebookUrl(result.courseware_id, 'epub')" target="_blank" rel="noopener"
+                 class="text-xs px-2.5 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50 text-surface-500"
+                 title="EPUB：导入手机/阅读器">EPUB</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'student', 'docx')" target="_blank" rel="noopener"
+                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50"
+                 title="学生讲义 Word：要点 + 讲透 + 案例 + 笔记留白 + 思考题">📄 学生讲义</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'student', 'pdf')" target="_blank" rel="noopener"
+                 class="text-xs px-2.5 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50 text-surface-500"
+                 title="学生讲义 PDF：直接打印">PDF</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'teacher', 'docx')" target="_blank" rel="noopener"
+                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50"
+                 title="教师讲义 Word：含讲透、讲师速记、时长建议与陈旧警示">🗒 教师讲义</a>
               <button v-if="result.courseware_id" @click="goReader"
                       class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">📖 逐页阅读</button>
               <button v-if="result.courseware_id" @click="$router.push(`/course/${result.course_id}`)"
                       class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">🎓 发布课程</button>
+              <button v-if="result.courseware_id" @click="removeResult" :disabled="deleting"
+                      class="text-xs px-2.5 py-2 rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-40">🗑 删除这份</button>
             </div>
           </div>
 
@@ -227,14 +239,17 @@
             <div class="flex gap-1.5 mt-2">
               <button @click="$router.push(h.reader_url)"
                       class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1">📖 阅读</button>
-              <a :href="coursewareApi.ebookUrl(h.id)" target="_blank" rel="noopener"
-                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="电子书（连贯读物）">📕</a>
-              <a :href="coursewareApi.handoutUrl(h.id, 'student')" target="_blank" rel="noopener"
-                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="学生讲义">📄</a>
+              <a :href="coursewareApi.ebookUrl(h.id, 'pdf')" target="_blank" rel="noopener"
+                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="电子书 PDF">📕</a>
+              <a :href="coursewareApi.handoutUrl(h.id, 'student', 'docx')" target="_blank" rel="noopener"
+                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="学生讲义 Word">📄</a>
               <a :href="coursewareApi.exportUrl(h.id)" :download="`课件_${h.id}.pptx`"
                  class="text-[10px] px-2 py-1 rounded bg-primary-50 text-primary-700 hover:bg-primary-100 flex-1 text-center">⬇️ pptx</a>
               <button @click="reuse(h)" class="text-[10px] px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100"
                       title="按同样设置再生成一份">↺</button>
+              <button @click="removeHistory(h)" :disabled="deleting"
+                      class="text-[10px] px-2 py-1 rounded text-red-500 hover:bg-red-50 disabled:opacity-40"
+                      title="删除这份课件">🗑</button>
             </div>
           </div>
         </div>
@@ -276,7 +291,7 @@ const canTeach = computed(() => TEACHER_ROLES.includes(authStore.user?.role || '
 
 const form = reactive({
   topic: '', title: '', domain: '', syllabus: '',
-  chapter_count: 6, slides_per_chapter: 4, style: '标准', audience: '本科生',
+  chapter_count: 6, slides_per_chapter: 5, style: '标准', audience: '本科生',
   course_id: null as number | null, sources: {} as MaterialSelection,
   model: '',
 })
@@ -303,7 +318,8 @@ const elapsed = ref(0)
 let pollTimer: number | null = null
 let tickTimer: number | null = null
 
-const totalPages = computed(() => 1 + Math.max(1, form.chapter_count) * Math.max(1, form.slides_per_chapter))
+const totalPages = computed(() =>
+  1 + Math.max(1, form.chapter_count) * (Math.max(1, form.slides_per_chapter) + 1) + 1)
 const activeCwId = computed(() => result.value?.courseware_id || 0)
 const shownSlides = computed(() => (showAll.value ? slides.value : slides.value.slice(0, 6)))
 const stageIndex = computed(() => {
@@ -350,6 +366,36 @@ async function loadPreview(cwId: number) {
 
 function goReader() {
   if (result.value?.reader_url) router.push(result.value.reader_url)
+}
+
+// ═══ 删除（结果区 / 历史列表） ═══
+const deleting = ref(false)
+async function removeResult() {
+  const cwId = result.value?.courseware_id
+  if (!cwId) return
+  await removeCw(cwId, result.value?.title || '')
+  result.value = null
+  slides.value = []
+}
+async function removeHistory(h: AiCoursewareItem) {
+  await removeCw(h.id, h.title)
+  if (result.value?.courseware_id === h.id) {
+    result.value = null
+    slides.value = []
+  }
+  await loadHistory()
+}
+async function removeCw(id: number, title: string) {
+  if (!confirm(`确定删除《${title || '这份课件'}》？\n\n渲染图、导出缓存与派生文档会一并清理，且不可恢复。`)) return
+  deleting.value = true
+  try {
+    await coursewareApi.remove(id)
+    await loadMyCourses()
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '删除失败，请稍后重试')
+  } finally {
+    deleting.value = false
+  }
 }
 
 function stopTimers() {

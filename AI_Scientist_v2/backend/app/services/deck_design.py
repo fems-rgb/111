@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -155,21 +156,43 @@ def infer_layout(slide: dict) -> str:
 
 
 def _bullets(slide: dict) -> list[dict]:
-    """规整要点：最多 6 条（含子点），主点 30 字、子点 44 字内
+    """规整要点：最多 8 条（含子点），主点 32 字、子点 42 字内
 
     旧版只允许 4 条 46 字，页面读起来「一页没多少东西」，课堂讲不透；
     现在允许子点补「为什么/怎么做」，但逐条限长，避免退化成字墙。
+    超过 6 条时渲染层会自动缩字号并限为单行，不会叠字。
     """
     out = []
     for b in (slide.get("bullets") or []):
         if isinstance(b, dict):
             lvl = min(int(b.get("level", 0) or 0), 1)
-            txt = _s(b.get("text"), 44 if lvl else 34)
+            txt = _s(b.get("text"), 42 if lvl else 32)
         else:
-            txt, lvl = _s(b, 34), 0
+            txt, lvl = _s(b, 32), 0
         if txt:
             out.append({"text": txt, "level": lvl})
-        if len(out) >= 6:
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _detail_bullets(detail: str) -> list[dict]:
+    """图/表数据缺失时的兑底：把「讲透」段落切成 3-4 个要点
+
+    模型有时交出无效 chart（负值/标签与数值不匹配），版式会退回 bullets，
+    而这一页本来就没有 bullets，结果只剩一句 lead —— 「标题 + 一行字」看着像空页。
+    把已有的 detail 拆成要点，宁可少一张图，也不要交一整页空白。
+    """
+    out = []
+    for seg in re.split(r"[。；;!?！？]\s*", (detail or "").strip()):
+        seg = seg.strip(" ，,、")
+        if len(seg) < 8:
+            continue
+        if len(seg) > 40:  # 优先在逗号处收口，避免把词切断
+            cut = max(seg.rfind("，", 0, 40), seg.rfind("、", 0, 40))
+            seg = seg[:cut] if cut >= 14 else seg[:40]
+        out.append({"text": seg, "level": 0})
+        if len(out) >= 4:
             break
     return out
 
@@ -214,7 +237,7 @@ def _compare(slide: dict) -> dict | None:
 
 def page_parts(slide: dict) -> dict:
     """抽出渲染所需的全部字段（两种渲染器共用，保证语义一致）"""
-    return {
+    parts = {
         "layout": infer_layout(slide),
         "kicker": _s(slide.get("kicker"), 12),
         "title": _s(slide.get("title") or slide.get("chapter"), 30) or "未命名页",
@@ -236,6 +259,10 @@ def page_parts(slide: dict) -> dict:
         "chapter_no": int(slide.get("chapter_no") or 0),
         "key_question": _s(slide.get("key_question"), 40),
     }
+    # 没有任何要点也没有图/表时，用细节段落兑底，避免整页只剩一句 lead
+    if parts["layout"] not in ("cover", "section", "end", "quote") and not parts["bullets"]:
+        parts["bullets"] = _detail_bullets(parts["detail"])
+    return parts
 
 
 # ══════════════════════════════════════════════════════════
@@ -530,9 +557,22 @@ def _draw_flow(draw, steps: list[dict], box: tuple[int, int, int, int], vertical
 
 
 def _draw_bullet_list(draw, items: list[dict], box: tuple[int, int, int, int], size: int = 24):
-    """要点列表（全宽与分栏共用）"""
+    """要点列表（全宽与分栏共用）
+
+    条目多时自动缩字号并限行：6 条以内允许折两行，7 条以上只排单行，
+    避免 4-6 条主点 + 子点时两行文字压到相邻条目上。
+    """
     x0, y0, x1, y1 = box
-    row_h = (y1 - y0) // max(1, len(items))
+    n = max(1, len(items))
+    row_h = (y1 - y0) // n
+    if n >= 7:
+        size, max_lines = min(size, 17), 1
+    elif n == 6:
+        size, max_lines = min(size, 19), 2
+    elif n == 5:
+        size, max_lines = min(size, 21), 2
+    else:
+        size, max_lines = min(size, 23), 2
     num = 0
     for i, b in enumerate(items):
         y = y0 + i * row_h
@@ -548,8 +588,8 @@ def _draw_bullet_list(draw, items: list[dict], box: tuple[int, int, int, int], s
             f = load_font(size, True)
         else:
             draw.rectangle([x0 + 12, y + row_h // 2 - 1, x0 + 26, y + row_h // 2 + 2], fill=BRAND_MID)
-            f = load_font(max(14, size - 6))
-        lines = _wrap(draw, b["text"], f, x1 - x0 - 76, 2)
+            f = load_font(max(13, size - 4))
+        lines = _wrap(draw, b["text"], f, x1 - x0 - 76, max_lines)
         lh = int(f.size * 1.42) + 6
         ty = y + row_h // 2 - len(lines) * lh // 2
         for k, ln in enumerate(lines):
@@ -922,8 +962,17 @@ def _p_bullets(slide, p: dict):
     has_note = bool(p["detail"] or p["example"])
     x1 = MARGIN_X + int((W - 2 * MARGIN_X) * 0.58) if has_note else W - MARGIN_X
     top = CONTENT_TOP + 8
-    row_h = (CONTENT_BOTTOM - top) // max(1, len(items))
+    n = max(1, len(items))
+    row_h = (CONTENT_BOTTOM - top) // n
     size = 22 if has_note else 24
+    # 与 Pillow 同规则：条目多时缩字号；7 条以上限单行（超长截断），避免文本框溢到下一行
+    max_chars = 0
+    if n >= 7:
+        size, max_chars = min(size, 17), 26
+    elif n == 6:
+        size = min(size, 19)
+    elif n == 5:
+        size = min(size, 21)
     num = 0
     for i, b in enumerate(items):
         y = top + i * row_h
@@ -936,8 +985,12 @@ def _p_bullets(slide, p: dict):
             _text(slide, MARGIN_X, y + row_h // 2 - 13, 38, 30, str(num), 15, True, BRAND, "center", "middle")
         else:
             _shape(slide, MARGIN_X + 12, y + row_h // 2 - 1, 14, 3, BRAND_MID)
-        _text(slide, MARGIN_X + 56, y, x1 - MARGIN_X - 70, row_h, b["text"],
-              size if not sub else size - 6, not sub, INK if not sub else MUTED, "left", "middle", line=1.35)
+        text = b["text"]
+        if max_chars and len(text) > max_chars:
+            text = text[:max_chars] + "…"
+        _text(slide, MARGIN_X + 56, y, x1 - MARGIN_X - 70, row_h, text,
+              size if not sub else max(12, size - 4), not sub, INK if not sub else MUTED,
+              "left", "middle", line=1.35)
     if has_note:
         _p_note_panel(slide, p, (x1 + 34, CONTENT_TOP, W - MARGIN_X, CONTENT_BOTTOM))
 

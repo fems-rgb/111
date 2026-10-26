@@ -42,7 +42,7 @@ class GenerateDeckRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=300)
     syllabus: str = Field(default="", max_length=20000)
     chapter_count: int = Field(default=6, ge=1, le=20)
-    slides_per_chapter: int = Field(default=4, ge=1, le=12)
+    slides_per_chapter: int = Field(default=5, ge=1, le=12)
     style: str = Field(default="标准", max_length=50)
     audience: str = Field(default="本科生", max_length=50)
     domain: str = Field(default="", max_length=100)
@@ -73,7 +73,7 @@ class SyncPipelineRequest(BaseModel):
     run_id: Optional[str] = Field(None, max_length=64)   # 不传则取最近一次成功 run
     topic: Optional[str] = Field(None, max_length=300)
     chapter_count: int = Field(default=5, ge=1, le=15)
-    slides_per_chapter: int = Field(default=4, ge=1, le=10)
+    slides_per_chapter: int = Field(default=5, ge=1, le=10)
     skill_runs: Optional[list[dict[str, Any]]] = None    # 额外叠加技能产出
     title: Optional[str] = Field(None, max_length=300)
 

@@ -295,10 +295,16 @@ export const coursewareApi = {
     return `/api/v1/coursewares/${id}/slides/${slideIndex}/image${t ? `?token=${t}` : ''}`
   },
 
-  ebookUrl: (id: number) => `/api/v1/coursewares/${id}/ebook${_tokenQuery()}`,
-  /** 讲义：学生版留笔记空位，教师版附讲师速记与时长建议 */
-  handoutUrl: (id: number, audience: 'student' | 'teacher' = 'student') =>
-    `/api/v1/coursewares/${id}/handout${_tokenQuery()}${_tokenQuery() ? '&' : '?'}audience=${audience}`,
+  /** 电子书：默认 PDF（可打印/手机可读），也可 EPUB 或 Markdown 预览 */
+  ebookUrl: (id: number, format: 'pdf' | 'epub' | 'md' = 'pdf') => {
+    const q = _tokenQuery()
+    return `/api/v1/coursewares/${id}/ebook${q}${q ? '&' : '?'}format=${format}`
+  },
+  /** 讲义：默认 Word（学生版留笔记空位，教师版附讲师速记与时长建议），也可 PDF */
+  handoutUrl: (id: number, audience: 'student' | 'teacher' = 'student', format: 'docx' | 'pdf' | 'md' = 'docx') => {
+    const q = _tokenQuery()
+    return `/api/v1/coursewares/${id}/handout${q}${q ? '&' : '?'}audience=${audience}&format=${format}`
+  },
   exportUrl: (id: number) => `/api/v1/coursewares/${id}/export/pptx${_tokenQuery()}`,
 
   /** 课件工坊：起一个生成作业，立即拿 job_id（真实进度靠 generateStatus 轮询） */

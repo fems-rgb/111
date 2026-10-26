@@ -34,16 +34,28 @@
             </button>
           </div>
           <button @click="showVersions = true" class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">🕘 版本</button>
-          <a :href="coursewareApi.ebookUrl(cwId)" target="_blank" rel="noopener"
-             class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200" title="把整份课件读成连贯的书">📕 电子书</a>
-          <a :href="coursewareApi.handoutUrl(cwId, meta.is_teacher ? 'teacher' : 'student')" target="_blank" rel="noopener"
+          <a :href="coursewareApi.ebookUrl(cwId, 'pdf')" target="_blank" rel="noopener"
              class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200"
-             title="课堂讲义：要点 + 笔记留白 + 课后思考题（教师版附讲师速记）">📄 讲义</a>
+             title="电子书 PDF：封面 + 目录 + 页码，可打印、手机可读">📕 电子书</a>
+          <a :href="coursewareApi.ebookUrl(cwId, 'epub')" target="_blank" rel="noopener"
+             class="text-xs px-2 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200 text-surface-500"
+             title="EPUB：导入手机/阅读器，带可跳转目录">EPUB</a>
+          <a :href="coursewareApi.handoutUrl(cwId, meta.is_teacher ? 'teacher' : 'student', 'docx')" target="_blank" rel="noopener"
+             class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200"
+             title="课堂讲义 Word：要点 + 讲透 + 案例，学生版留笔记横线，教师版附速记">📄 讲义</a>
+          <a :href="coursewareApi.handoutUrl(cwId, meta.is_teacher ? 'teacher' : 'student', 'pdf')" target="_blank" rel="noopener"
+             class="text-xs px-2 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200 text-surface-500"
+             title="讲义 PDF：直接打印">PDF</a>
           <a :href="coursewareApi.exportUrl(cwId)"
              class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">⬇️ PPTX</a>
           <button v-if="meta.is_teacher" @click="openRefresh"
                   class="text-xs px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600">
             ✨ AI 更新陈旧内容
+          </button>
+          <button v-if="meta.is_teacher" @click="removeThis" :disabled="deleting"
+                  class="text-xs px-2.5 py-1.5 rounded-lg text-red-500 hover:bg-red-50 disabled:opacity-40"
+                  title="删除这份课件及其渲染图、导出缓存">
+            🗑 删除
           </button>
         </div>
       </div>
@@ -352,6 +364,21 @@ function markRead(i: number) {
 }
 
 function goBack() { router.push(courseId.value ? `/course/${courseId.value}` : '/courses') }
+
+// ═══ 删除课件 ═══
+const deleting = ref(false)
+async function removeThis() {
+  if (!confirm(`确定删除《${meta.title}》？\n\n渲染图、导出缓存与派生文档会一并清理，且不可恢复。`)) return
+  deleting.value = true
+  try {
+    await coursewareApi.remove(cwId.value)
+    router.push(courseId.value ? `/course/${courseId.value}` : '/courses')
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '删除失败，请稍后重试')
+  } finally {
+    deleting.value = false
+  }
+}
 
 function askThisSlide() {
   const s = slides.value[current.value]

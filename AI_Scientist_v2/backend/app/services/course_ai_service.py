@@ -338,44 +338,60 @@ def _normalize_slide(s: dict, index: int, chapter: str = "") -> dict:
 
 _OUTLINE_SYSTEM = """你是资深课程设计师，擅长把主题拆解成有递进关系的章节大纲。
 输出严格 JSON，不要多余文字：
-{"title": "建议课件标题", "objectives": ["学习目标1", "学习目标2"],
+{"title": "建议课件标题", "objectives": ["学习目标1", "学习目标2", "学习目标3"],
  "chapters": [{"title": "章标题", "key_question": "本章要解决的核心问题",
-               "points": ["知识点1", "知识点2"]}]}"""
+               "points": ["知识点1（具体概念或方法）", "知识点2（含可讲的细节）", "知识点3（含可对比的现象）"]}]}
+
+要求：
+- 每章给 3-5 个知识点，知识点要能直接展开成一页，不要写「XX 概述」这类空泛项；
+- 章节之间要有递进：先建立直觉，再给方法，再给证据，最后给应用或局限；
+- objectives 给 3-5 条，写学生学完能做到什么。"""
 
 _CHAPTER_SYSTEM = """你是顶级课程设计师，也是答辩 PPT 与课堂讲义撰稿人。把指定章节展开成「一页一个论点」的演示页。
 
 硬性要求：
 1. 每页只表达一个观点；标题必须是结论句（≤20 字），不要「XX 概述/介绍」这类话题词；
-2. lead 用一句话说清本页核心结论（≤40 字），不要重复标题；
-3. detail 写「讲透这一页」的核心解释（60-100 字，含原理、因果或操作步骤），供教师备课与讲义使用；
-4. example 写一个具体案例、例题或应用场景（30-60 字，要有具体对象 + 数字/现象，禁止空话）；
-5. bullets 版式给 3-5 条主点，每条 ≤28 字；可再补 1-2 条 level=1 的子点（≤34 字）说明「为什么/怎么做」；
+2. lead 用一句话说清本页核心结论（≤45 字），不要重复标题；
+3. detail 写「讲透这一页」（80-120 字）：必须给出原理、因果链或操作步骤，能落到数字就落到数字。
+   这段是老师上课要讲的原话，不能写成「本页介绍了……」的目录式描述；
+4. example 写一个具体案例、例题或应用场景（40-80 字）：必须有具体对象 + 数字或现象 + 结论，
+   禁止「例如某系统」这类没有信息量的空话；
+5. bullets 版式给 5-6 条主点，每条 22-32 字，必须是「对象 + 动作 + 结果」的完整短句
+   （正面例子：「学习率过大时步长激增，损失在最优解附近来回震荡」），
+   不要写「定义与作用」这类 4-8 字的名词短语；
+   可在主点下补 1-2 条 level=1 的子点（≤38 字），写「为什么」「怎么做」「常见误区」；
 6. 从下列版式中选一种，只填该版式需要的字段：
    - bullets：主点 + 子点（最常用，默认）
-   - cards：2-4 个并列要素，title ≤12 字、desc ≤30 字
-   - compare：两组对照，各 2-3 条，每条 ≤18 字
-   - metric：2-3 个关键数字，value 为数字、unit 为单位、label ≤16 字
+   - cards：2-4 个并列要素，title ≤12 字、desc ≤40 字（要写出各自的作用，不是标签）
+   - compare：两组对照，各 2-3 条，每条 ≤22 字
+   - metric：2-3 个关键数字，value 为数字、unit 为单位、label ≤20 字
    - chart：一页数据图，chart={"type":"bar|line|hbar","unit":"%","labels":[2-6 个类别],"values":[同长度的真实数字],"caption":"数据来源","series_name":"指标名"}
      （values 只写数字不带单位；一页只能同一量纲，百分比与耗时/分数不能混画）
-   - flow：2-4 步流程/机制，steps=[{"title":"步骤名≤12 字","desc":"≤30 字"}]
-   - table：对照表，tables=[[["表头1","表头2"],["第1行1","第1行2"],["第2行1","第2行2"]]]
-   - quote：一句可被记住的结论（≤40 字）
+   - flow：2-4 步流程/机制，steps=[{"title":"步骤名≤12 字","desc":"≤45 字，说清这一步输入什么、做什么、输出什么"}]
+   - table：对照表，表头 2-4 列，2-4 行数据，单元格写具体内容而不是「是/否」
+           tables=[[["表头1","表头2"],["第1行1","第1行2"],["第2行1","第2行2"]]]
+   - quote：一句可被记住的结论（≤45 字）
 7. 同一章内版式不得重复，且本章必须至少有 1 页 chart 或 flow（要有图），至少 1 页 table 或 compare（要有对照）；
+   本章最后一页固定写「本章小结」：layout=bullets，标题「本章小结：<一句结论>」，
+   bullets 用 3-4 条回顾主线，takeaway 给 3 条可带走的结论；
 8. 事实与数据必须准确；没把握就写「已有研究表明」；优先融入近 1-2 年的真实进展；
 9. kicker 写所属小节名（≤8 字），让页面有导航感；
-10. notes 写给讲师的授课速记（怎么开场、举什么例、学生易问什么），120-200 字；
+10. notes 写给讲师的授课速记（120-200 字）：怎么开场、这一页讲几分钟、
+    举什么例、学生易问什么、哪一句要放慢语速强调，五件事都要写到；
 11. 直接进入内容，不要写「本章导览」这种空页（章节过渡页由系统生成）；
-12. 输出严格 JSON，不要多余文字：
+12. 输出前逐页自检：主点是否 5-6 条且每条 ≥22 字、detail 是否 ≥80 字、
+    notes 是否 ≥120 字；任一项不达标就补写，宁可信息密一点，也不要交空页；
+13. 输出严格 JSON，不要多余文字：
 {"slides": [{"layout": "bullets", "kicker": "小节名", "title": "结论式标题", "lead": "一句话结论",
   "detail": "讲透这一页的解释", "example": "具体案例",
-  "bullets": [{"level": 0, "text": "短语"}, {"level": 1, "text": "补充说明"}],
+  "bullets": [{"level": 0, "text": "主点"}, {"level": 1, "text": "补充说明"}],
   "cards": [], "metrics": [], "chart": null, "steps": [], "tables": [],
   "compare": {"left": {"title": "", "items": []}, "right": {"title": "", "items": []}},
-  "notes": "讲师速记"}]}"""
+  "takeaway": [], "notes": "讲师速记"}]}"""
 
 
 async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
-                        slides_per_chapter: int = 4, style: str = "标准",
+                        slides_per_chapter: int = 5, style: str = "标准",
                         audience: str = "本科生", domain: str = "",
                         reference_material: str = "", project_id: int = None,
                         on_progress=None, model: str = None,
@@ -400,7 +416,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
                 logger.debug(f"progress emit skipped: {e}")
 
     chapter_count = max(1, min(int(chapter_count or 6), 12))
-    slides_per_chapter = max(1, min(int(slides_per_chapter or 4), 8))
+    slides_per_chapter = max(1, min(int(slides_per_chapter or 5), 8))
     # 每章额外一页章节过渡页（section），末尾多小结页与结课页
     cap = min(chapter_count * (slides_per_chapter + 1) + 3, 80)
     cost, tin, tout = 0.0, 0, 0
@@ -465,11 +481,12 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 本章要解决的问题：{key_q or '自拟'}
 本章知识点：{pts_text}
 请输出 {slides_per_chapter} 页：同一章内版式不重复，其中至少 1 页用 chart 画数据、
-至少 1 页用 flow 画流程或 table 做对照，其余页面用 bullets（带 detail 与 example）。
-每页都要有 detail、example 与 notes。{ref_block if i == 0 else ''}
+至少 1 页用 flow 画流程或 table 做对照，最后一页固定是本章小结，
+其余页面用 bullets（4-6 条主点 + 子点，带 detail 与 example）。
+每页都要有 detail（80-120 字）、example（40-80 字）与 notes（150-250 字）。{ref_block if i == 0 else ''}
 
 只输出 {{"slides": [...]}}。""", project_id=project_id,
-                              max_tokens=min(8000, 1400 + slides_per_chapter * 900), model=mdl)
+                              max_tokens=min(8000, 1600 + slides_per_chapter * 1200), model=mdl)
         cost += cres.get("cost", 0)
         tin += cres["tokens"]["input"]
         tout += cres["tokens"]["output"]
@@ -503,13 +520,15 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
         sres = await call_qwen(
             "你是课程总结助手。输出严格 JSON："
             '{"wrap": {"layout": "bullets", "kicker": "全课回顾", "title": "本页标题", '
-            '"lead": "一句话总结本课主线", "bullets": [{"level": 0, "text": "短语"}], '
+            '"lead": "一句话总结本课主线", "detail": "串起全课因果链的回顾", '
+            '"bullets": [{"level": 0, "text": "完整短句"}], '
             '"takeaway": ["关键词1", "关键词2", "关键词3"], "notes": "讲师速记"}, '
             '"exercises": ["思考题"], "reading": ["延伸阅读"]}',
             f"课程主题：{topic}（面向 {audience}）\n章节与知识点：\n{outline_txt}\n\n"
-            f"请给出：结课小结页（3-4 条短语回顾主线，每条≤22 字）、"
-            f"3 个可带走的结论（takeaway）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
-            project_id=project_id, max_tokens=1400, model=mdl)
+            f"请给出：结课小结页（4 条回顾主线的完整短句，每条 22-32 字，"
+            f"另给 detail 80-120 字串起全课因果链、notes 150 字以上的结课速记）、"
+            f"3 个可带走的结论（takeaway，每条≤22 字）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
+            project_id=project_id, max_tokens=2000, model=mdl)
         cost += sres.get("cost", 0)
         tin += sres["tokens"]["input"]
         tout += sres["tokens"]["output"]

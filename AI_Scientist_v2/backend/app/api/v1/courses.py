@@ -11,7 +11,7 @@ import os
 import uuid
 import asyncio
 import logging
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query, Response
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, or_, inspect as sa_inspect
@@ -27,7 +27,7 @@ from app.utils import paths
 from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, GenerateDeckRequest,
                                  AiRefreshRequest, ProgressRequest, OutlineRequest,
                                  CoursewareUpdateRequest, SyncPipelineRequest)
-from app.services import ppt_service, course_ai_service
+from app.services import ppt_service, course_ai_service, deck_export
 from app.services import generate_progress as gp
 from app.database.session import AsyncSessionLocal
 
@@ -550,10 +550,19 @@ async def get_slide_image(cw_id: int, slide_index: int,
                         headers={"Cache-Control": "public, max-age=86400"})
 
 
-@cw_router.get("/{cw_id}/ebook", response_class=PlainTextResponse)
-async def download_ebook(cw_id: int, user: User = Depends(get_current_user_flexible),
+def _attachment_header(filename: str, fallback: str) -> dict:
+    """中文文件名必须用 RFC 5987 编码，否则浏览器会存成乱码名"""
+    from urllib.parse import quote
+    ext = filename[filename.rfind("."):] if "." in filename else ""
+    return {"Content-Disposition":
+            f"attachment; filename={fallback}{ext}; filename*=UTF-8''{quote(filename)}"}
+
+
+@cw_router.get("/{cw_id}/ebook")
+async def download_ebook(cw_id: int, fmt: str = Query("pdf", alias="format"),
+                         user: User = Depends(get_current_user_flexible),
                          db: AsyncSession = Depends(get_db)):
-    """连贯读物（Markdown）—— 真正的电子书形态
+    """电子书下载：默认 PDF（可打印、手机可读），也支持 EPUB 与 Markdown
 
     走 flexible 认证：下载由 <a href> 发起，不会带 Authorization 头，只能靠 ?token=
     """
@@ -568,7 +577,25 @@ async def download_ebook(cw_id: int, user: User = Depends(get_current_user_flexi
         # 与 pptx 导出一致：带上版式语义，卡片/对比/数据/金句才会出现在电子书里
         row.update(extras_map.get(str(s.slide_index)) or {})
         payload.append(row)
-    return ppt_service.build_ebook_markdown(payload, cw.title)
+    md = ppt_service.build_ebook_markdown(payload, cw.title)
+    fmt = (fmt or "pdf").lower()
+    if fmt == "md":
+        return PlainTextResponse(md)
+
+    course_title = cw.course.title if cw.course else ""
+    ext = ".epub" if fmt == "epub" else ".pdf"
+    out = paths.gen_file("exports", f"cw{cw_id}_v{cw.version}_ebook{ext}")
+    if fmt == "epub":
+        await asyncio.to_thread(deck_export.build_epub, md, out,
+                                title=cw.title, course_title=course_title)
+        media = "application/epub+zip"
+    else:
+        html = deck_export.ebook_html(md, title=cw.title, course_title=course_title,
+                                      slide_count=len(slides))
+        await asyncio.to_thread(deck_export.html_to_pdf, html, out)
+        media = "application/pdf"
+    return FileResponse(str(out), media_type=media,
+                        headers=_attachment_header(f"《{cw.title}》电子书{ext}", "ebook"))
 
 
 def _handout_markdown(cw: Courseware, course, rows: list[dict], rep: dict, teacher: bool) -> str:
@@ -659,12 +686,14 @@ def _handout_markdown(cw: Courseware, course, rows: list[dict], rep: dict, teach
     return "\n".join(out)
 
 
-@cw_router.get("/{cw_id}/handout", response_class=PlainTextResponse)
+@cw_router.get("/{cw_id}/handout")
 async def download_handout(cw_id: int, audience: str = "student",
+                           fmt: str = Query("docx", alias="format"),
                            user: User = Depends(get_current_user_flexible),
                            db: AsyncSession = Depends(get_db)):
-    """课堂讲义：学生版（要点 + 留白笔记 + 思考题）/ 教师版（另有讲师速记、时长建议、陈旧警示）
+    """课堂讲义：默认 Word（.docx），也可 PDF / Markdown
 
+    学生版：要点 + 留白笔记 + 思考题；教师版另附讲透解释、讲师速记、时长建议与陈旧警示。
     同样走 flexible 认证：下载/预览由 <a href> 发起，不带 Authorization 头，只能靠 ?token=
     """
     cw = await _courseware_or_404(db, cw_id)
@@ -683,7 +712,31 @@ async def download_handout(cw_id: int, audience: str = "student",
     extras_map = rep.get("_deck_extras") or {}
     for r in rows:
         r.update(extras_map.get(str(r["slide_index"])) or {})
-    return _handout_markdown(cw, course, rows, rep, teacher=str(audience).lower() == "teacher")
+    teacher = str(audience).lower() == "teacher"
+    fmt = (fmt or "docx").lower()
+    if fmt == "md":
+        return PlainTextResponse(_handout_markdown(cw, course, rows, rep, teacher=teacher))
+
+    blocks = deck_export.handout_blocks(
+        rows, title=cw.title, course_title=course.title if course else "",
+        version=cw.version, teacher=teacher, domain=(course.domain if course else "") or "",
+        objectives=[str(o) for o in (rep.get("objectives") or [])],
+        exercises=[str(x) for x in (rep.get("exercises") or [])],
+        reading=[str(x) for x in (rep.get("reading") or [])],
+        sources=[str(x) for x in (rep.get("sources_used") or [])],
+    )
+    ver = "教师版" if teacher else "学生版"
+    if fmt == "pdf":
+        html = deck_export.blocks_to_html(blocks, subtitle=f"《{cw.title}》课堂讲义（{ver}）")
+        out = paths.gen_file("exports", f"cw{cw_id}_v{cw.version}_handout_{'teacher' if teacher else 'student'}.pdf")
+        await asyncio.to_thread(deck_export.html_to_pdf, html, out)
+        return FileResponse(str(out), media_type="application/pdf",
+                            headers=_attachment_header(f"《{cw.title}》课堂讲义（{ver}）.pdf", "handout"))
+
+    data = await asyncio.to_thread(deck_export.blocks_to_docx, blocks, title=cw.title)
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    headers=_attachment_header(f"《{cw.title}》课堂讲义（{ver}）.docx", "handout"))
 
 
 @cw_router.get("/{cw_id}/export/pptx")

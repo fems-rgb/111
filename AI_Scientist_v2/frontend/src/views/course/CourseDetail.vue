@@ -181,17 +181,30 @@
                   📖 阅读
                 </button>
                 <div class="flex gap-1.5">
-                  <a :href="coursewareApi.ebookUrl(w.id)" target="_blank" rel="noopener"
+                  <a :href="coursewareApi.ebookUrl(w.id, 'pdf')" target="_blank" rel="noopener"
                      class="text-[11px] px-2.5 py-1 rounded-md bg-surface-100 text-surface-600 hover:bg-surface-200 text-center"
-                     title="把课件读成连贯的书（Markdown）">📕 电子书</a>
-                  <a :href="coursewareApi.handoutUrl(w.id, 'student')" target="_blank" rel="noopener"
+                     title="电子书 PDF：带封面、目录与页码，可打印、手机可读">📕 电子书</a>
+                  <a :href="coursewareApi.ebookUrl(w.id, 'epub')" target="_blank" rel="noopener"
+                     class="text-[11px] px-2 py-1 rounded-md bg-surface-100 text-surface-500 hover:bg-surface-200 text-center"
+                     title="EPUB：可导入手机/阅读器，带可跳转目录">EPUB</a>
+                </div>
+                <div class="flex gap-1.5">
+                  <a :href="coursewareApi.handoutUrl(w.id, 'student', 'docx')" target="_blank" rel="noopener"
                      class="text-[11px] px-2.5 py-1 rounded-md bg-surface-100 text-surface-600 hover:bg-surface-200 text-center"
-                     title="课堂发放版：要点 + 笔记留白 + 课后思考题">📄 讲义</a>
+                     title="学生讲义 Word：要点 + 笔记留白 + 课后思考题">📄 讲义</a>
+                  <a :href="coursewareApi.handoutUrl(w.id, 'student', 'pdf')" target="_blank" rel="noopener"
+                     class="text-[11px] px-2 py-1 rounded-md bg-surface-100 text-surface-500 hover:bg-surface-200 text-center"
+                     title="学生讲义 PDF：直接打印发给学生">PDF</a>
                 </div>
                 <template v-if="isTeacher">
-                  <a :href="coursewareApi.handoutUrl(w.id, 'teacher')" target="_blank" rel="noopener"
-                     class="text-[11px] px-2.5 py-1 rounded-md bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-center"
-                     title="另含讲师速记、每章时长建议与陈旧页警示">🗒️ 教师讲义</a>
+                  <div class="flex gap-1.5">
+                    <a :href="coursewareApi.handoutUrl(w.id, 'teacher', 'docx')" target="_blank" rel="noopener"
+                       class="text-[11px] px-2.5 py-1 rounded-md bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-center"
+                       title="教师讲义 Word：含讲透解释、讲师速记、每章时长建议与陈旧页警示">🗒 教师讲义</a>
+                    <a :href="coursewareApi.handoutUrl(w.id, 'teacher', 'pdf')" target="_blank" rel="noopener"
+                       class="text-[11px] px-2 py-1 rounded-md bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-200 text-center"
+                       title="教师讲义 PDF">PDF</a>
+                  </div>
                   <button @click="scanStaleness(w)" :disabled="w.status !== 'ready' || scanning === w.id"
                           class="text-[11px] px-2.5 py-1 rounded-md bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 disabled:opacity-40">
                     {{ scanning === w.id ? '体检中…' : '🩺 AI 体检' }}
