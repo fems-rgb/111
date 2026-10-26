@@ -398,8 +398,12 @@ def _resolve_writable_path(p):
         stem, ext = os.path.splitext(p)
         return f'{stem}_{_t.strftime("%Y%m%d_%H%M%S")}{ext}'
 
-def generate_challenge_cup_pdf(project_id: int) -> str | None:
-    """为指定项目生成对标'挑战杯'赛题规范的 PDF，返回 pdf 路径或 None"""
+def generate_challenge_cup_pdf(project_id: int, research_question: str = "") -> str | None:
+    """为指定项目生成对标'挑战杯'赛题规范的 PDF，返回 pdf 路径或 None
+
+    research_question 为可选覆写（proposal_addon 会传入当前拟定的科学问题），
+    未传时回退到项目自身的 research_question / description。
+    """
     try:
         import weasyprint
         from jinja2 import Environment, FileSystemLoader
@@ -727,8 +731,9 @@ def generate_challenge_cup_pdf(project_id: int) -> str | None:
         ps=_strip_heading(_clean(_best),'待研究问题',r'Problem\s*Statement')
         ps=_re.sub(r'科学问题[:：][^\n]*[\n]*','',ps)
         ps=_re.sub(r'问题描述[:：][^\n]*[\n]*','',ps)
-        if not ps: ps=_clean(proj.research_question or proj.description or '')
-        _rq=str(proj.research_question or proj.description or '').strip()
+        _rq_text = (research_question or '').strip() or proj.research_question or proj.description or ''
+        if not ps: ps=_clean(_rq_text)
+        _rq=str(_rq_text).strip()
         _rq=_re.sub(r'科学问题[:：][^\n]*','',_rq)
         _rq=_re.sub(r'问题描述[:：][^\n]*','',_rq)
         _rq=_rq.replace('\n',' ').strip() or '该前沿科学问题'

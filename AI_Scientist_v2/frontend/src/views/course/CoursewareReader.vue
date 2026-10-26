@@ -34,8 +34,13 @@
             </button>
           </div>
           <button @click="showVersions = true" class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">🕘 版本</button>
-          <a :href="coursewareApi.ebookUrl(cwId)" class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">⬇️ 电子书</a>
-          <a :href="coursewareApi.exportUrl(cwId)" class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">⬇️ PPTX</a>
+          <a :href="coursewareApi.ebookUrl(cwId)" target="_blank" rel="noopener"
+             class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200" title="把整份课件读成连贯的书">📕 电子书</a>
+          <a :href="coursewareApi.handoutUrl(cwId, meta.is_teacher ? 'teacher' : 'student')" target="_blank" rel="noopener"
+             class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200"
+             title="课堂讲义：要点 + 笔记留白 + 课后思考题（教师版附讲师速记）">📄 讲义</a>
+          <a :href="coursewareApi.exportUrl(cwId)"
+             class="text-xs px-2.5 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">⬇️ PPTX</a>
           <button v-if="meta.is_teacher" @click="openRefresh"
                   class="text-xs px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600">
             ✨ AI 更新陈旧内容

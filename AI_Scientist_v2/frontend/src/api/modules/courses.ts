@@ -134,8 +134,31 @@ export interface DeckResult {
   slides?: SlideMeta[]
   cost?: number
   pptx_url?: string
+  ebook_url?: string
+  handout_url?: string
   reader_url?: string
+  exercises?: string[]
+  reading?: string[]
   sources_used?: { kind: string; label: string; chars: number }[]
+}
+
+/** 一键生成作业状态（进度可视化的数据源） */
+export interface GenerateJobStatus {
+  ok: boolean
+  job_id: string
+  status: 'running' | 'done' | 'failed'
+  stage: string
+  percent: number
+  message: string
+  chapters_done: number
+  chapters_total: number
+  slides_done: number
+  slides_total: number
+  topic?: string
+  course_id?: number
+  course_title?: string
+  result?: DeckResult | null
+  error?: string
 }
 
 /** 工坊历史列表项 */
@@ -203,15 +226,8 @@ export const courseApi = {
     })
   },
 
-  generateDeck: (courseId: number, data: {
-    topic: string; syllabus?: string; chapter_count?: number; slides_per_chapter?: number
-    style?: string; audience?: string; domain?: string; title?: string
-    sources?: MaterialSelection; auto_save?: boolean
-  }) => client.post<{
-    ok: boolean; saved: boolean; courseware_id?: number; slide_count?: number
-    chapters?: Chapter[]; cost?: number; title?: string; slides?: SlideMeta[]
-    sources_used?: { kind: string; label: string; chars: number }[]
-  }>(`/courses/${courseId}/generate-courseware`, data, { timeout: 300000 }),
+  // 课程内的「AI 生成课件」已统一到 coursewareApi.startGenerate + generateStatus（带真实进度），
+  // 不再保留一份同步阻塞的旧接口，避免两套生成行为不一致。
 
   syncFromPipeline: (courseId: number, data: {
     pipeline_id: string; run_id?: string | null; topic?: string; chapter_count?: number
@@ -234,14 +250,22 @@ export const coursewareApi = {
   },
 
   ebookUrl: (id: number) => `/api/v1/coursewares/${id}/ebook${_tokenQuery()}`,
+  /** 讲义：学生版留笔记空位，教师版附讲师速记与时长建议 */
+  handoutUrl: (id: number, audience: 'student' | 'teacher' = 'student') =>
+    `/api/v1/coursewares/${id}/handout${_tokenQuery()}${_tokenQuery() ? '&' : '?'}audience=${audience}`,
   exportUrl: (id: number) => `/api/v1/coursewares/${id}/export/pptx${_tokenQuery()}`,
 
-  /** 课件工坊：不需先建课程，一个主题直接出整套课件 + 可下载的 .pptx */
-  quickGenerate: (data: {
+  /** 课件工坊：起一个生成作业，立即拿 job_id（真实进度靠 generateStatus 轮询） */
+  startGenerate: (data: {
     topic: string; title?: string; domain?: string; syllabus?: string
     chapter_count?: number; slides_per_chapter?: number; style?: string; audience?: string
     course_id?: number | null; sources?: MaterialSelection; auto_save?: boolean
-  }) => client.post<DeckResult>('/coursewares/quick-generate', data, { timeout: 600000 }),
+  }) => client.post<{ ok: boolean; job_id: string; course_id: number; course_title: string; status_url: string }>(
+    '/coursewares/quick-generate', data, { timeout: 120000 }),
+
+  /** 轮询生成进度 */
+  generateStatus: (jobId: string) =>
+    client.get<GenerateJobStatus>(`/coursewares/quick-generate/${jobId}`, { timeout: 30000 }),
 
   /** 我在工坊里生成过的课件 */
   aiMine: (limit = 30) =>

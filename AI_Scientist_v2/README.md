@@ -16,8 +16,8 @@
 | AI 对话 | 💬 AI对话 | `/chat` | 多轮学术对话、文件/图片上传、`/skill` 指令派发技能 | `api/v1/chat.py` `stream.py` |
 | 资料库 | 🗂️ 资料库 | `/knowledge` | 本地文档解析入库 + 外部学术检索（arXiv 等） | `knowledge.py` `knowledge_external.py` |
 | **课程中心** | 🎓 课程中心 | `/courses` | 开课 / 选课 / 课程网站 / 学员进度 / PPT 电子化 | `courses.py`（`/courses`） |
-| **课件工坊（生成 PPT）** | **📽️ AI 生成 PPT** | **`/courseware-studio`** | **给一个主题 → AI 产出整套课件 → 下载 `.pptx`** | `POST /coursewares/quick-generate` |
-| 课件阅读 | （课程内点开） | `/course/{id}/read/{cwId}` | 电子书式逐页阅读、AI 陈旧体检、AI 更新、版本链、反向导出 pptx | `courses.py`（`/coursewares`） |
+| **课件工坊（生成 PPT）** | **📽️ AI 生成 PPT** | **`/courseware-studio`** | **给一个主题 → AI 产出整套课件（全程进度可视）→ 下载 `.pptx` / 导出讲义** | `POST /coursewares/quick-generate` |
+| 课件阅读 | （课程内点开） | `/course/{id}/read/{cwId}` | 逐页阅读 · 📕 电子书 · 📄 学生/教师讲义 · AI 陈旧体检与更新 · 版本链 · 反向导出 pptx | `courses.py`（`/coursewares`） |
 | 科学问题题库 | 🔬 科学问题题库 | `/questions` | Science 2005 125 题、研究方案生成、报告导出 | `questions.py` |
 | 实验模拟场 | 🧪 实验模拟场 | `/experiment-lab` | 沙箱执行代码、产出图表/动画、模板复用 | `experiment_lab.py` |
 | 技能市场 | 🛠️ 技能市场 | `/skills` | 内置 / 自主 prompt / git 与网络搜集的 webhook 外接技能 | `skills.py` |
@@ -59,13 +59,13 @@ AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记
 
 | 指标 | 数值 |
 | --- | --- |
-| 后端 Python | 115 文件 / 16,727 行 |
-| 前端 Vue + TS | 61 文件 / 11,561 行 |
-| REST API | 148 个操作 / 126 条唯一路径（课程中心 26） |
+| 后端 Python（`backend/app`） | 101 文件 / 15,829 行 |
+| 前端 Vue + TS（`frontend/src`） | 59 文件 / 11,723 行 |
+| REST API | 150 个操作 / 127 条唯一路径（课程中心 27：`/courses` 13 · `/coursewares` 14） |
 | 数据表 | 26 张 |
 | Agent | 15 项注册 · 9 阶段默认流水线 |
 | 内置科学问题 | 125 题（Science 2005 前沿难题） |
-| 前端视图 / 组件 / API 模块 | 20 / 12 / 13 |
+| 前端视图 / 组件 / API 模块 | 18 / 12 / 13 |
 | 单元测试 | 12 用例 pytest 全通过 |
 
 ---
@@ -79,7 +79,7 @@ AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记
 cd AI_Scientist_v2\backend
 python -m venv .venv && .venv\Scripts\Activate
 pip install -r requirements.txt
-copy .env.example .env 2>nul || type nul > .env   # 至少写入 QWEN_API_KEY=sk-xxxx
+copy .env.example .env         # 至少写入 QWEN_API_KEY=sk-xxxx
 python -m app.database.init_db
 python run.py --reload          # → http://localhost:8000
 
@@ -125,7 +125,7 @@ robocopy dist ..\backend\static /MIR                  # 同步进后端
 | `generated/reports/` | 项目研究报告（Markdown / PDF） | `agents/orchestrator.py` `api/v1/export.py` |
 | `generated/questions/` | 科学问题任务产物（`task_{id}/report.md`） | `api/v1/questions.py` |
 | `generated/deliverables/` | 赛题交付物（`project_{id}/`） | `orchestrator.py` `export.py` |
-| `generated/pdf/` | PDF 报告（含挑战杯 125 篇汇总） | `export.py` `challenge_cup_pdf.py` |
+| `generated/pdf/` | PDF 报告（含挑战杯 125 篇汇总） | `export.py` |
 | `generated/experiments/` | 实验沙箱输出（图表 PNG / 动画 / 数据） | `services/experiment_engine.py` |
 | `generated/courseware/` | 课件逐页渲染图（`c{n}/cw{id}/s{idx}.jpg`） | `services/ppt_service.py` |
 | `generated/exports/` | 反向导出的原生 `.pptx` | `GET /coursewares/{id}/export/pptx` |
@@ -154,19 +154,29 @@ robocopy dist ..\backend\static /MIR                  # 同步进后端
 主题 / 章节数 / 每章页数 / 风格 / 受众
         +（可选）勾选多源素材 → 🧩 引用资料库·题目·报告·项目对话·流水线·技能
         ↓
-POST /api/v1/coursewares/quick-generate
+POST /api/v1/coursewares/quick-generate   →  立即返回 job_id（202，不阻塞 HTTP）
         ↓
 ①  未指定 course_id → 自动创建一门【仅自己可见】的草稿课程承载（不污染公开课列表）
-②  AI 逐章生成 slides → 落库 + 逐页渲染轻量配图
-③  返回 courseware_id / slide_count / cost / pptx_url / reader_url / sources_used
+②  AI 先出大纲，再逐章撰写 slides（分章调用，避免一次性输出 80 页被 max_tokens 截断）
+③  生成小结页 + 课后思考题 + 延伸阅读 → 逐页渲染轻量配图 → 落库→电子书文本入资料库
+        ↓  每一阶段写进进程内作业表（services/generate_progress.py）
+GET /api/v1/coursewares/quick-generate/{job_id}   ← 前端每 1.2s 轮询，驱动真实进度条
         ↓
-⬇️ 下载 .pptx（原生 PowerPoint，课堂直接投影）  ·  📖 电子书阅读  ·  ✏️ 逐页微调  ·  🎓 发布为正式课程
+④  status=done 时 result 里拿到 courseware_id / slide_count / cost /
+    pptx_url / ebook_url / handout_url / reader_url / sources_used
+        ↓
+⬇️ 下载 .pptx  ·  📕 电子书  ·  📄 学生讲义 / 🗒️ 教师讲义  ·  📖 逐页阅读  ·  ✏️ 逐页微调  ·  🎓 发布课程
 ```
+
+**进度可视化**：阶段枚举 `material → outline → chapter → summary → render → persist`，
+前端（`views/course/CoursewareStudio.vue` 与课程详情页的生成弹窗）展示百分比进度条、
+已完成章节数 `x/y`、已产出页数与逐条阶段日志；作业进度只存内存 30 分钟（服务重启或过期后
+结果仍可在右侧「我生成过的课件」与课程页拿到）。
 
 右侧「🗂️ 我生成过的课件」来自 `GET /api/v1/coursewares/ai-mine`，随时回看、再下载、按同样参数重跑。
 
 > ⚠️ 路由顺序敏感：`/coursewares/ai-mine`、`/coursewares/quick-generate` 必须声明在 `/coursewares/{cw_id}` 之前，否则会被当成 `cw_id` 参数（FastAPI 按声明顺序匹配）。
-> 下载类端点（`export/pptx`、`ebook`）走 `get_current_user_flexible`，因为 `<a href>` 不会带 `Authorization` 头，前端用 `?token=` 认证。
+> 下载类端点（`export/pptx`、`ebook`、`handout`）走 `get_current_user_flexible`，因为 `<a href>` 不会带 `Authorization` 头，前端用 `?token=` 认证。
 
 ### 4.2 课程中心： teaching 场景闭环
 
@@ -177,10 +187,11 @@ POST /api/v1/coursewares/quick-generate
 | **PPT 电子化** | 上传 `.pptx` → 拆成文本层 + 逐页瘦身图，首屏只加载几十 KB | `POST /courses/{id}/courseware` |
 | AI 陈旧度体检 | 逐页打风险分、给出过时原因与修改建议 | `POST /coursewares/{id}/staleness-scan` |
 | **AI 自动更新** | 只重写高风险页，生成新版本并保留版本链（原稿可回溯） | `POST /coursewares/{id}/ai-refresh` |
-| 快速做课件 | 依托课程大纲 + 多源素材生成整套 deck | `POST /courses/{id}/generate-courseware` |
+| 快速做课件 | 依托大纲 + 多源素材生成整套 deck（异步作业，可轮询进度） | `POST /coursewares/quick-generate` · `GET /coursewares/quick-generate/{job_id}` |
 | 流水线转讲义 | 把研究流水线成功运行的产出变成课件 | `POST /courses/{id}/sync-from-pipeline` |
 | AI 拟大纲 | 从长文本抽课程标题、领域与章节 | `POST /courses/ai/outline` |
-| 电子书阅读 | 连贯读物 Markdown（真正的电子书形态） | `GET /coursewares/{id}/ebook` |
+| 电子书阅读 | 连贯读物 Markdown（真正的电子书形态，适合当书读） | `GET /coursewares/{id}/ebook` |
+| **课堂讲义** | 按章分组的发放物：学生版（要点 + 笔记留白 + 课后思考题）/ 教师版（另附讲师速记、每章时长建议、陈旧页警示），本地渲染 Markdown 不花 token | `GET /coursewares/{id}/handout?audience=student\|teacher` |
 | 反向导出 | 电子化后的课件仍可导出原生 `.pptx`，不改变老师的上课习惯 | `GET /coursewares/{id}/export/pptx` |
 
 ### 4.3 跨模块联动
@@ -250,9 +261,9 @@ knowledge_gap → literature → hypothesis → design → experiment_plan
 AI_Scientist_v2/
 ├── backend/
 │   ├── app/
-│   │   ├── agents/            # 23 个 Agent 文件 + orchestrator + tools
+│   │   ├── agents/            # 25 个 Agent 文件 + orchestrator + tools
 │   │   ├── api/v1/            # 22 个端点模块（courses.py 含课程 + 课件双 router）
-│   │   ├── services/          # 14 个服务：qwen_client / ppt_service / course_ai_service / …
+│   │   ├── services/          # 16 个服务：qwen_client / ppt_service / course_ai_service / generate_progress / …
 │   │   ├── schemas/           # Pydantic 契约
 │   │   ├── database/          # models（26 表）· session · init_db · Alembic
 │   │   ├── core/ · security/  # 事件总线 · 加密 · JWT · 速率限制
@@ -303,8 +314,8 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 | 认证 | `/auth` | 5 | `POST /auth/login` · `/auth/refresh` |
 | 项目 | `/projects` | 13 | `POST /projects` · `/projects/{id}/pipeline` |
 | 科学问题 | `/questions` | 19 | `POST /questions/{qid}/research` · `GET /questions/{qid}/report` |
-| 课程中心 | `/courses` | 14 | `POST /courses` · `/{id}/courseware` · `/{id}/generate-courseware` · `/{id}/sync-from-pipeline` |
-| 课件 | `/coursewares` | 12 | `POST /quick-generate` · `GET /ai-mine` · `/{id}/staleness-scan` · `/{id}/ai-refresh` · `/{id}/export/pptx` · `/{id}/versions` |
+| 课程中心 | `/courses` | 13 | `POST /courses` · `/{id}/courseware` · `/{id}/sync-from-pipeline` · `/ai/outline` |
+| 课件 | `/coursewares` | 14 | `POST /quick-generate` · `GET /quick-generate/{job_id}` · `GET /ai-mine` · `/{id}/staleness-scan` · `/{id}/ai-refresh` · `/{id}/ebook` · `/{id}/handout` · `/{id}/export/pptx` · `/{id}/versions` |
 | 自动化 | `/automation` | 12 | `POST /{pid}/run` · `/{pid}/run-from` · 定时与反馈迭代 |
 | 实验模拟场 | `/experiment-lab` | 12 | `POST /run` · `GET /status/{run}` · `/chart/…` · `/video/{run}` |
 | 资料库 | `/knowledge` · `/knowledge/external` | 9 · 5 | 上传解析 · 检索 · 外部学术源 |
@@ -406,11 +417,27 @@ pytest tests -q          # 12 用例，约 1s 跑完（不依赖外部 API Key�
 | 生成的文件到处乱跑 | 曾使用 `os.getcwd()` / 相对路径 | 已全部改为 `app/utils/paths.py` 绝对根 |
 | 老课件图片打不开 | 历史数据存的是 `uploads/courses/…` 或绝对路径 | `paths.resolve()` 自动回退旧根，无需迁移 |
 | PPT 解析失败 | `.ppt` 旧二进制格式 | 先在 Office 里另存为 `.pptx` |
+| 刷新页面后生成进度条消失 | 作业进度只存进程内（TTL 30 分钟），服务重启即失效 | 生成结果已落库，去「我生成过的课件」或课程页拿；无需重新生成 |
+| 后台生成报错但页面不提示 | 失败信息写在作业表的 `error` 字段 | 轮询到 `status=failed` 会显示红色提示；也可 `GET /coursewares/quick-generate/{job_id}` 直查 |
+| 聚合报告写进大模型时报 `SyntaxError: '(' was never closed` | f-string 里嵌了同种引号（PEP 701 仅 Py3.12+ 合法），如 `f"{'、'.join(x)}"` | 先在外部算好变量再插值 |
+| 讲义/电子书里表格只剩一行表头 | `Slide.tables` 是 `[表格[行[单元格]]]` 三层，易误当成单行 | 按 `tbl[0]` 表头、`tbl[1:]` 正文渲染，单元格内的 `|` 转全角｜ |
 
 ## 18. FAQ
 
 **Q：生成 PPT 的入口在哪？**
 A：侧边栏 `📽️ AI 生成 PPT`（`/courseware-studio`）。若看不到，说明当前账号不是 teacher/researcher/admin 角色 —— 学生账号只做阅读与选课。
+
+**Q：生成过程中有进度吗？**
+A：有。`POST /coursewares/quick-generate` 立即返回 `job_id`（不阻塞 HTTP），前端每 1.2s 轮询
+`GET /coursewares/quick-generate/{job_id}`，展示阶段步骤条（聚合素材 → 拟大纲 → 逐章撰写 →
+小结与思考题 → 逐页配图 → 落库归档）、百分比进度条、已完成章节 `x/y` 与已产出页数。
+课件工坊与课程详情页的生成弹窗用的是同一套作业接口。
+
+**Q：电子书和讲义有什么区别？**
+A：`GET /coursewares/{id}/ebook` 把整套 PPT 写成连贯读物，适合当一本书从头读到尾；
+`GET /coursewares/{id}/handout?audience=student|teacher` 是**课堂发放物**：按章分组 + 每页要点，
+学生版附笔记留白与课后思考题，教师版附讲师速记、每章时长建议与陈旧页警示。两者都是本地
+渲染的 Markdown（不花 token），浏览器直接打开或 Ctrl+P 打印。
 
 **Q：工坊生成的课件会出现在公开课列表里吗？**
 A：不会。未指定课程时自动建一门 `visibility=private` 的草稿课程承载，你确认内容后再手动发布。

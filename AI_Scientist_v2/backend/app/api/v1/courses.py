@@ -9,6 +9,7 @@
 """
 import os
 import uuid
+import asyncio
 import logging
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -27,6 +28,8 @@ from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, Gener
                                  AiRefreshRequest, ProgressRequest, OutlineRequest,
                                  CoursewareUpdateRequest, SyncPipelineRequest)
 from app.services import ppt_service, course_ai_service
+from app.services import generate_progress as gp
+from app.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/courses", tags=["课程中心"])
@@ -467,6 +470,7 @@ async def get_courseware_meta(cw_id: int, user: User = Depends(get_current_user)
                             )).scalar_one_or_none()
     slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
                                .order_by(Slide.slide_index))).scalars().all()
+    chap_map = (cw.staleness_report or {}).get("_chapter_map") or {}
     return {
         "id": cw.id, "title": cw.title, "course_id": cw.course_id,
         "course_title": course.title if course else "",
@@ -485,6 +489,7 @@ async def get_courseware_meta(cw_id: int, user: User = Depends(get_current_user)
             "image_kb": s.image_kb or 0, "risk_score": s.risk_score or 0,
             "risk_category": s.risk_category or "", "ai_reason": s.ai_reason or "",
             "ai_suggestion": s.ai_suggestion or "", "updated_by_ai": bool(s.updated_by_ai),
+            "chapter": str(chap_map.get(str(s.slide_index), "")) or "",
         } for s in slides],
     }
 
@@ -521,6 +526,115 @@ async def download_ebook(cw_id: int, user: User = Depends(get_current_user_flexi
     return ppt_service.build_ebook_markdown(payload, cw.title)
 
 
+def _handout_markdown(cw: Courseware, course, rows: list[dict], rep: dict, teacher: bool) -> str:
+    """组装讲义 Markdown（不依赖 LLM，本地秒出）
+
+    与电子书的分工：电子书把PPT 读成连贯读物（自己看），讲义是**课堂发放物**：
+    按章分组 + 每页要点 + 留白笔记区 + 课后思考题与延伸阅读；
+    teacher 版额外给出讲师速记、时长建议与陈旧页警示。
+    """
+    from datetime import datetime
+
+    ver = "教师版" if teacher else "学生版"
+    out: list[str] = [f"# 《{cw.title}》课堂讲义（{ver}）", ""]
+    meta_bits = [f"课程：{course.title}" if course else "", f"课件 v{cw.version}",
+                 f"共 {len(rows)} 页", datetime.now().strftime("%Y-%m-%d")]
+    if course and course.domain:
+        meta_bits.append(f"领域：{course.domain}")
+    out.append("> " + " · ".join(b for b in meta_bits if b))
+    out.append("")
+
+    objectives = [str(o) for o in (rep.get("objectives") or [])]
+    if objectives:
+        out += ["## 学习目标", ""] + [f"- {o}" for o in objectives] + [""]
+
+    # 按章分组（上传型 PPT 没有章节映射时归入“正文”单章）
+    grouped: list[tuple[str, list[dict]]] = []
+    for r in rows:
+        name = r.get("chapter") or "正文"
+        if grouped and grouped[-1][0] == name:
+            grouped[-1][1].append(r)
+        else:
+            grouped.append((name, [r]))
+
+    cn_num = "一二三四五六七八九十"
+    out.append("---")
+    out.append("")
+    for gi, (chap, items) in enumerate(grouped):
+        idx_label = cn_num[gi] if gi < 10 else str(gi + 1)
+        out.append(f"## {idx_label}、{chap}")
+        out.append("")
+        for r in items:
+            out.append(f"### 第 {r['slide_index'] + 1} 页 · {r['title'] or '（无标题）'}")
+            out.append("")
+            for b in (r.get("bullets") or []):
+                lvl = int((b or {}).get("level", 0) or 0)
+                text = str((b or {}).get("text", "")).strip()
+                if text:
+                    out.append(f"{'- ' if lvl == 0 else '  - '}{text}")
+            # tables 结构：[表格, ...]，每个表格 = [行, ...]，每行 = [单元格, ...]（首行为表头）
+            for tbl in (r.get("tables") or [])[:1]:
+                if not tbl or len(tbl) < 2:
+                    continue
+                header = [str(c or "").replace("|", "｜").strip() for c in tbl[0]]
+                if not header:
+                    continue
+                out.append("")
+                out.append("| " + " | ".join(header) + " |")
+                out.append("|" + "|".join(["---"] * len(header)) + "|")
+                for row in tbl[1:]:
+                    cells = [str(c or "").replace("|", "｜").strip() for c in (row or [])][:len(header)]
+                    cells += [""] * (len(header) - len(cells))
+                    out.append("| " + " | ".join(cells) + " |")
+            if teacher:
+                if r.get("notes"):
+                    out += ["", f"> 🗒️ **讲师速记**：{r['notes']}"]
+                if float(r.get("risk_score") or 0) >= 0.4:
+                    out += ["", f"> ⚠️ **陈旧风险**：{r.get('risk_category', '')} — "
+                            f"{r.get('ai_suggestion') or r.get('ai_reason') or ''}"]
+            else:
+                out += ["", "📝 笔记：", "", "> ", ""]
+            out.append("")
+        if teacher:
+            out += [f"> ⏱ 本章 {len(items)} 页，建议讲授约 {max(5, len(items) * 3)} 分钟",
+                    "","---",""]
+
+    exercises = [str(x) for x in (rep.get("exercises") or [])]
+    if exercises:
+        out += ["## 课后思考", ""] + [f"{i + 1}. {x}" for i, x in enumerate(exercises)] + [""]
+    reading = [str(x) for x in (rep.get("reading") or [])]
+    if reading:
+        out += ["## 延伸阅读", ""] + [f"- {x}" for x in reading] + [""]
+    sources = rep.get("sources_used") or []
+    if isinstance(sources, list) and sources:
+        out += ["## 本次生成所用的素材来源", ""] + [f"- {s}" for s in sources[:12]] + [""]
+    return "\n".join(out)
+
+
+@cw_router.get("/{cw_id}/handout", response_class=PlainTextResponse)
+async def download_handout(cw_id: int, audience: str = "student",
+                           user: User = Depends(get_current_user_flexible),
+                           db: AsyncSession = Depends(get_db)):
+    """课堂讲义：学生版（要点 + 留白笔记 + 思考题）/ 教师版（另有讲师速记、时长建议、陈旧警示）
+
+    同样走 flexible 认证：下载/预览由 <a href> 发起，不带 Authorization 头，只能靠 ?token=
+    """
+    cw = await _courseware_or_404(db, cw_id)
+    course = cw.course
+    rep = cw.staleness_report or {}
+    chap_map = rep.get("_chapter_map") or {}
+    slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
+                               .order_by(Slide.slide_index))).scalars().all()
+    if not slides:
+        raise HTTPException(status_code=400, detail="课件暂无内容页，无法生成讲义")
+    rows = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+             "notes": s.notes or "", "tables": s.tables or [],
+             "risk_score": s.risk_score or 0, "risk_category": s.risk_category or "",
+             "ai_reason": s.ai_reason or "", "ai_suggestion": s.ai_suggestion or "",
+             "chapter": str(chap_map.get(str(s.slide_index), "")) or ""} for s in slides]
+    return _handout_markdown(cw, course, rows, rep, teacher=str(audience).lower() == "teacher")
+
+
 @cw_router.get("/{cw_id}/export/pptx")
 async def export_pptx(cw_id: int, user: User = Depends(get_current_user_flexible),
                       db: AsyncSession = Depends(get_db)):
@@ -540,13 +654,15 @@ async def export_pptx(cw_id: int, user: User = Depends(get_current_user_flexible
                         filename=f"{cw.title}_v{cw.version}.pptx")
 
 
-@cw_router.post("/quick-generate", status_code=201)
+@cw_router.post("/quick-generate", status_code=202)
 async def quick_generate_courseware(req: GenerateDeckRequest,
                                    user: User = Depends(require_teacher),
                                    db: AsyncSession = Depends(get_db)):
-    """课件工坊：不需先建课程，一个主题直接生成整套课件并产出 .pptx
+    """课件工坊：一个主题直接生成整套课件（异步作业 + 可轮询进度）
 
-    未指定 course_id 时自动创建一门仅自己可见的草稿课程来承载课件（不污染公开课列表）。
+    调用后立即返回 job_id，生成在后台跑（一次完整生成要几十到上百秒），
+    前端轮询 /coursewares/quick-generate/{job_id} 拿真实进度：第几章、第几页、当前阶段。
+    未指定 course_id 时自动创建一门仅自己可见的草稿课程来承载课件。
     """
     course = None
     if req.course_id:
@@ -565,10 +681,52 @@ async def quick_generate_courseware(req: GenerateDeckRequest,
         await db.commit()
         await db.refresh(course)
         logger.info(f"📽️ 课件工坊自动建课: #{course.id} {course.title} by {user.username}")
-    out = await _build_deck(db, course, req, user)
-    out["course_id"] = course.id
-    out["course_title"] = course.title
-    return out
+
+    payload = (req.model_dump() if hasattr(req, "model_dump") else req.dict())
+    payload["course_id"] = course.id  # 后台任务直接用这门课，不再重复建课
+    job_id = gp.new_job(topic=req.topic, course_id=course.id, course_title=course.title,
+                        chapters_total=max(1, min(int(req.chapter_count or 6), 12)))
+    asyncio.create_task(_run_generate_job(job_id, payload, user.id))
+    return {"ok": True, "job_id": job_id, "course_id": course.id,
+            "course_title": course.title,
+            "status_url": f"/api/v1/coursewares/quick-generate/{job_id}"}
+
+
+@cw_router.get("/quick-generate/{job_id}")
+async def quick_generate_status(job_id: str, user: User = Depends(get_current_user)):
+    """轮询课件生成进度；status=done 时 result 就是完整生成结果（含 courseware_id）"""
+    snap = gp.snapshot(job_id)
+    if snap is None:
+        raise HTTPException(status_code=404,
+                            detail="作业记录不存在或已过期，可在「我生成过的课件」里查看结果")
+    return {"ok": True, "job_id": job_id, **snap}
+
+
+async def _run_generate_job(job_id: str, payload: dict, user_id: int) -> None:
+    """后台生成作业：自建 session（请求级 db 已关闭），进度写内存作业表"""
+    async def on_progress(stage, percent, message, extra):
+        gp.update(job_id, stage=stage, percent=percent, message=message, **(extra or {}))
+
+    try:
+        async with AsyncSessionLocal() as db:
+            user = await db.get(User, user_id)
+            course = await db.get(Course, int(payload.get("course_id") or 0))
+            if not user or not course:
+                gp.update(job_id, status="failed", stage="failed", message="生成失败：会话已失效",
+                          error="user or course not found")
+                return
+            req = GenerateDeckRequest(**payload)
+            gp.update(job_id, stage="start", percent=1, message="开始生成…",
+                      course_id=course.id, course_title=course.title)
+            out = await _build_deck(db, course, req, user, on_progress=on_progress)
+            out.setdefault("course_id", course.id)
+            out["course_title"] = course.title
+            gp.update(job_id, status="done", stage="done", percent=100,
+                      message=f"已生成 {out.get('slide_count', 0)} 页课件", result=out)
+    except Exception as e:
+        logger.exception(f"quick-generate 作业失败 job={job_id}")
+        gp.update(job_id, status="failed", stage="failed",
+                  message=f"生成失败：{str(e)[:120]}", error=str(e)[:400])
 
 
 @cw_router.post("/{cw_id}/progress")
@@ -819,8 +977,20 @@ async def ai_refresh(cw_id: int, req: AiRefreshRequest,
 # ════════════════ AI：快速做课件（需求 4，多源素材驱动） ════════════════
 
 async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest,
-                      user: User) -> dict:
-    """生成整套课件（课程内生成与课件工坊一键生成共用）"""
+                      user: User, on_progress=None) -> dict:
+    """生成整套课件（课程内生成与课件工坊一键生成共用）
+
+    on_progress(stage, percent, message, extra)：素材聚合 → 大纲 → 逐章 → 逐页配图 → 落库，
+    课件工坊用它驱动前端进度条；课程内同步生成不传即可。
+    """
+    async def _emit(stage, percent, message, **extra):
+        if on_progress:
+            try:
+                await on_progress(stage, int(percent), str(message), extra)
+            except Exception as e:  # 上报失败不能影响生成
+                logger.debug(f"deck progress emit skipped: {e}")
+
+    await _emit("material", 3, "正在聚合多源素材（资料/问题/对话/流水线/技能）…")
     material, provenance = await _resolve_material(
         db, user, req.sources, req.topic, req.reference_doc_id, req.project_id or course.project_id)
 
@@ -829,7 +999,7 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
         chapter_count=req.chapter_count, slides_per_chapter=req.slides_per_chapter,
         style=req.style, audience=req.audience,
         domain=req.domain or course.domain or "", reference_material=material,
-        project_id=req.project_id or course.project_id)
+        project_id=req.project_id or course.project_id, on_progress=on_progress)
 
     if not slides:
         raise HTTPException(status_code=500, detail="AI 未返回可用课件内容，请调整大纲后重试")
@@ -844,17 +1014,31 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
     await db.commit()
     await db.refresh(cw)
     rel, abs_dir = ppt_service._slides_dir(cw.id)
-    for s in slides:
+    total = len(slides)
+    for idx, s in enumerate(slides):
         try:
             path, kb = ppt_service._render_slide_only(s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
             s["image_path"], s["image_kb"] = path, kb
         except Exception as e:
             logger.debug(f"ai slide render skipped: {e}")
+        if idx % 2 == 0 or idx == total - 1:  # 本地图渲染很快，隔页刷新避免写太密
+            await _emit("render", 96 + int(3 * (idx + 1) / max(1, total)),
+                        f"正在绘制第 {idx + 1}/{total} 页配图…",
+                        slides_done=idx + 1, slides_total=total)
     if meta.get("chapters"):
         course.chapters = meta["chapters"]
+    await _emit("persist", 99, "正在写入课件库、渲染电子书并归档资料…",
+                slides_done=total, slides_total=total)
+    # Slide 表没有 chapter 列（避免动迁移），这里侧挂一份 index → 章名 映射，
+    # 由 /coursewares/{id} 读回后附到每页，详情页与阅读器就能按章分组
+    chap_map = {str(s["slide_index"]): s.get("chapter", "") for s in slides if s.get("chapter")}
     await _materialize_courseware(db, cw, None, slides=slides, creator=user)
     rep = dict(cw.staleness_report or {})
     rep["sources_used"] = provenance
+    rep["_chapter_map"] = chap_map
+    rep["exercises"] = meta.get("exercises", [])
+    rep["reading"] = meta.get("reading", [])
+    rep["objectives"] = meta.get("objectives", [])
     cw.staleness_report = rep
     await db.commit()
     logger.info(f"🎓 AI 生成课件 cw{cw.id} {len(slides)}页 (cost ¥{meta.get('cost', 0):.4f}, "
@@ -862,19 +1046,12 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
     return {"ok": True, "saved": True, "course_id": course.id, "courseware_id": cw.id,
             "slide_count": cw.slide_count, "chapters": meta.get("chapters", []),
             "cost": meta.get("cost", 0), "tokens": meta.get("tokens", {}), "version": cw.version,
-            "title": cw.title, "pptx_url": f"/api/v1/coursewares/{cw.id}/export/pptx",
-                        "reader_url": f"/course/{course.id}/read/{cw.id}", "sources_used": provenance}
-
-
-@router.post("/{course_id}/generate-courseware", status_code=201)
-async def generate_courseware(course_id: int, req: GenerateDeckRequest,
-                              user: User = Depends(require_teacher),
-                              db: AsyncSession = Depends(get_db)):
-    """依据大纲 + 多源素材生成整套课件，生成后即可电子书阅读，也可导出 pptx"""
-    course = await _course_or_404(db, course_id)
-    if course.teacher_id != user.id and user.role != UserRole.ADMIN:
-        raise HTTPException(status_code=403, detail="只有课程负责人可生成课件")
-    return await _build_deck(db, course, req, user)
+            "title": cw.title, "exercises": meta.get("exercises", []),
+            "reading": meta.get("reading", []),
+            "pptx_url": f"/api/v1/coursewares/{cw.id}/export/pptx",
+            "ebook_url": f"/api/v1/coursewares/{cw.id}/ebook",
+            "handout_url": f"/api/v1/coursewares/{cw.id}/handout",
+            "reader_url": f"/course/{course.id}/read/{cw.id}", "sources_used": provenance}
 
 
 @router.post("/{course_id}/sync-from-pipeline")

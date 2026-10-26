@@ -221,64 +221,170 @@ async def refresh_slides(old_slides: list[dict], report_items: list[dict],
     }
 
 
-GENERATE_SYSTEM = """你是高校课程设计专家。根据教学大纲生成一套可直接授课使用的课件（幻灯片）。
-原则：
-1. 每页只讲一件事，标题是结论式表述而非话题词
-2. 要点 3-6 条，具体可讲，避免「介绍一下」「概述」这类空话
-3. 融入近 1-2 年的真实进展、数据与案例
-4. notes 写讲师速记（案例出处、可能的学生提问、板书提示）
-5. 输出严格 JSON，不要多余文字"""
+def _normalize_slide(s: dict, index: int, chapter: str = "") -> dict:
+    """把模型返回的单页规整成落库结构（容错：非 dict bullets / 超长文本截断）"""
+    bullets = []
+    for b in (s.get("bullets") or []):
+        if isinstance(b, dict):
+            bullets.append({"level": int(b.get("level", 0) or 0), "text": str(b.get("text", ""))[:400]})
+        else:
+            bullets.append({"level": 0, "text": str(b)[:400]})
+    return {
+        "slide_index": index,
+        "chapter": chapter,
+        "title": str(s.get("title", f"第 {index + 1} 页"))[:300],
+        "bullets": bullets[:20],
+        "notes": str(s.get("notes", ""))[:2000],
+        "tables": s.get("tables") or [],
+        "image_path": "",
+        "image_kb": 0,
+    }
+
+
+_OUTLINE_SYSTEM = """你是资深课程设计师，擅长把主题拆解成有递进关系的章节大纲。
+输出严格 JSON，不要多余文字：
+{"title": "建议课件标题", "objectives": ["学习目标1", "学习目标2"],
+ "chapters": [{"title": "章标题", "points": ["知识点1", "知识点2"]}]}"""
+
+_CHAPTER_SYSTEM = """你是严谨又生动的中文课程作者。把指定章节展开成课件页。
+要求：
+1. 每页只讲一件事，标题是结论式表述而非话题词；
+2. 每页 3-8 条要点，单条不超过 60 字，可分两级（level 0 主点 / 1 细分），
+   要具体可讲，避免“介绍一下/概述”这类空话；
+3. 尽量融入近 1-2 年的真实进展、数据与案例；事实、公式必须准确，
+   没把握的改成“通常认为/已有研究表明”；
+4. notes 写给讲师的速记（怎么讲、举什么例、可能的学生提问、易错点），100-250 字；
+5. 本章第一页为导览页（说清本章要解决什么问题），最后一页回收本章要点；
+6. 输出严格 JSON，不要多余文字：
+{"slides": [{"title": "页标题", "bullets": [{"level": 0, "text": "要点"}], "notes": "讲师速记"}]}"""
 
 
 async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
                         slides_per_chapter: int = 4, style: str = "标准",
                         audience: str = "本科生", domain: str = "",
-                        reference_material: str = "", project_id: int = None) -> tuple[list[dict], dict]:
-    """新课程快速做课件：生成结构化幻灯片列表"""
-    total = min(chapter_count * slides_per_chapter, 80)
-    user_prompt = f"""请为下面的课程设计一套课件。
+                        reference_material: str = "", project_id: int = None,
+                        on_progress=None) -> tuple[list[dict], dict]:
+    """新课程快速做课件：先出大纲，再逐章生成，全程上报进度
 
-主题：{topic}
+    on_progress(stage, percent, message, extra) 由调用方传入（课件工坊的作业循环），
+    让前端进度条显示“第几章/共几页”这种真实进展，而不是一个转圈的盲等。
+    分章生成还顺带解决了旧版一次性输出 80 页时被 max_tokens 截断的问题。
+    """
+    async def _emit(stage: str, percent: int, message: str, **extra):
+        if on_progress:
+            try:
+                await on_progress(stage, int(percent), message, extra)
+            except Exception as e:  # 进度上报绝不能拖垮生成主流程
+                logger.debug(f"progress emit skipped: {e}")
+
+    chapter_count = max(1, min(int(chapter_count or 6), 12))
+    slides_per_chapter = max(1, min(int(slides_per_chapter or 4), 8))
+    cap = min(chapter_count * slides_per_chapter + 2, 80)
+    cost, tin, tout = 0.0, 0, 0
+    syl_block = ("\n教学大纲：\n" + syllabus[:3000]) if syllabus else ""
+    ref_block = ("\n参考资料（优先吸收其中的事实与数据）：\n" + reference_material[:5000]) if reference_material else ""
+
+    # ── 1. 大纲 ──
+    await _emit("outline", 6, "正在设计章节大纲…")
+    res = await call_qwen(_OUTLINE_SYSTEM, f"""主题：{topic}
 领域：{domain or '通用'}
 授课对象：{audience}
 风格：{style}
-章节数：{chapter_count}，每约 {slides_per_chapter} 页，共约 {total} 页
-{('教学大纲：\n' + syllabus[:4000]) if syllabus else ''}
-{('参考资料（请优先吸收其中的事实与数据）：\n' + reference_material[:6000]) if reference_material else ''}
+章节数：{chapter_count}，每章约 {slides_per_chapter} 页{syl_block}{ref_block}
 
-输出 JSON：
-{{"chapters": [{{"title": "章标题", "points": ["知识点1", "知识点2"]}}],
- "slides": [{{"slide_index": 0, "chapter": "所属章", "title": "页标题",
-   "bullets": [{{"level": 0, "text": "要点"}}], "notes": "讲师速记"}}]}}
-
-要求：第 0 页为封面页（title=课程名，bullets 写课程定位与学习目标）；最后一页为小结与延伸阅读。"""
-
-    res = await call_qwen(GENERATE_SYSTEM, user_prompt, project_id=project_id,
-                          max_tokens=min(8192, 2048 + total * 90))
+只输出 JSON。""", project_id=project_id, max_tokens=1600)
+    cost += res.get("cost", 0)
+    tin += res["tokens"]["input"]
+    tout += res["tokens"]["output"]
     data = _extract_json(res["content"]) or {}
-    raw_slides = data.get("slides") or []
-    slides: list[dict] = []
-    for i, s in enumerate(raw_slides[:total]):
-        bullets = []
-        for b in (s.get("bullets") or []):
-            if isinstance(b, dict):
-                bullets.append({"level": int(b.get("level", 0) or 0), "text": str(b.get("text", ""))[:400]})
-            else:
-                bullets.append({"level": 0, "text": str(b)[:400]})
-        slides.append({
-            "slide_index": i,
-            "title": str(s.get("title", f"第 {i + 1} 页"))[:300],
-            "bullets": bullets[:20],
-            "notes": str(s.get("notes", ""))[:2000],
-            "tables": [],
-            "image_path": "",
-            "image_kb": 0,
-        })
+    chapters = [c for c in (data.get("chapters") or []) if isinstance(c, dict)][:chapter_count]
+    if not chapters:
+        chapters = [{"title": f"第 {i + 1} 部分", "points": []} for i in range(chapter_count)]
+    objectives = [str(o)[:200] for o in (data.get("objectives") or [])][:5]
+
+    slides: list[dict] = [{
+        "slide_index": 0, "chapter": "封面", "title": str(data.get("title") or topic)[:300],
+        "bullets": ([{"level": 0, "text": f"面向 {audience} · {style}版"}] +
+                    [{"level": 0, "text": o} for o in objectives])[:8],
+        "notes": f"开场：说明本课程定位与学习目标（主题：{topic}）",
+        "tables": [], "image_path": "", "image_kb": 0,
+    }]
+
+    # ── 2. 逐章生成 ──
+    base, span = 10, 78
+    for i, ch in enumerate(chapters):
+        chapter_name = str(ch.get("title", f"第 {i + 1} 部分"))[:200]
+        await _emit("chapter", base + int(span * i / len(chapters)),
+                    f"正在生成第 {i + 1}/{len(chapters)} 章：{chapter_name[:24]}",
+                    chapters_done=i, chapters_total=len(chapters),
+                    slides_done=len(slides), slides_total=cap)
+        pts = [str(p)[:80] for p in (ch.get("points") or [])]
+        pts_text = "；".join(pts) or "自拟"
+        cres = await call_qwen(_CHAPTER_SYSTEM, f"""课程主题：{topic}（{domain or '通用'} · 面向 {audience} · {style}）
+本章标题：{chapter_name}
+本章知识点：{pts_text}
+请输出 {slides_per_chapter} 页{ref_block if i == 0 else ''}
+
+只输出 {{"slides": [...]}}。""", project_id=project_id,
+                              max_tokens=min(6000, 800 + slides_per_chapter * 600))
+        cost += cres.get("cost", 0)
+        tin += cres["tokens"]["input"]
+        tout += cres["tokens"]["output"]
+        got = _extract_json(cres["content"]) or {}
+        rows = got.get("slides") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        for s in rows[:slides_per_chapter]:
+            if len(slides) >= cap:
+                break
+            if isinstance(s, dict):
+                slides.append(_normalize_slide(s, len(slides), chapter_name))
+        await _emit("chapter", base + int(span * (i + 1) / len(chapters)),
+                    f"第 {i + 1}/{len(chapters)} 章完成（累计 {len(slides)} 页）",
+                    chapters_done=i + 1, chapters_total=len(chapters),
+                    slides_done=len(slides), slides_total=cap)
+
+    # ── 3. 小结页 + 思考题 + 延伸阅读（讲义要用后两项）──
+    await _emit("summary", 92, "正在生成小结、思考题与延伸阅读…")
+    def _line(j: int, c: dict) -> str:
+        pts = "、".join(str(p)[:40] for p in (c.get("points") or [])[:4])
+        return f"{j + 1}. {c.get('title', '')}：{pts}"
+
+    outline_txt = "\n".join(_line(j, c) for j, c in enumerate(chapters))
+    exercises: list[str] = []
+    reading: list[str] = []
+    try:
+        sres = await call_qwen(
+            "你是课程总结助手。输出严格 JSON："
+            '{"wrap": {"title": "本页标题", "bullets": [{"level": 0, "text": "要点"}], "notes": "讲师速记"}, '
+            '"exercises": ["思考题"], "reading": ["延伸阅读"]}',
+            f"课程主题：{topic}（面向 {audience}）\n章节与知识点：\n{outline_txt}\n\n"
+            f"请给出：结课小结页（回收全课主线，3-6 条要点）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
+            project_id=project_id, max_tokens=1400)
+        cost += sres.get("cost", 0)
+        tin += sres["tokens"]["input"]
+        tout += sres["tokens"]["output"]
+        sdata = _extract_json(sres["content"]) or {}
+        wrap = sdata.get("wrap") or {}
+        if isinstance(wrap, dict) and wrap.get("bullets"):
+            slides.append(_normalize_slide(wrap, len(slides), "小结"))
+        exercises = [str(x)[:300] for x in (sdata.get("exercises") or [])][:8]
+        reading = [str(x)[:300] for x in (sdata.get("reading") or [])][:8]
+    except Exception as e:
+        logger.warning(f"小结页生成跳过（不影响课件主体）: {e}")
+
+    if len(slides) < 2:
+        return [], {"chapters": chapters, "cost": round(cost, 6)}
+
+    await _emit("assemble", 96, f"已组装 {len(slides)} 页，准备落库…",
+                slides_done=len(slides), slides_total=len(slides))
     return slides, {
-        "chapters": data.get("chapters") or [],
-        "cost": round(res.get("cost", 0), 6),
-        "tokens": res.get("tokens", {"input": 0, "output": 0}),
-        "model": res.get("model", ""),
+        "chapters": chapters,
+        "objectives": objectives,
+        "exercises": exercises,
+        "reading": reading,
+        "cost": round(cost, 6),
+        "tokens": {"input": tin, "output": tout},
     }
 
 

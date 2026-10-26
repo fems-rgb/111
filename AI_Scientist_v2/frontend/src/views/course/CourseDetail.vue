@@ -180,7 +180,18 @@
                         class="text-xs px-3 py-1.5 rounded-md bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-40">
                   📖 阅读
                 </button>
+                <div class="flex gap-1.5">
+                  <a :href="coursewareApi.ebookUrl(w.id)" target="_blank" rel="noopener"
+                     class="text-[11px] px-2.5 py-1 rounded-md bg-surface-100 text-surface-600 hover:bg-surface-200 text-center"
+                     title="把课件读成连贯的书（Markdown）">📕 电子书</a>
+                  <a :href="coursewareApi.handoutUrl(w.id, 'student')" target="_blank" rel="noopener"
+                     class="text-[11px] px-2.5 py-1 rounded-md bg-surface-100 text-surface-600 hover:bg-surface-200 text-center"
+                     title="课堂发放版：要点 + 笔记留白 + 课后思考题">📄 讲义</a>
+                </div>
                 <template v-if="isTeacher">
+                  <a :href="coursewareApi.handoutUrl(w.id, 'teacher')" target="_blank" rel="noopener"
+                     class="text-[11px] px-2.5 py-1 rounded-md bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200 text-center"
+                     title="另含讲师速记、每章时长建议与陈旧页警示">🗒️ 教师讲义</a>
                   <button @click="scanStaleness(w)" :disabled="w.status !== 'ready' || scanning === w.id"
                           class="text-[11px] px-2.5 py-1 rounded-md bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 disabled:opacity-40">
                     {{ scanning === w.id ? '体检中…' : '🩺 AI 体检' }}
@@ -287,13 +298,29 @@
                 <span v-if="countSources(gen.sources)">·  引用 {{ countSources(gen.sources) }} 个素材源</span>
               </div>
             </div>
+            <div v-if="genBusy && genJob" class="px-5 pb-3 space-y-2">
+              <div class="flex items-center justify-between text-xs gap-2">
+                <span class="text-purple-700 truncate">{{ genJob.message || '生成中…' }}</span>
+                <span class="font-mono text-surface-500 shrink-0">{{ genJob.percent }}% · {{ genElapsed }}s</span>
+              </div>
+              <div class="h-2 rounded-full bg-surface-100 overflow-hidden">
+                <div class="h-full rounded-full bg-gradient-to-r from-purple-500 to-primary-500 transition-all duration-700"
+                     :style="{ width: `${genJob.percent}%` }"></div>
+              </div>
+              <p class="text-[10px] text-surface-500">
+                章节 {{ genJob.chapters_done }}/{{ genJob.chapters_total }} · 已产出 {{ genJob.slides_done }} 页
+              </p>
+              <ul v-if="genLog.length" class="text-[10px] text-surface-400 space-y-0.5 max-h-20 overflow-y-auto">
+                <li v-for="(l, i) in genLog" :key="i">{{ l }}</li>
+              </ul>
+            </div>
             <div class="px-5 py-4 border-t border-surface-100 flex items-center justify-between">
               <span v-if="genMsg" class="text-xs" :class="genErr ? 'text-red-500' : 'text-green-600'">{{ genMsg }}</span>
               <div class="flex gap-2 ml-auto">
                 <button @click="showGenerate = false" class="px-4 py-2 rounded-lg text-sm bg-surface-100 hover:bg-surface-200">关闭</button>
                 <button @click="runGenerate" :disabled="genBusy || !gen.topic"
                         class="px-4 py-2 rounded-lg text-sm bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50">
-                  {{ genBusy ? '🤖 生成中（约 30~90s）…' : '✨ 开始生成' }}
+                  {{ genBusy ? '🤖 生成中…（进度见上）' : '✨ 开始生成' }}
                 </button>
               </div>
             </div>
@@ -425,9 +452,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection } from '@/api/modules/courses'
+import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection, type GenerateJobStatus } from '@/api/modules/courses'
 import { useAuthStore } from '@/stores/auth'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
 
@@ -561,11 +588,16 @@ async function scanStaleness(w: CoursewareBrief) {
   } finally { scanning.value = null }
 }
 
-// ═══ AI 生成课件（需求 4） ═══
+// ═══ AI 生成课件（需求 4，走课件工坊同一套作业接口，因此也有真实进度） ═══
 const showGenerate = ref(false)
 const genBusy = ref(false)
 const genMsg = ref('')
 const genErr = ref(false)
+const genJob = ref<GenerateJobStatus | null>(null)
+const genLog = ref<string[]>([])
+const genElapsed = ref(0)
+let genPoll: number | null = null
+let genTick: number | null = null
 const gen = reactive<{ topic: string; syllabus: string; chapter_count: number; slides_per_chapter: number; style: string; audience: string; sources: MaterialSelection }>({
   topic: '', syllabus: '', chapter_count: 6, slides_per_chapter: 4, style: '标准', audience: '本科生', sources: {},
 })
@@ -581,25 +613,76 @@ watch(showGenerate, (v) => {
   }
 })
 
+function stopGenTimers() {
+  if (genPoll) { window.clearInterval(genPoll); genPoll = null }
+  if (genTick) { window.clearInterval(genTick); genTick = null }
+}
+onUnmounted(stopGenTimers)
+
+/** 轮询生成作业：同一个 job 接口，阶段/章节/页数进度与课件工坊一致 */
+async function pollGenerate(jobId: string) {
+  try {
+    const r = await coursewareApi.generateStatus(jobId)
+    const s = r.data
+    genJob.value = { ...s, percent: Math.max(s.percent || 0, genJob.value?.percent || 0) }
+    if (s.message && !genLog.value.some(l => l.endsWith(s.message))) {
+      genLog.value.push(`+${genElapsed.value}s ${s.message}`)
+      if (genLog.value.length > 24) genLog.value.shift()
+    }
+    if (s.status === 'done' && s.result) {
+      stopGenTimers()
+      genBusy.value = false
+      const d: any = s.result
+      genMsg.value = `✅ 已生成 ${d.slide_count} 页 · 花费 ¥${(d.cost || 0).toFixed(4)}` +
+        (d.sources_used?.length ? ` · 引用 ${d.sources_used.length} 个素材源` : '')
+      await loadCourse()
+      setTimeout(() => { showGenerate.value = false; if (d.courseware_id) openReader(d.courseware_id) }, 1200)
+    } else if (s.status === 'failed') {
+      stopGenTimers()
+      genBusy.value = false
+      genErr.value = true
+      genMsg.value = s.error ? `生成失败：${s.error}` : '生成失败，请稍后重试'
+    }
+  } catch (e: any) {
+    if (e?.response?.status === 404) {
+      stopGenTimers()
+      genBusy.value = false
+      genErr.value = true
+      genMsg.value = '作业记录已过期，请在下方课件列表查看是否已生成'
+    }
+  }
+}
+
 async function runGenerate() {
   genBusy.value = true
   genMsg.value = ''
   genErr.value = false
+  genLog.value = []
+  genElapsed.value = 0
+  genJob.value = {
+    ok: true, job_id: '', status: 'running', stage: 'queued', percent: 1,
+    message: '正在提交生成作业…', chapters_done: 0, chapters_total: gen.chapter_count,
+    slides_done: 0, slides_total: 1 + gen.chapter_count * gen.slides_per_chapter,
+  }
+  genTick = window.setInterval(() => { genElapsed.value += 1 }, 1000)
   try {
-    const res = await courseApi.generateDeck(courseId.value, {
+    const res = await coursewareApi.startGenerate({
       topic: gen.topic, syllabus: gen.syllabus, chapter_count: gen.chapter_count,
       slides_per_chapter: gen.slides_per_chapter, style: gen.style, audience: gen.audience,
-      domain: course.value?.domain, sources: gen.sources,
+      domain: course.value?.domain, sources: gen.sources, course_id: courseId.value, auto_save: true,
     })
-    const d: any = res.data
-    genMsg.value = `✅ 已生成 ${d.slide_count} 页 · 花费 ¥${(d.cost || 0).toFixed(4)}` +
-      (d.sources_used?.length ? ` · 引用 ${d.sources_used.length} 个素材源` : '')
-    await loadCourse()
-    setTimeout(() => { showGenerate.value = false; if (d.courseware_id) openReader(d.courseware_id) }, 1200)
+    const jobId = res.data.job_id
+    if (!jobId) throw new Error('服务端未返回 job_id')
+    genJob.value = { ...genJob.value, job_id: jobId }
+    void pollGenerate(jobId)
+    genPoll = window.setInterval(() => void pollGenerate(jobId), 1200)
   } catch (e: any) {
+    stopGenTimers()
+    genBusy.value = false
+    genJob.value = null
     genErr.value = true
     genMsg.value = e?.response?.data?.detail || '生成失败，请稍后重试'
-  } finally { genBusy.value = false }
+  }
 }
 
 // ═══ 流水线转讲义 ═══

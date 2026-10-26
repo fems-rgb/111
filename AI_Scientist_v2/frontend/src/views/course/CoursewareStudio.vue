@@ -5,7 +5,7 @@
       <div>
         <h1 class="text-2xl font-bold flex items-center gap-2">📽️ 课件工坊</h1>
         <p class="text-sm text-surface-500 mt-1">
-          不用先建课程 —— 给一个主题，AI 直接产出整套 PPT 课件，可下载 <span class="font-mono">.pptx</span> 投影，也能当电子书阅读
+          不用先建课程 —— 给一个主题，AI 直接产出整套 PPT 课件（全程进度可视），可下载 <span class="font-mono">.pptx</span> 投影、当电子书阅读，也能一键打印成课堂讲义
         </p>
       </div>
       <button @click="$router.push('/courses')"
@@ -24,7 +24,7 @@
       </div>
       <div class="card p-4">
         <p class="text-xs font-semibold text-primary-600">第 3 步 · 拿课件</p>
-        <p class="text-[11px] text-surface-500 mt-1.5 leading-relaxed">生成后可 ⬇️ 下载 .pptx、📖 电子书阅读、✏️ 逐页微调，并自动归入一门课程（默认仅自己可见）</p>
+        <p class="text-[11px] text-surface-500 mt-1.5 leading-relaxed">生成时实时显示阶段/章节/页数进度；完成后 ⬇️ .pptx、📕 电子书、📄 学生或教师讲义、✏️ 逐页微调，并自动归入一门课程（默认仅自己可见）</p>
       </div>
     </div>
 
@@ -101,8 +101,40 @@
                     class="px-5 py-2.5 rounded-lg bg-gradient-to-r from-primary-600 to-accent-600 text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
               {{ busy ? '⏳ AI 正在逐章撰写…' : `🚀 生成课件（约 ${totalPages} 页）` }}
             </button>
-            <span v-if="busy" class="text-xs text-surface-500">通常需要 30–120 秒，生成完会自动出现在下方</span>
+            <span v-if="busy" class="text-xs text-surface-500">下面实时显示进度，可以先去处理别的事，生成完会自动出现在这里</span>
             <span v-else class="text-xs text-surface-400">也可以按 Ctrl+Enter 直接生成</span>
+          </div>
+
+          <!-- ═══ 生成进度：阶段 / 章节 / 页数 全部来自后端真实上报 ═══ -->
+          <div v-if="busy && job" class="rounded-xl border border-primary-100 bg-gradient-to-b from-primary-50/70 to-white p-4 space-y-3">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-sm font-medium text-primary-700 truncate">{{ job.message || '生成中…' }}</p>
+              <p class="text-xs font-mono text-surface-500 shrink-0">{{ job.percent }}% · {{ elapsed }}s</p>
+            </div>
+            <div class="h-2.5 rounded-full bg-surface-100 overflow-hidden">
+              <div class="h-full rounded-full bg-gradient-to-r from-primary-500 to-accent-500 transition-all duration-700"
+                   :style="{ width: `${job.percent}%` }"></div>
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <span v-for="(s, i) in STAGE_STEPS" :key="s.key"
+                    class="text-[10px] px-2 py-1 rounded-full border transition-colors"
+                    :class="i < stageIndex ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                            : i === stageIndex ? 'bg-primary-600 border-primary-600 text-white'
+                            : 'bg-white border-surface-200 text-surface-400'">
+                {{ i < stageIndex ? '✓' : i + 1 }} {{ s.label }}
+              </span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-[11px]">
+              <div class="rounded-lg bg-white border border-surface-100 px-3 py-2">
+                章节 <b class="font-mono text-primary-700">{{ job.chapters_done }}/{{ job.chapters_total || form.chapter_count }}</b>
+              </div>
+              <div class="rounded-lg bg-white border border-surface-100 px-3 py-2">
+                已产出页 <b class="font-mono text-primary-700">{{ job.slides_done }}</b>/<span class="font-mono">{{ job.slides_total || totalPages }}</span>
+              </div>
+            </div>
+            <ul v-if="stageLog.length" class="text-[10px] text-surface-500 space-y-0.5 max-h-28 overflow-y-auto pr-1">
+              <li v-for="(l, i) in stageLog" :key="i">{{ l }}</li>
+            </ul>
           </div>
 
           <p v-if="errMsg" class="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{{ errMsg }}</p>
@@ -125,8 +157,14 @@
                  class="text-xs px-3 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium">
                 ⬇️ 下载 .pptx
               </a>
+              <a v-if="result.courseware_id" :href="coursewareApi.ebookUrl(result.courseware_id)" target="_blank" rel="noopener"
+                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">📕 电子书</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'student')" target="_blank" rel="noopener"
+                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50" title="要点 + 留白笔记 + 课后思考题">📄 学生讲义</a>
+              <a v-if="result.courseware_id" :href="coursewareApi.handoutUrl(result.courseware_id, 'teacher')" target="_blank" rel="noopener"
+                 class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50" title="另含讲师速记、时长建议与陈旧警示">🗒️ 教师讲义</a>
               <button v-if="result.courseware_id" @click="goReader"
-                      class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">📖 电子书阅读</button>
+                      class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">📖 逐页阅读</button>
               <button v-if="result.courseware_id" @click="$router.push(`/course/${result.course_id}`)"
                       class="text-xs px-3 py-2 rounded-lg bg-white border border-surface-200 hover:bg-surface-50">🎓 发布课程</button>
             </div>
@@ -173,6 +211,10 @@
             <div class="flex gap-1.5 mt-2">
               <button @click="$router.push(h.reader_url)"
                       class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1">📖 阅读</button>
+              <a :href="coursewareApi.ebookUrl(h.id)" target="_blank" rel="noopener"
+                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="电子书（连贯读物）">📕</a>
+              <a :href="coursewareApi.handoutUrl(h.id, 'student')" target="_blank" rel="noopener"
+                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="学生讲义">📄</a>
               <a :href="coursewareApi.exportUrl(h.id)" :download="`课件_${h.id}.pptx`"
                  class="text-[10px] px-2 py-1 rounded bg-primary-50 text-primary-700 hover:bg-primary-100 flex-1 text-center">⬇️ pptx</a>
               <button @click="reuse(h)" class="text-[10px] px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100"
@@ -186,19 +228,29 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
 import SlidePage from '@/components/course/SlidePage.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   courseApi, coursewareApi,
-  type AiCoursewareItem, type Course, type DeckResult, type MaterialSelection, type SlideMeta,
+  type AiCoursewareItem, type Course, type DeckResult, type GenerateJobStatus,
+  type MaterialSelection, type SlideMeta,
 } from '@/api/modules/courses'
 
 const STYLES = ['标准', '精炼讲稿', '详尽讲义', '研究进展', '科普通识']
 const AUDIENCES = ['本科生', '研究生', '初学者', '企业内训', '评审专家']
 const TEACHER_ROLES = ['teacher', 'researcher', 'admin']
+/** 与后端 _build_deck / generate_deck 的 stage 上报一一对应，用来画步骤条 */
+const STAGE_STEPS = [
+  { key: 'material', label: '聚合素材' },
+  { key: 'outline', label: '拟大纲' },
+  { key: 'chapter', label: '逐章撰写' },
+  { key: 'summary', label: '小结与思考题' },
+  { key: 'render', label: '逐页配图' },
+  { key: 'persist', label: '落库归档' },
+]
 
 const authStore = useAuthStore()
 const route = useRoute()
@@ -222,9 +274,24 @@ const myCourses = ref<Course[]>([])
 const history = ref<AiCoursewareItem[]>([])
 const historyLoading = ref(false)
 
+// 生成作业的真实进度（后端按阶段/章节/页上报，前端轮询驱动进度条）
+const job = ref<GenerateJobStatus | null>(null)
+const stageLog = ref<string[]>([])
+const elapsed = ref(0)
+let pollTimer: number | null = null
+let tickTimer: number | null = null
+
 const totalPages = computed(() => 1 + Math.max(1, form.chapter_count) * Math.max(1, form.slides_per_chapter))
 const activeCwId = computed(() => result.value?.courseware_id || 0)
 const shownSlides = computed(() => (showAll.value ? slides.value : slides.value.slice(0, 6)))
+const stageIndex = computed(() => {
+  const s = job.value?.stage || 'queued'
+  const i = STAGE_STEPS.findIndex(x => x.key === s)
+  if (i >= 0) return i
+  if (s === 'assemble') return 3
+  if (s === 'persist' || s === 'done') return STAGE_STEPS.length - 1
+  return 0
+})
 const preselect = computed<MaterialSelection | null>(() => {
   const q = route.query
   const out: MaterialSelection = {}
@@ -263,12 +330,59 @@ function goReader() {
   if (result.value?.reader_url) router.push(result.value.reader_url)
 }
 
+function stopTimers() {
+  if (pollTimer) { window.clearInterval(pollTimer); pollTimer = null }
+  if (tickTimer) { window.clearInterval(tickTimer); tickTimer = null }
+}
+
+/** 拉一次作业状态：进度只增不减，完成后停下轮询并接结果 */
+async function pollJob(jobId: string) {
+  try {
+    const r = await coursewareApi.generateStatus(jobId)
+    const s = r.data
+    job.value = { ...s, percent: Math.max(s.percent || 0, job.value?.percent || 0) }
+    if (s.message && !stageLog.value.some(l => l.endsWith(s.message))) {
+      stageLog.value.push(`+${elapsed.value}s ${s.message}`)
+      if (stageLog.value.length > 40) stageLog.value.shift()
+    }
+    if (s.status === 'done' && s.result) {
+      stopTimers()
+      busy.value = false
+      result.value = s.result
+      job.value = { ...s, percent: 100 }
+      if (s.result.courseware_id) await loadPreview(s.result.courseware_id)
+      await Promise.all([loadHistory(), loadMyCourses()])
+    } else if (s.status === 'failed') {
+      stopTimers()
+      busy.value = false
+      errMsg.value = s.error ? `生成失败：${s.error}` : '生成失败，请重试或换个主题'
+    }
+  } catch (e: any) {
+    if (e?.response?.status === 404) {
+      stopTimers()
+      busy.value = false
+      errMsg.value = '作业记录已过期（服务重启或超过 30 分钟），请查看右侧「我生成过的课件」'
+    }
+    // 其他异常（网络抖动）保持轮询，不中断生成
+  }
+}
+
 async function generate() {
   errMsg.value = ''
   if (!form.topic) { errMsg.value = '请先填写讲授主题'; return }
   busy.value = true
+  result.value = null
+  slides.value = []
+  stageLog.value = []
+  elapsed.value = 0
+  job.value = {
+    ok: true, job_id: '', status: 'running', stage: 'queued', percent: 1,
+    message: '正在提交生成作业…', chapters_done: 0, chapters_total: form.chapter_count,
+    slides_done: 0, slides_total: totalPages.value,
+  }
+  tickTimer = window.setInterval(() => { elapsed.value += 1 }, 1000)
   try {
-    const res = await coursewareApi.quickGenerate({
+    const res = await coursewareApi.startGenerate({
       topic: form.topic,
       title: form.title || undefined,
       domain: form.domain || undefined,
@@ -281,13 +395,20 @@ async function generate() {
       sources: form.sources,
       auto_save: true,
     })
-    result.value = res.data
-    if (res.data.courseware_id) await loadPreview(res.data.courseware_id)
-    await Promise.all([loadHistory(), loadMyCourses()])
+    const jobId = res.data.job_id
+    if (!jobId) throw new Error('服务端未返回 job_id')
+    job.value = { ...job.value, job_id: jobId }
+    void pollJob(jobId)
+    pollTimer = window.setInterval(() => void pollJob(jobId), 1200)
   } catch (e: any) {
-    errMsg.value = e?.response?.data?.detail || `生成失败：${e?.message || '未知错误'}`
-  } finally { busy.value = false }
+    stopTimers()
+    busy.value = false
+    job.value = null
+    errMsg.value = e?.response?.data?.detail || `提交失败：${e?.message || '未知错误'}`
+  }
 }
+
+onUnmounted(stopTimers)
 
 /** 用历史课件的同样参数再跑一次（换主题即可批量出不同章节） */
 function reuse(h: AiCoursewareItem) {
