@@ -384,6 +384,21 @@ async def upload_courseware(course_id: int, file: UploadFile = File(...),
             "optimization": (cw.staleness_report or {}).get("_opt", {})}
 
 
+# 版式语义字段：Slide 表不新增列，侧挂在 Courseware.staleness_report 里，
+# 阅读器与导出 pptx 读回后与文本层合并
+_DECK_EXTRA_KEYS = ("layout", "kicker", "lead", "cards", "metrics", "compare",
+                    "quote", "quote_by", "takeaway", "key_question", "chapter_no")
+
+
+def _deck_extras(slides: list[dict]) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    for s in slides:
+        ex = {k: s.get(k) for k in _DECK_EXTRA_KEYS if s.get(k)}
+        if ex:
+            out[str(s.get("slide_index"))] = ex
+    return out
+
+
 async def _materialize_courseware(db: AsyncSession, cw: Courseware, src_path: str | None,
                                   slides: list[dict] | None = None,
                                   creator: User | None = None) -> None:
@@ -491,6 +506,7 @@ async def get_courseware_meta(cw_id: int, user: User = Depends(get_current_user)
     slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
                                .order_by(Slide.slide_index))).scalars().all()
     chap_map = (cw.staleness_report or {}).get("_chapter_map") or {}
+    extras_map = (cw.staleness_report or {}).get("_deck_extras") or {}
     return {
         "id": cw.id, "title": cw.title, "course_id": cw.course_id,
         "course_title": course.title if course else "",
@@ -510,6 +526,8 @@ async def get_courseware_meta(cw_id: int, user: User = Depends(get_current_user)
             "risk_category": s.risk_category or "", "ai_reason": s.ai_reason or "",
             "ai_suggestion": s.ai_suggestion or "", "updated_by_ai": bool(s.updated_by_ai),
             "chapter": str(chap_map.get(str(s.slide_index), "")) or "",
+            # 版式语义（layout/kicker/lead/cards/metrics/compare）
+            **(extras_map.get(str(s.slide_index)) or {}),
         } for s in slides],
     }
 
@@ -662,13 +680,21 @@ async def export_pptx(cw_id: int, user: User = Depends(get_current_user_flexible
     cw = await _courseware_or_404(db, cw_id)
     slides = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id)
                                .order_by(Slide.slide_index))).scalars().all()
-    payload = [{"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
-                "notes": s.notes or ""} for s in slides]
+    rep = cw.staleness_report or {}
+    extras_map = rep.get("_deck_extras") or {}
+    payload = []
+    for s in slides:
+        row = {"slide_index": s.slide_index, "title": s.title, "bullets": s.bullets or [],
+               "notes": s.notes or "", "tables": s.tables or []}
+        # 带上版式语义，导出的 pptx 才能与网页版一致（而不是退回项目符号页）
+        row.update(extras_map.get(str(s.slide_index)) or {})
+        payload.append(row)
     if not payload:
         raise HTTPException(status_code=400, detail="课件暂无内容页")
     # 导出的 pptx 属于生成文件 → 固定落在 backend/generated/exports/
     out_path = paths.gen_file("exports", f"cw{cw_id}_v{cw.version}.pptx")
-    ppt_service.render_pptx(payload, cw.title, str(out_path))
+    ppt_service.render_pptx(payload, cw.title, str(out_path),
+                            audience=str(rep.get("audience") or ""))
     return FileResponse(str(out_path),
                         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                         filename=f"{cw.title}_v{cw.version}.pptx")
@@ -1073,7 +1099,8 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
         if should_cancel and should_cancel():
             raise course_ai_service.GenerationCancelled()
         try:
-            path, kb = ppt_service._render_slide_only(s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg")
+            path, kb = ppt_service._render_slide_only(s, abs_dir, rel, f"s{s['slide_index']:03d}.jpg",
+                                                      deck_title=cw.title, audience=req.audience)
             s["image_path"], s["image_kb"] = path, kb
         except Exception as e:
             logger.debug(f"ai slide render skipped: {e}")
@@ -1088,10 +1115,13 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
     # Slide 表没有 chapter 列（避免动迁移），这里侧挂一份 index → 章名 映射，
     # 由 /coursewares/{id} 读回后附到每页，详情页与阅读器就能按章分组
     chap_map = {str(s["slide_index"]): s.get("chapter", "") for s in slides if s.get("chapter")}
+    extras_map = _deck_extras(slides)
     await _materialize_courseware(db, cw, None, slides=slides, creator=user)
     rep = dict(cw.staleness_report or {})
     rep["sources_used"] = provenance
     rep["_chapter_map"] = chap_map
+    rep["_deck_extras"] = extras_map
+    rep["audience"] = req.audience
     rep["exercises"] = meta.get("exercises", [])
     rep["reading"] = meta.get("reading", [])
     rep["objectives"] = meta.get("objectives", [])
@@ -1171,7 +1201,8 @@ async def sync_from_pipeline(course_id: int, req: SyncPipelineRequest,
         course.chapters = meta["chapters"]
     await _materialize_courseware(db, cw, None, slides=slides, creator=user)
     rep = dict(cw.staleness_report or {})
-    rep.update({"pipeline_id": pipe.id, "run_id": run.id, "sources_used": provenance})
+    rep.update({"pipeline_id": pipe.id, "run_id": run.id, "sources_used": provenance,
+                "_deck_extras": _deck_extras(slides), "audience": "本科生"})
     cw.staleness_report = rep
     await db.commit()
     return {"ok": True, "courseware_id": cw.id, "slide_count": cw.slide_count,

@@ -237,18 +237,58 @@ async def refresh_slides(old_slides: list[dict], report_items: list[dict],
 
 
 def _normalize_slide(s: dict, index: int, chapter: str = "") -> dict:
-    """把模型返回的单页规整成落库结构（容错：非 dict bullets / 超长文本截断）"""
+    """把模型返回的单页规整成落库结构（容错：非 dict bullets / 超长文本截断）
+
+    除了文本层，还保留版式语义（layout/kicker/lead/cards/metrics/compare），
+    供 deck_design 渲染成答辩级版面；历史数据没有这些字段也能回退到 bullets。
+    """
     bullets = []
     for b in (s.get("bullets") or []):
         if isinstance(b, dict):
             bullets.append({"level": int(b.get("level", 0) or 0), "text": str(b.get("text", ""))[:400]})
         else:
             bullets.append({"level": 0, "text": str(b)[:400]})
+
+    cards = []
+    for c in (s.get("cards") or [])[:4]:
+        if isinstance(c, dict):
+            cards.append({"title": str(c.get("title", ""))[:60],
+                          "desc": str(c.get("desc", ""))[:160]})
+
+    metrics = []
+    for m in (s.get("metrics") or [])[:3]:
+        if isinstance(m, dict):
+            metrics.append({"value": str(m.get("value", ""))[:20],
+                            "unit": str(m.get("unit", ""))[:10],
+                            "label": str(m.get("label", ""))[:60]})
+
+    compare = None
+    if isinstance(s.get("compare"), dict):
+        c = s["compare"]
+        compare = {}
+        for side in ("left", "right"):
+            d = c.get(side) or {}
+            compare[side] = {
+                "title": str(d.get("title", ""))[:60],
+                "items": [str(x)[:120] for x in (d.get("items") or [])[:4]],
+            }
+
     return {
         "slide_index": index,
         "chapter": chapter,
+        "layout": str(s.get("layout", "") or "")[:20],
+        "kicker": str(s.get("kicker", "") or "")[:40],
         "title": str(s.get("title", f"第 {index + 1} 页"))[:300],
+        "lead": str(s.get("lead", "") or "")[:200],
+        "key_question": str(s.get("key_question", "") or "")[:200],
+        "chapter_no": int(s.get("chapter_no", 0) or 0),
         "bullets": bullets[:20],
+        "cards": cards,
+        "metrics": metrics,
+        "compare": compare,
+        "quote": str(s.get("quote", "") or "")[:200],
+        "quote_by": str(s.get("quote_by", "") or "")[:80],
+        "takeaway": [str(x)[:120] for x in (s.get("takeaway") or [])[:3]],
         "notes": str(s.get("notes", ""))[:2000],
         "tables": s.get("tables") or [],
         "image_path": "",
@@ -259,19 +299,30 @@ def _normalize_slide(s: dict, index: int, chapter: str = "") -> dict:
 _OUTLINE_SYSTEM = """你是资深课程设计师，擅长把主题拆解成有递进关系的章节大纲。
 输出严格 JSON，不要多余文字：
 {"title": "建议课件标题", "objectives": ["学习目标1", "学习目标2"],
- "chapters": [{"title": "章标题", "points": ["知识点1", "知识点2"]}]}"""
+ "chapters": [{"title": "章标题", "key_question": "本章要解决的核心问题",
+               "points": ["知识点1", "知识点2"]}]}"""
 
-_CHAPTER_SYSTEM = """你是严谨又生动的中文课程作者。把指定章节展开成课件页。
-要求：
-1. 每页只讲一件事，标题是结论式表述而非话题词；
-2. 每页 3-8 条要点，单条不超过 60 字，可分两级（level 0 主点 / 1 细分），
-   要具体可讲，避免“介绍一下/概述”这类空话；
-3. 尽量融入近 1-2 年的真实进展、数据与案例；事实、公式必须准确，
-   没把握的改成“通常认为/已有研究表明”；
-4. notes 写给讲师的速记（怎么讲、举什么例、可能的学生提问、易错点），100-250 字；
-5. 本章第一页为导览页（说清本章要解决什么问题），最后一页回收本章要点；
-6. 输出严格 JSON，不要多余文字：
-{"slides": [{"title": "页标题", "bullets": [{"level": 0, "text": "要点"}], "notes": "讲师速记"}]}"""
+_CHAPTER_SYSTEM = """你是顶级课程设计师，也是答辩 PPT 撰稿人。把指定章节展开成「一页一个论点」的演示页。
+
+硬性要求：
+1. 每页只表达一个观点；标题必须是结论句（≤20 字），不要「XX 概述/介绍」这类话题词；
+2. lead 用一句话说清本页核心结论（≤40 字），不要重复标题；
+3. 从下列版式中选一种，只填该版式需要的字段：
+   - bullets：2-4 条并列论点，每条 ≤22 字，必须是短语，禁止整句长段（默认）
+   - cards：2-4 个并列要素，title ≤12 字、desc ≤30 字
+   - compare：两组对照，各 2-3 条，每条 ≤18 字
+   - metric：2-3 个关键数字，value 为数字、unit 为单位、label ≤16 字
+   - quote：一句可被记住的结论（≤40 字）
+   不要每一页都用 bullets，至少安排 1 页 cards / metric / compare；
+4. 事实与数据必须准确；没把握就写「已有研究表明」；优先融入近 1-2 年的真实进展；
+5. kicker 写所属小节名（≤8 字），让页面有导航感；
+6. notes 写给讲师的速记（怎么讲、举什么例、学生可能问什么），80-180 字；
+7. 直接进入内容，不要写「本章导览」这种空页（章节过渡页由系统生成）；
+8. 输出严格 JSON，不要多余文字：
+{"slides": [{"layout": "bullets", "kicker": "小节名", "title": "结论式标题", "lead": "一句话结论",
+  "bullets": [{"level": 0, "text": "短语"}], "cards": [], "metrics": [],
+  "compare": {"left": {"title": "", "items": []}, "right": {"title": "", "items": []}},
+  "notes": "讲师速记"}]}"""
 
 
 async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
@@ -301,7 +352,8 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 
     chapter_count = max(1, min(int(chapter_count or 6), 12))
     slides_per_chapter = max(1, min(int(slides_per_chapter or 4), 8))
-    cap = min(chapter_count * slides_per_chapter + 2, 80)
+    # 每章额外一页章节过渡页（section），末尾多小结页与结课页
+    cap = min(chapter_count * (slides_per_chapter + 1) + 3, 80)
     cost, tin, tout = 0.0, 0, 0
     syl_block = ("\n教学大纲：\n" + syllabus[:3000]) if syllabus else ""
     ref_block = ("\n参考资料（优先吸收其中的事实与数据）：\n" + reference_material[:5000]) if reference_material else ""
@@ -326,13 +378,17 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
         chapters = [{"title": f"第 {i + 1} 部分", "points": []} for i in range(chapter_count)]
     objectives = [str(o)[:200] for o in (data.get("objectives") or [])][:5]
 
-    slides: list[dict] = [{
-        "slide_index": 0, "chapter": "封面", "title": str(data.get("title") or topic)[:300],
-        "bullets": ([{"level": 0, "text": f"面向 {audience} · {style}版"}] +
-                    [{"level": 0, "text": o} for o in objectives])[:8],
-        "notes": f"开场：说明本课程定位与学习目标（主题：{topic}）",
-        "tables": [], "image_path": "", "image_kb": 0,
-    }]
+    deck_title = str(data.get("title") or topic)[:300]
+    slides: list[dict] = [_normalize_slide({
+        "layout": "cover",
+        "chapter": "封面",
+        "kicker": f"{style} · 面向{audience}"[:40],
+        "title": deck_title,
+        "lead": f"{topic}｜共 {chapter_count} 章 · 约 {chapter_count * slides_per_chapter} 页",
+        # 学习目标保留在文本层（讲义/大纲会用到）；封面版式不画 bullets
+        "bullets": [{"level": 0, "text": o} for o in objectives][:4],
+        "notes": f"开场：一句话说明课程定位（{topic}），再点出本课要解决的 2-3 个问题。",
+    }, 0, "封面")]
 
     # ── 2. 逐章生成 ──
     base, span = 10, 78
@@ -344,15 +400,24 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
                     f"正在生成第 {i + 1}/{len(chapters)} 章：{chapter_name[:24]}",
                     chapters_done=i, chapters_total=len(chapters),
                     slides_done=len(slides), slides_total=cap)
+        key_q = str(ch.get("key_question", "") or "")[:120]
+        # 章节过渡页：大编号 + 本章关键问题，让整套课件有答辩式的章节感
+        if len(slides) < cap:
+            slides.append(_normalize_slide({
+                "layout": "section", "chapter": chapter_name, "chapter_no": i + 1,
+                "title": chapter_name, "key_question": key_q,
+                "notes": f"过渡：先抛出「{key_q or chapter_name}」，停一拍再进入正文。",
+            }, len(slides), chapter_name))
         pts = [str(p)[:80] for p in (ch.get("points") or [])]
         pts_text = "；".join(pts) or "自拟"
         cres = await call_qwen(_CHAPTER_SYSTEM, f"""课程主题：{topic}（{domain or '通用'} · 面向 {audience} · {style}）
 本章标题：{chapter_name}
+本章要解决的问题：{key_q or '自拟'}
 本章知识点：{pts_text}
-请输出 {slides_per_chapter} 页{ref_block if i == 0 else ''}
+请输出 {slides_per_chapter} 页，版式要有变化{ref_block if i == 0 else ''}
 
 只输出 {{"slides": [...]}}。""", project_id=project_id,
-                              max_tokens=min(6000, 800 + slides_per_chapter * 600), model=mdl)
+                              max_tokens=min(6000, 900 + slides_per_chapter * 620), model=mdl)
         cost += cres.get("cost", 0)
         tin += cres["tokens"]["input"]
         tout += cres["tokens"]["output"]
@@ -381,25 +446,46 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
     outline_txt = "\n".join(_line(j, c) for j, c in enumerate(chapters))
     exercises: list[str] = []
     reading: list[str] = []
+    final_takeaway: list[str] = []
     try:
         sres = await call_qwen(
             "你是课程总结助手。输出严格 JSON："
-            '{"wrap": {"title": "本页标题", "bullets": [{"level": 0, "text": "要点"}], "notes": "讲师速记"}, '
+            '{"wrap": {"layout": "bullets", "kicker": "全课回顾", "title": "本页标题", '
+            '"lead": "一句话总结本课主线", "bullets": [{"level": 0, "text": "短语"}], '
+            '"takeaway": ["关键词1", "关键词2", "关键词3"], "notes": "讲师速记"}, '
             '"exercises": ["思考题"], "reading": ["延伸阅读"]}',
             f"课程主题：{topic}（面向 {audience}）\n章节与知识点：\n{outline_txt}\n\n"
-            f"请给出：结课小结页（回收全课主线，3-6 条要点）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
+            f"请给出：结课小结页（3-4 条短语回顾主线，每条≤22 字）、"
+            f"3 个可带走的结论（takeaway）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
             project_id=project_id, max_tokens=1400, model=mdl)
         cost += sres.get("cost", 0)
         tin += sres["tokens"]["input"]
         tout += sres["tokens"]["output"]
         sdata = _extract_json(sres["content"]) or {}
         wrap = sdata.get("wrap") or {}
-        if isinstance(wrap, dict) and wrap.get("bullets"):
+        if isinstance(wrap, dict) and (wrap.get("bullets") or wrap.get("takeaway")):
+            wrap.setdefault("layout", "bullets")
+            wrap.setdefault("kicker", "全课回顾")
             slides.append(_normalize_slide(wrap, len(slides), "小结"))
+            final_takeaway = [str(x)[:120] for x in (wrap.get("takeaway") or [])][:3]
         exercises = [str(x)[:300] for x in (sdata.get("exercises") or [])][:8]
         reading = [str(x)[:300] for x in (sdata.get("reading") or [])][:8]
     except Exception as e:
         logger.warning(f"小结页生成跳过（不影响课件主体）: {e}")
+
+    # ── 4. 结课页：把小结收敛成 3 个可带走的结论 ──
+    if not final_takeaway:
+        final_takeaway = [b.get("text", "") for b in (slides[-1].get("bullets") or [])
+                          if b.get("text")][:3]
+    slides.append(_normalize_slide({
+        "layout": "end", "chapter": "结课", "title": "谢谢",
+        "takeaway": final_takeaway or [f"回顾：{topic}", "方法：把结论讲成一句话", "下一步：完成思考题"],
+        "notes": "结课：回收三个关键词，留 2 分钟提问。",
+    }, len(slides), "结课"))
+
+    # ── 5. 统一重排页码（插入过渡页后索引必须连续）──
+    for idx, s in enumerate(slides):
+        s["slide_index"] = idx
 
     if len(slides) < 2:
         return [], {"chapters": chapters, "cost": round(cost, 6)}

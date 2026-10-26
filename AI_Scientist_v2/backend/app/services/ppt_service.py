@@ -111,71 +111,20 @@ def _is_title_placeholder(shape) -> bool:
 
 def _draw_slide_image(title: str, bullets: list[dict], out_abs: str, out_rel: str,
                       name: str, page_no: int = 0) -> tuple[str, int]:
-    """用 Pillow 绘制「版式化预览图」。
-
-    这样即使服务器没装 Office/LibreOffice，学生也能看到图文页面，
-    并且体积远小于原 PPT（单页约 30~90KB）。
-    """
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-
-        W, H = 1280, 720
-        img = Image.new("RGB", (W, H), "#FFFFFF")
-        draw = ImageDraw.Draw(img)
-
-        def load_font(size, bold=False):
-            candidates = [
-                r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
-                r"C:\Windows\Fonts\simhei.ttf",
-                r"C:\Windows\Fonts\arial.ttf",
-            ]
-            for p in candidates:
-                if os.path.exists(p):
-                    try:
-                        return ImageFont.truetype(p, size)
-                    except Exception:
-                        continue
-            return ImageFont.load_default()
-
-        # 顶部色带
-        draw.rectangle([0, 0, W, 6], fill="#3B82F6")
-        y = 56
-        if title:
-            draw.text((72, y), title[:60], font=load_font(40, True), fill="#0F172A")
-            y += 74
-        draw.line([72, y - 18, W - 72, y - 18], fill="#E2E8F0", width=2)
-
-        body_font = load_font(26)
-        for b in (bullets or [])[:14]:
-            lvl = min(int(b.get("level", 0) or 0), 3)
-            x = 88 + lvl * 30
-            text = b.get("text", "")
-            max_w = max(10, (W - x - 80) // 15)
-            lines = [text[i:i + max_w] for i in range(0, len(text), max_w)] or [""]
-            for li, line in enumerate(lines[:3]):
-                if y > H - 90:
-                    break
-                prefix = ("● " if lvl == 0 else "○ ") if li == 0 else "  "
-                draw.text((x, y), prefix + line, font=body_font, fill="#334155")
-                y += 38
-            y += 6
-            if y > H - 90:
-                break
-
-        draw.text((72, H - 52), f"{page_no}", font=load_font(18), fill="#94A3B8")
-
-        path = os.path.join(out_abs, name)
-        img.save(path, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
-        return os.path.join(out_rel, name).replace("\\", "/"), max(1, os.path.getsize(path) // 1024)
-    except Exception as e:
-        logger.warning(f"slide image draw failed: {e}")
-        return "", 0
+    """版式化预览图（委托 deck_design，保证与导出 pptx 同一套设计）"""
+    from app.services import deck_design
+    return deck_design.render_slide_image(
+        {"title": title, "bullets": bullets, "layout": "bullets"},
+        out_abs, out_rel, name, page_no)
 
 
-def _render_slide_only(slide: dict, out_abs: str, out_rel: str, name: str) -> tuple[str, int]:
+def _render_slide_only(slide: dict, out_abs: str, out_rel: str, name: str,
+                       deck_title: str = "", audience: str = "") -> tuple[str, int]:
     """AI 生成的页面（无源文件）直接绘制版式化配图"""
-    return _draw_slide_image(slide.get("title", ""), slide.get("bullets") or [],
-                             out_abs, out_rel, name, int(slide.get("slide_index", 0)) + 1)
+    from app.services import deck_design
+    return deck_design.render_slide_image(slide, out_abs, out_rel, name,
+                                          int(slide.get("slide_index", 0)) + 1,
+                                          deck_title=deck_title, audience=audience)
 
 
 def _slide_to_image(slide, slide_index: int, out_abs: str, out_rel: str,
@@ -259,45 +208,11 @@ def build_ebook_markdown(slides: list[dict[str, Any]], deck_title: str = "") -> 
     return "\n".join(lines)
 
 
-def render_pptx(slides: list[dict[str, Any]], deck_title: str, out_path: str) -> str:
-    """结构化页面 → 原生 .pptx（老师上课投影用）"""
-    from pptx import Presentation
-    from pptx.util import Inches, Pt
-    prs = Presentation()
-
-    # 封面
-    cover = prs.slides.add_slide(prs.slide_layouts[0])
-    cover.shapes.title.text = deck_title or "课件"
-    try:
-        cover.placeholders[1].text = "由 智研星枢 课程中心生成"
-    except Exception:
-        pass
-
-    for s in slides:
-        slide = prs.slides.add_slide(prs.slide_layouts[1])
-        slide.shapes.title.text = s.get("title") or f"第 {s['slide_index'] + 1} 页"
-        body = slide.placeholders[1].text_frame
-        bullets = s.get("bullets") or []
-        first = True
-        for b in bullets:
-            text = b.get("text", "")
-            if not text:
-                continue
-            para = body.paragraphs[0] if first else body.add_paragraph()
-            para.text = text
-            para.level = min(int(b.get("level", 0) or 0), 4)
-            try:
-                para.font.size = Pt(20)
-            except Exception:
-                pass
-            first = False
-        if s.get("notes"):
-            try:
-                slide.notes_slide.notes_text_frame.text = s["notes"]
-            except Exception:
-                pass
-    prs.save(out_path)
-    return out_path
+def render_pptx(slides: list[dict[str, Any]], deck_title: str, out_path: str,
+                audience: str = "") -> str:
+    """结构化页面 → 16:9 原生 .pptx（版式由 deck_design 统一渲染）"""
+    from app.services import deck_design
+    return deck_design.render_pptx(slides, deck_title, out_path, audience=audience)
 
 
 def estimate_optimization(original_bytes: int, slides: list[dict[str, Any]]) -> dict:

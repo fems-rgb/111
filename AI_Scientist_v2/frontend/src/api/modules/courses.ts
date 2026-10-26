@@ -48,6 +48,11 @@ export interface CoursewareBrief {
 
 export interface Bullet { level: number; text: string }
 
+export interface SlideCard { title: string; desc: string }
+export interface SlideMetric { value: string; unit: string; label: string }
+export interface SlideCompareSide { title: string; items: string[] }
+export interface SlideCompare { left: SlideCompareSide; right: SlideCompareSide }
+
 export interface SlideMeta {
   slide_index: number
   title: string
@@ -61,6 +66,19 @@ export interface SlideMeta {
   ai_reason: string
   ai_suggestion: string
   updated_by_ai: boolean
+  // 版式语义（AI 生成课件才有；上传课件缺失时回退到要点+配图）
+  chapter?: string
+  layout?: 'cover' | 'section' | 'bullets' | 'cards' | 'compare' | 'metric' | 'quote' | 'table' | 'end'
+  kicker?: string
+  lead?: string
+  cards?: SlideCard[]
+  metrics?: SlideMetric[]
+  compare?: SlideCompare
+  quote?: string
+  quote_by?: string
+  takeaway?: string[]
+  key_question?: string
+  chapter_no?: number
 }
 
 export interface CoursewareDetail {
