@@ -12,10 +12,13 @@
 版式清单：
   cover    封面（深色满版）
   section  章节过渡页（大编号 + 本章关键问题）
-  bullets  论点页（一页一个观点，≤4 条）
+  bullets  论点页（一页一个观点，主点 + 子点 + 「讲透」侧栏）
   cards    卡片页（2×2 / 3 列）
   compare  对比页（左右双栏）
   metric   数据页（2~3 个大数字）
+  chart    图表页（柱状 / 条形 / 折线）
+  flow     流程图页（2~4 步，带箭头）
+  split    图文分栏页（左要点 + 右图）
   quote    金句页
   table    表格页
   end      结课页
@@ -51,7 +54,8 @@ CARD_TINTS = [
     ("#F1F5F9", MUTED),
 ]
 
-LAYOUTS = ("cover", "section", "bullets", "cards", "compare", "metric", "quote", "table", "end")
+LAYOUTS = ("cover", "section", "bullets", "cards", "compare", "metric",
+           "chart", "flow", "split", "quote", "table", "end")
 
 # 画布：1280×720（16:9），pptx 用 13.333×7.5 英寸
 W, H = 1280, 720
@@ -69,6 +73,49 @@ def _s(v: Any, limit: int = 0) -> str:
     return t
 
 
+CHART_TYPES = ("bar", "hbar", "line")
+
+
+def _num(v: Any) -> float:
+    try:
+        return float(str(v).replace(",", "").replace("%", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _chart(slide: dict) -> dict | None:
+    """数据图：labels 与 values 对齐后才能画，否则整页空白"""
+    c = slide.get("chart")
+    if not isinstance(c, dict):
+        return None
+    labels = [_s(x, 12) for x in (c.get("labels") or [])[:7]]
+    vals = [_num(v) for v in (c.get("values") or [])[:7]]
+    n = min(len(labels), len(vals))
+    # 负值/全零画不出有意义的柱，退回到要点页比画错图好
+    if n < 2 or min(vals) < 0:
+        return None
+    ctype = _s(c.get("type")).lower()
+    return {
+        "type": ctype if ctype in CHART_TYPES else "bar",
+        "labels": labels[:n], "values": vals[:n],
+        "unit": _s(c.get("unit"), 8),
+        "caption": _s(c.get("caption"), 44),
+        "series_name": _s(c.get("series_name") or c.get("name"), 20),
+    }
+
+
+def _steps(slide: dict) -> list[dict]:
+    """流程/结构图：2-4 步，标题必须有"""
+    out = []
+    for st in (slide.get("steps") or [])[:4]:
+        if not isinstance(st, dict):
+            continue
+        title = _s(st.get("title"), 16)
+        if title:
+            out.append({"title": title, "desc": _s(st.get("desc"), 46)})
+    return out
+
+
 def infer_layout(slide: dict) -> str:
     """推断版式：优先用 LLM 给的 layout，其次按内容形态兜底。
 
@@ -76,7 +123,7 @@ def infer_layout(slide: dict) -> str:
     """
     raw = _s(slide.get("layout")).lower()
     if raw in LAYOUTS:
-        # 只有真的带了对应内容才采用，避免空卡片/空表格页
+        # 只有真的带了对应内容才采用，避免空卡片/空图表页
         if raw == "cards" and not slide.get("cards"):
             return "bullets"
         if raw == "metric" and not slide.get("metrics"):
@@ -85,9 +132,19 @@ def infer_layout(slide: dict) -> str:
             return "bullets"
         if raw == "table" and not slide.get("tables"):
             return "bullets"
+        if raw == "chart" and not _chart(slide):
+            return "bullets"
+        if raw == "flow" and not _steps(slide):
+            return "bullets"
+        if raw == "split" and not (slide.get("bullets") and (_chart(slide) or _steps(slide))):
+            return "bullets"
         return raw
     if slide.get("tables"):
         return "table"
+    if _chart(slide):
+        return "chart"
+    if _steps(slide):
+        return "flow"
     if slide.get("metrics"):
         return "metric"
     if slide.get("cards"):
@@ -98,17 +155,21 @@ def infer_layout(slide: dict) -> str:
 
 
 def _bullets(slide: dict) -> list[dict]:
-    """规整要点：最多 4 条主点，单条 34 字内（超长自动收，避免页面变「字墙」）"""
+    """规整要点：最多 6 条（含子点），主点 30 字、子点 44 字内
+
+    旧版只允许 4 条 46 字，页面读起来「一页没多少东西」，课堂讲不透；
+    现在允许子点补「为什么/怎么做」，但逐条限长，避免退化成字墙。
+    """
     out = []
     for b in (slide.get("bullets") or []):
         if isinstance(b, dict):
-            txt = _s(b.get("text"), 46)
-            lvl = int(b.get("level", 0) or 0)
+            lvl = min(int(b.get("level", 0) or 0), 1)
+            txt = _s(b.get("text"), 44 if lvl else 34)
         else:
-            txt, lvl = _s(b, 46), 0
+            txt, lvl = _s(b, 34), 0
         if txt:
-            out.append({"text": txt, "level": min(lvl, 1)})
-        if len(out) >= 4:
+            out.append({"text": txt, "level": lvl})
+        if len(out) >= 6:
             break
     return out
 
@@ -162,6 +223,10 @@ def page_parts(slide: dict) -> dict:
         "cards": _cards(slide),
         "metrics": _metrics(slide),
         "compare": _compare(slide),
+        "chart": _chart(slide),
+        "steps": _steps(slide),
+        "detail": _s(slide.get("detail"), 160),
+        "example": _s(slide.get("example"), 90),
         "quote": _s(slide.get("quote") or slide.get("lead"), 60),
         "quote_by": _s(slide.get("quote_by"), 48),
         "takeaway": [_s(t, 24) for t in (slide.get("takeaway") or [])[:3] if _s(t)],
@@ -337,27 +402,210 @@ def _draw_footer(draw, deck_title: str, page_no: int):
         draw.text((W - MARGIN_X - 26, FOOTER_Y), no, font=load_font(15, True), fill=FAINT)
 
 
-def _draw_bullets(draw, p: dict):
-    items = p["bullets"] or [{"text": p["lead"] or p["title"], "level": 0}]
-    top = CONTENT_TOP + 8
-    row_h = (CONTENT_BOTTOM - top) // max(1, len(items))
+def _ctext(draw, cx: float, cy: float, text: str, font, fill):
+    """以 (cx, cy) 为中心画一行字（序号、柱顶数值、轴标签用）"""
+    w = draw.textlength(text, font=font)
+    draw.text((cx - w / 2, cy - font.size * 0.62), text, font=font, fill=fill)
+
+
+def _nice_max(v: float) -> float:
+    """把最大值向上取整到「好看」的刻度（1/1.5/2/2.5/3/4/5/6/8×10^n）"""
+    if v <= 0:
+        return 1.0
+    import math
+    exp = math.floor(math.log10(v))
+    base = v / (10 ** exp)
+    for step in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        if base <= step:
+            return step * (10 ** exp)
+    return 10 ** (exp + 1)
+
+
+def _fmt_num(v: float) -> str:
+    if abs(v - round(v)) < 1e-9:
+        return str(int(round(v)))
+    return f"{v:.1f}"
+
+
+def _draw_chart(draw, chart: dict, box: tuple[int, int, int, int]):
+    """柱状 / 条形 / 折线图（pptx 用同一套几何重画，两端一致）"""
+    x0, y0, x1, y1 = box
+    labels, vals = chart["labels"], chart["values"]
+    unit, ctype = chart["unit"], chart["type"]
+    vmax = _nice_max(max(vals) or 1)
+    cap_h = 26 if chart["caption"] else 0
+    if ctype == "hbar":
+        gutter = min(160, int((x1 - x0) * 0.32))
+        px0, px1 = x0 + gutter, x1 - 76
+        py0, py1 = y0 + 10, y1 - cap_h - 10
+        row = (py1 - py0) / max(1, len(vals))
+        bh = min(36, row * 0.54)
+        for i, (lb, v) in enumerate(zip(labels, vals)):
+            cy = py0 + row * (i + 0.5)
+            bw = max(2, (v / vmax) * (px1 - px0))
+            draw.rounded_rectangle([px0, cy - bh / 2, px0 + bw, cy + bh / 2],
+                                   radius=5, fill=ACCENT if v == max(vals) else BRAND)
+            draw.text((x0, cy - 12), _s(lb, 10), font=load_font(15), fill=INK_SOFT)
+            draw.text((px0 + bw + 10, cy - 11), _fmt_num(v) + unit,
+                      font=load_font(14, True), fill=MUTED)
+    else:
+        gutter = 58 if (x1 - x0) > 700 else 48
+        px0, px1 = x0 + gutter, x1 - 10
+        # 顶部留 30px，让最高柱的数值标还能画在柱子上方
+        py0, py1 = y0 + 30, y1 - cap_h - 38
+        for i in range(5):
+            gy = py1 - (py1 - py0) * i / 4
+            draw.rectangle([px0, gy, px1, gy + 1], fill=LINE if 0 < i < 4 else "#CBD5E1")
+            draw.text((x0, gy - 9), _fmt_num(vmax * i / 4), font=load_font(13), fill=FAINT)
+        n = len(vals)
+        slot = (px1 - px0) / n
+        pts = []
+        for i, (lb, v) in enumerate(zip(labels, vals)):
+            cx = px0 + slot * (i + 0.5)
+            cy = py1 - (v / vmax) * (py1 - py0)
+            pts.append((cx, cy))
+            if ctype != "line":
+                bw = min(88, slot * 0.46)
+                draw.rounded_rectangle([cx - bw / 2, cy, cx + bw / 2, py1], radius=6,
+                                       fill=ACCENT if v == max(vals) else BRAND)
+            _ctext(draw, cx, max(py0 - 12, cy - 16), _fmt_num(v) + unit,
+                   load_font(14, True), BRAND if ctype == "line" else MUTED)
+            _ctext(draw, cx, py1 + 20, _s(lb, 8), load_font(13), MUTED)
+        if ctype == "line":
+            draw.line(pts, fill=BRAND, width=3, joint="curve")
+            for cx, cy in pts:
+                draw.ellipse([cx - 5, cy - 5, cx + 5, cy + 5], fill=WHITE, outline=BRAND, width=3)
+    if chart["caption"]:
+        draw.text((x0, y1 - 20), _s("数据来源：" + chart["caption"], 46), font=load_font(12), fill=FAINT)
+
+
+def _draw_flow(draw, steps: list[dict], box: tuple[int, int, int, int], vertical: bool = False):
+    """流程/机制图：横向卡片 + 箭头，或竖向堆叠（分栏页用）"""
+    x0, y0, x1, y1 = box
+    n = len(steps)
+    if vertical:
+        gap = 12
+        row = (y1 - y0 - gap * (n - 1)) // max(1, n)
+        for i, st in enumerate(steps):
+            y = y0 + i * (row + gap)
+            tint, accent = CARD_TINTS[i % len(CARD_TINTS)]
+            draw.rounded_rectangle([x0, y, x1, y + row], radius=14, fill=tint)
+            draw.ellipse([x0 + 16, y + 14, x0 + 46, y + 44], fill=accent)
+            _ctext(draw, x0 + 31, y + 29, str(i + 1), load_font(15, True), WHITE)
+            draw.text((x0 + 58, y + 12), _s(st["title"], 12), font=load_font(18, True), fill=INK)
+            _print_text(draw, (x0 + 58, y + 42), st["desc"], load_font(14), MUTED,
+                        x1 - x0 - 74, 2, 3)
+        return
+
+    gap = 46 if n <= 3 else 32
+    cw = (x1 - x0 - gap * (n - 1)) // max(1, n)
+    ch = min(320, y1 - y0)
+    cy0 = y0 + (y1 - y0 - ch) // 2
+    for i, st in enumerate(steps):
+        x = x0 + i * (cw + gap)
+        tint, accent = CARD_TINTS[i % len(CARD_TINTS)]
+        draw.rounded_rectangle([x, cy0, x + cw, cy0 + ch], radius=18, fill=tint)
+        draw.rectangle([x + 24, cy0 + 26, x + 30, cy0 + ch - 26], fill=accent)
+        # 内容整体垂直居中，避免卡片下半部大片空白
+        tf, df = load_font(21, True), load_font(15)
+        t_lines = _wrap(draw, st["title"], tf, cw - 68, 2)
+        d_lines = _wrap(draw, st["desc"], df, cw - 68, 4)
+        block = 36 + 18 + len(t_lines) * 30 + 8 + len(d_lines) * 24
+        top = cy0 + max(26, (ch - block) // 2 - 10)
+        draw.ellipse([x + 46, top, x + 82, top + 36], fill=accent)
+        _ctext(draw, x + 64, top + 18, str(i + 1), load_font(17, True), WHITE)
+        ty = top + 54
+        for ln in t_lines:
+            draw.text((x + 46, ty), ln, font=tf, fill=INK)
+            ty += 30
+        ty += 8
+        for ln in d_lines:
+            draw.text((x + 46, ty), ln, font=df, fill=MUTED)
+            ty += 24
+        if i < n - 1:
+            ax = x + cw + 10
+            ay = cy0 + ch // 2
+            draw.rectangle([ax - 6, ay - 1, ax + 6, ay + 2], fill=BRAND_MID)
+            draw.polygon([(ax + 6, ay - 10), (ax + 22, ay), (ax + 6, ay + 10)], fill=BRAND_MID)
+
+
+def _draw_bullet_list(draw, items: list[dict], box: tuple[int, int, int, int], size: int = 24):
+    """要点列表（全宽与分栏共用）"""
+    x0, y0, x1, y1 = box
+    row_h = (y1 - y0) // max(1, len(items))
+    num = 0
     for i, b in enumerate(items):
-        y = top + i * row_h
+        y = y0 + i * row_h
         if i:
-            draw.rectangle([MARGIN_X, y - 1, W - MARGIN_X, y], fill=LINE)
+            draw.rectangle([x0, y - 1, x1, y], fill=LINE)
         sub = b["level"] >= 1
-        # 序号徽标：比圆点更有答辩 PPT 的秩序感
         if not sub:
-            draw.rounded_rectangle([MARGIN_X, y + row_h // 2 - 19, MARGIN_X + 38, y + row_h // 2 + 19], radius=10, fill=BRAND_LIGHT)
-            draw.text((MARGIN_X + 13, y + row_h // 2 - 13), str(i + 1), font=load_font(17, True), fill=BRAND)
+            num += 1
+            # 序号徽标：比圆点更有答辩 PPT 的秩序感
+            draw.rounded_rectangle([x0, y + row_h // 2 - 19, x0 + 38, y + row_h // 2 + 19],
+                                   radius=10, fill=BRAND_LIGHT)
+            _ctext(draw, x0 + 19, y + row_h // 2, str(num), load_font(17, True), BRAND)
+            f = load_font(size, True)
         else:
-            draw.rectangle([MARGIN_X + 12, y + row_h // 2 - 1, MARGIN_X + 26, y + row_h // 2 + 2], fill=BRAND_MID)
-        f = load_font(26 if not sub else 19, not sub)
-        lines = _wrap(draw, b["text"], f, W - MARGIN_X - 190, 2)
+            draw.rectangle([x0 + 12, y + row_h // 2 - 1, x0 + 26, y + row_h // 2 + 2], fill=BRAND_MID)
+            f = load_font(max(14, size - 6))
+        lines = _wrap(draw, b["text"], f, x1 - x0 - 76, 2)
         lh = int(f.size * 1.42) + 6
         ty = y + row_h // 2 - len(lines) * lh // 2
         for k, ln in enumerate(lines):
-            draw.text((MARGIN_X + 56, ty + k * lh), ln, font=f, fill=INK if not sub else MUTED)
+            draw.text((x0 + 56, ty + k * lh), ln, font=f, fill=INK if not sub else MUTED)
+
+
+def _draw_note_panel(draw, p: dict, box: tuple[int, int, int, int]):
+    """「讲透这一页」侧栏：核心解释 + 具体案例，让一页课真能讲下去"""
+    x0, y0, x1, y1 = box
+    draw.rounded_rectangle([x0, y0, x1, y1], radius=18, fill=BG_SOFT)
+    x = x0 + 28
+    draw.rectangle([x, y0 + 34, x + 26, y0 + 38], fill=BRAND)
+    draw.text((x + 38, y0 + 25), "讲透这一页", font=load_font(16), fill=BRAND)
+    yy = y0 + 78
+    if p["detail"]:
+        yy = _print_text(draw, (x, yy), p["detail"], load_font(17), INK_SOFT,
+                         x1 - x0 - 56, 9, 9) + yy
+    if p["example"]:
+        ey = max(yy + 24, y1 - 158)
+        draw.rounded_rectangle([x, ey, x1 - 28, y1 - 26], radius=12, fill=WARM_LIGHT)
+        draw.text((x + 18, ey + 14), "案例 / 例题", font=load_font(13, True), fill=WARM)
+        _print_text(draw, (x + 18, ey + 42), p["example"], load_font(15), "#7C2D12",
+                    x1 - x0 - 92, 4, 6)
+
+
+def _draw_bullets(draw, p: dict):
+    items = p["bullets"] or [{"text": p["lead"] or p["title"], "level": 0}]
+    if p["detail"] or p["example"]:
+        # 左要点 + 右解释栏：一栏讲论点，一栏讲原理与案例
+        lw = int((W - 2 * MARGIN_X) * 0.58)
+        _draw_bullet_list(draw, items, (MARGIN_X, CONTENT_TOP + 4, MARGIN_X + lw, CONTENT_BOTTOM), 22)
+        _draw_note_panel(draw, p, (MARGIN_X + lw + 34, CONTENT_TOP, W - MARGIN_X, CONTENT_BOTTOM))
+    else:
+        _draw_bullet_list(draw, items, (MARGIN_X, CONTENT_TOP, W - MARGIN_X, CONTENT_BOTTOM), 24)
+
+
+def _draw_detail_strip(draw, p: dict, top: int):
+    """图表/流程页底部结论条：图看完要有解释，否则学生只记得住颜色"""
+    if not p["detail"]:
+        return
+    draw.rectangle([MARGIN_X, top, W - MARGIN_X, top + 1], fill=LINE)
+    draw.text((MARGIN_X, top + 12), "讲透", font=load_font(13, True), fill=BRAND)
+    _print_text(draw, (MARGIN_X + 44, top + 8), p["detail"], load_font(15), MUTED,
+                W - 2 * MARGIN_X - 54, 2, 4)
+
+
+def _draw_split(draw, p: dict):
+    """图文分栏：左侧论点，右侧数据图 / 流程图"""
+    lw = int((W - 2 * MARGIN_X) * 0.44)
+    items = p["bullets"] or [{"text": p["lead"] or p["title"], "level": 0}]
+    _draw_bullet_list(draw, items, (MARGIN_X, CONTENT_TOP + 4, MARGIN_X + lw, CONTENT_BOTTOM), 19)
+    box = (MARGIN_X + lw + 40, CONTENT_TOP, W - MARGIN_X, CONTENT_BOTTOM)
+    if p["chart"]:
+        _draw_chart(draw, p["chart"], box)
+    elif p["steps"]:
+        _draw_flow(draw, p["steps"], box, vertical=True)
 
 
 def _draw_cards(draw, p: dict):
@@ -500,6 +748,16 @@ def render_slide_image(slide: dict, out_abs: str, out_rel: str, name: str,
                 _draw_compare(draw, p)
             elif layout == "metric" and p["metrics"]:
                 _draw_metric(draw, p)
+            elif layout == "chart" and p["chart"]:
+                bottom = CONTENT_BOTTOM - (66 if p["detail"] else 0)
+                _draw_chart(draw, p["chart"], (MARGIN_X, CONTENT_TOP + 6, W - MARGIN_X, bottom))
+                _draw_detail_strip(draw, p, bottom + 6)
+            elif layout == "flow" and p["steps"]:
+                bottom = CONTENT_BOTTOM - (66 if p["detail"] else 0)
+                _draw_flow(draw, p["steps"], (MARGIN_X, CONTENT_TOP + 10, W - MARGIN_X, bottom))
+                _draw_detail_strip(draw, p, bottom + 6)
+            elif layout == "split":
+                _draw_split(draw, p)
             elif layout == "quote":
                 _draw_quote(draw, p)
             elif layout == "table" and p["tables"]:
@@ -661,20 +919,203 @@ def _p_section(slide, p: dict, deck_title: str):
 
 def _p_bullets(slide, p: dict):
     items = p["bullets"] or [{"text": p["lead"] or p["title"], "level": 0}]
+    has_note = bool(p["detail"] or p["example"])
+    x1 = MARGIN_X + int((W - 2 * MARGIN_X) * 0.58) if has_note else W - MARGIN_X
     top = CONTENT_TOP + 8
     row_h = (CONTENT_BOTTOM - top) // max(1, len(items))
+    size = 22 if has_note else 24
+    num = 0
     for i, b in enumerate(items):
         y = top + i * row_h
         if i:
-            _shape(slide, MARGIN_X, y - 1, W - 2 * MARGIN_X, 1, LINE)
+            _shape(slide, MARGIN_X, y - 1, x1 - MARGIN_X, 1, LINE)
         sub = b["level"] >= 1
         if not sub:
+            num += 1
             _shape(slide, MARGIN_X, y + row_h // 2 - 18, 38, 38, BRAND_LIGHT, radius=True)
-            _text(slide, MARGIN_X, y + row_h // 2 - 13, 38, 30, str(i + 1), 15, True, BRAND, "center", "middle")
+            _text(slide, MARGIN_X, y + row_h // 2 - 13, 38, 30, str(num), 15, True, BRAND, "center", "middle")
         else:
             _shape(slide, MARGIN_X + 12, y + row_h // 2 - 1, 14, 3, BRAND_MID)
-        _text(slide, MARGIN_X + 56, y, W - MARGIN_X - 190, row_h, b["text"],
-              24 if not sub else 18, not sub, INK if not sub else MUTED, "left", "middle", line=1.35)
+        _text(slide, MARGIN_X + 56, y, x1 - MARGIN_X - 70, row_h, b["text"],
+              size if not sub else size - 6, not sub, INK if not sub else MUTED, "left", "middle", line=1.35)
+    if has_note:
+        _p_note_panel(slide, p, (x1 + 34, CONTENT_TOP, W - MARGIN_X, CONTENT_BOTTOM))
+
+
+def _p_note_panel(slide, p: dict, box):
+    """「讲透这一页」侧栏（与 Pillow 版本同位置同层级）"""
+    x0, y0, x1, y1 = box
+    _shape(slide, x0, y0, x1 - x0, y1 - y0, BG_SOFT, radius=True)
+    x = x0 + 28
+    _shape(slide, x, y0 + 34, 26, 4, BRAND)
+    _text(slide, x + 38, y0 + 22, x1 - x0 - 70, 26, "讲透这一页", 14, False, BRAND)
+    yy = y0 + 74
+    if p["detail"]:
+        h = min(300, (len(p["detail"]) // 22 + 1) * 28 + 8)
+        _text(slide, x, yy, x1 - x0 - 56, h, p["detail"], 15, False, INK_SOFT, line=1.55)
+        yy += h
+    if p["example"]:
+        ey = max(yy + 18, y1 - 158)
+        _shape(slide, x, ey, x1 - x0 - 56, y1 - 26 - ey, WARM_LIGHT, radius=True)
+        _text(slide, x + 18, ey + 12, x1 - x0 - 92, 24, "案例 / 例题", 12, True, WARM)
+        _text(slide, x + 18, ey + 38, x1 - x0 - 92, y1 - 26 - ey - 46,
+              p["example"], 13, False, "#7C2D12", line=1.4)
+
+
+def _chart_shapes(slide, chart: dict, box):
+    """用形状画柱/条形/折线，与 Pillow 版本几何一致，避开原生图表主题干扰"""
+    from pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
+    x0, y0, x1, y1 = box
+    labels, vals = chart["labels"], chart["values"]
+    unit, ctype = chart["unit"], chart["type"]
+    vmax = _nice_max(max(vals) or 1)
+    cap_h = 26 if chart["caption"] else 0
+    if ctype == "hbar":
+        gutter = min(160, int((x1 - x0) * 0.32))
+        px0, px1 = x0 + gutter, x1 - 76
+        py0, py1 = y0 + 10, y1 - cap_h - 10
+        row = (py1 - py0) / max(1, len(vals))
+        bh = min(36, row * 0.54)
+        for i, (lb, v) in enumerate(zip(labels, vals)):
+            cy = py0 + row * (i + 0.5)
+            bw = max(2, (v / vmax) * (px1 - px0))
+            _shape(slide, px0, cy - bh / 2, bw, bh, ACCENT if v == max(vals) else BRAND, radius=True)
+            _text(slide, x0, cy - 14, gutter - 12, 28, _s(lb, 10), 13, False, INK_SOFT, "left", "middle")
+            _text(slide, px0 + bw + 10, cy - 14, 96, 28, _fmt_num(v) + unit, 12, True, MUTED, "left", "middle")
+    else:
+        gutter = 58 if (x1 - x0) > 700 else 48
+        px0, px1 = x0 + gutter, x1 - 10
+        # 顶部留 30px，让最高柱的数值标还能画在柱子上方
+        py0, py1 = y0 + 30, y1 - cap_h - 38
+        for i in range(5):
+            gy = py1 - (py1 - py0) * i / 4
+            _shape(slide, px0, gy, px1 - px0, 1, LINE if 0 < i < 4 else "#CBD5E1")
+            _text(slide, x0, gy - 12, gutter - 8, 24, _fmt_num(vmax * i / 4), 11, False, FAINT, "right", "middle")
+        n = len(vals)
+        slot = (px1 - px0) / n
+        pts = []
+        for i, (lb, v) in enumerate(zip(labels, vals)):
+            cx = px0 + slot * (i + 0.5)
+            cy = py1 - (v / vmax) * (py1 - py0)
+            pts.append((cx, cy))
+            if ctype != "line":
+                bw = min(88, slot * 0.46)
+                _shape(slide, cx - bw / 2, cy, bw, py1 - cy, ACCENT if v == max(vals) else BRAND, radius=True)
+            _text(slide, cx - slot / 2, max(py0 - 24, cy - 30), slot, 24,
+                  _fmt_num(v) + unit, 12, True, BRAND if ctype == "line" else MUTED, "center", "middle")
+            _text(slide, cx - slot / 2, py1 + 6, slot, 24, _s(lb, 8), 11, False, MUTED, "center", "middle")
+        if ctype == "line":
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                cn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT,
+                                                _emu(ax), _emu(ay), _emu(bx), _emu(by))
+                cn.line.color.rgb = _rgb(BRAND)
+                cn.line.width = _emu(3)
+            for cx, cy in pts:
+                dot = slide.shapes.add_shape(MSO_SHAPE.OVAL, _emu(cx - 5), _emu(cy - 5), _emu(10), _emu(10))
+                dot.fill.solid()
+                dot.fill.fore_color.rgb = _rgb(WHITE)
+                dot.line.color.rgb = _rgb(BRAND)
+                dot.line.width = _emu(2.5)
+                try:
+                    dot.shadow.inherit = False
+                except Exception:
+                    pass
+    if chart["caption"]:
+        _text(slide, x0, y1 - 24, x1 - x0, 24, _s("数据来源：" + chart["caption"], 46), 11, False, FAINT)
+
+
+def _flow_shapes(slide, steps: list[dict], box, vertical: bool = False):
+    from pptx.enum.shapes import MSO_SHAPE
+    x0, y0, x1, y1 = box
+    n = len(steps)
+    if vertical:
+        gap = 12
+        row = (y1 - y0 - gap * (n - 1)) // max(1, n)
+        for i, st in enumerate(steps):
+            y = y0 + i * (row + gap)
+            tint, accent = CARD_TINTS[i % len(CARD_TINTS)]
+            _shape(slide, x0, y, x1 - x0, row, tint, radius=True)
+            _shape(slide, x0 + 16, y + 14, 30, 30, accent)
+            _text(slide, x0 + 16, y + 14, 30, 30, str(i + 1), 13, True, WHITE, "center", "middle")
+            _text(slide, x0 + 58, y + 8, x1 - x0 - 74, 26, _s(st["title"], 12), 16, True, INK)
+            _text(slide, x0 + 58, y + 36, x1 - x0 - 74, row - 44, st["desc"], 12, False, MUTED, line=1.4)
+        return
+    gap = 46 if n <= 3 else 32
+    cw = (x1 - x0 - gap * (n - 1)) / max(1, n)
+    ch = min(360, y1 - y0)
+    cy0 = y0 + (y1 - y0 - ch) / 2
+    for i, st in enumerate(steps):
+        x = x0 + i * (cw + gap)
+        tint, accent = CARD_TINTS[i % len(CARD_TINTS)]
+        _shape(slide, x, cy0, cw, ch, tint, radius=True)
+        _shape(slide, x + 24, cy0 + 26, 6, ch - 52, accent)
+        tl = 2 if len(st["title"]) > 11 else 1
+        dl = min(4, 1 + len(st["desc"]) // 12)
+        block = 36 + 18 + tl * 30 + 8 + dl * 22
+        top = cy0 + max(26, (ch - block) / 2 - 10)
+        _shape(slide, x + 46, top, 36, 36, accent)
+        _text(slide, x + 46, top, 36, 36, str(i + 1), 14, True, WHITE, "center", "middle")
+        _text(slide, x + 46, top + 48, cw - 68, tl * 30 + 8, st["title"], 18, True, INK, line=1.3)
+        _text(slide, x + 46, top + 48 + tl * 30 + 6, cw - 68, dl * 22 + 6,
+              st["desc"], 13, False, MUTED, line=1.5)
+        if i < n - 1:
+            ax = x + cw + 10
+            ay = cy0 + ch / 2 - 10
+            arr = slide.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW, _emu(ax - 6), _emu(ay), _emu(28), _emu(20))
+            arr.fill.solid()
+            arr.fill.fore_color.rgb = _rgb(BRAND_MID)
+            arr.line.fill.background()
+            try:
+                arr.shadow.inherit = False
+            except Exception:
+                pass
+
+
+def _p_detail_strip(slide, p: dict, top: int):
+    if not p["detail"]:
+        return
+    _shape(slide, MARGIN_X, top, W - 2 * MARGIN_X, 1, LINE)
+    _text(slide, MARGIN_X, top + 8, 44, 24, "讲透", 12, True, BRAND)
+    _text(slide, MARGIN_X + 44, top + 6, W - 2 * MARGIN_X - 54, 56, p["detail"],
+          13, False, MUTED, line=1.45)
+
+
+def _p_chart(slide, p: dict):
+    bottom = CONTENT_BOTTOM - (66 if p["detail"] else 0)
+    _chart_shapes(slide, p["chart"], (MARGIN_X, CONTENT_TOP + 6, W - MARGIN_X, bottom))
+    _p_detail_strip(slide, p, bottom + 6)
+
+
+def _p_flow(slide, p: dict):
+    bottom = CONTENT_BOTTOM - (66 if p["detail"] else 0)
+    _flow_shapes(slide, p["steps"], (MARGIN_X, CONTENT_TOP + 10, W - MARGIN_X, bottom))
+    _p_detail_strip(slide, p, bottom + 6)
+
+
+def _p_split(slide, p: dict):
+    lw = int((W - 2 * MARGIN_X) * 0.44)
+    items = p["bullets"] or [{"text": p["lead"] or p["title"], "level": 0}]
+    top = CONTENT_TOP + 8
+    row_h = (CONTENT_BOTTOM - top) // max(1, len(items))
+    num = 0
+    for i, b in enumerate(items):
+        y = top + i * row_h
+        if i:
+            _shape(slide, MARGIN_X, y - 1, lw, 1, LINE)
+        sub = b["level"] >= 1
+        if not sub:
+            num += 1
+            _shape(slide, MARGIN_X, y + row_h // 2 - 16, 32, 32, BRAND_LIGHT, radius=True)
+            _text(slide, MARGIN_X, y + row_h // 2 - 12, 32, 26, str(num), 13, True, BRAND, "center", "middle")
+        else:
+            _shape(slide, MARGIN_X + 10, y + row_h // 2 - 1, 12, 3, BRAND_MID)
+        _text(slide, MARGIN_X + 44, y, lw - 54, row_h, b["text"], 15 if not sub else 12,
+              not sub, INK if not sub else MUTED, "left", "middle", line=1.35)
+    box = (MARGIN_X + lw + 40, CONTENT_TOP, W - MARGIN_X, CONTENT_BOTTOM)
+    if p["chart"]:
+        _chart_shapes(slide, p["chart"], box)
+    elif p["steps"]:
+        _flow_shapes(slide, p["steps"], box, vertical=True)
 
 
 def _p_cards(slide, p: dict):
@@ -830,6 +1271,12 @@ def render_pptx(slides: list[dict], deck_title: str, out_path: str,
                 _p_compare(slide, p)
             elif layout == "metric" and p["metrics"]:
                 _p_metric(slide, p)
+            elif layout == "chart" and p["chart"]:
+                _p_chart(slide, p)
+            elif layout == "flow" and p["steps"]:
+                _p_flow(slide, p)
+            elif layout == "split":
+                _p_split(slide, p)
             elif layout == "quote":
                 _p_quote(slide, p)
             elif layout == "table" and p["tables"]:

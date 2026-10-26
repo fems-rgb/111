@@ -227,7 +227,8 @@ async def refresh_slides(old_slides: list[dict], report_items: list[dict],
             # 改写过的页文字全新，旧版式语义（卡片/对比/数据/金句）已与新文字对不上，
             # 清掉后退回项目符号版式，避免渲染出过时内容
             for k in ("layout", "kicker", "lead", "cards", "metrics", "compare",
-                      "quote", "quote_by", "takeaway"):
+                      "quote", "quote_by", "takeaway", "detail", "example",
+                      "chart", "steps", "tables"):
                 base.pop(k, None)
             base["updated_by_ai"] = True
             base["risk_score"] = 0.0
@@ -278,6 +279,36 @@ def _normalize_slide(s: dict, index: int, chapter: str = "") -> dict:
                 "items": [str(x)[:120] for x in (d.get("items") or [])[:4]],
             }
 
+    # 数据图：labels 与 values 必须等长，数字统一转 float（模型常写成 "12%" / "1,200"）
+    chart = None
+    if isinstance(s.get("chart"), dict):
+        c = s["chart"]
+        labels = [str(x)[:20] for x in (c.get("labels") or [])[:7]]
+        vals = []
+        for v in (c.get("values") or [])[:7]:
+            try:
+                vals.append(float(str(v).replace(",", "").replace("%", "").strip()))
+            except (TypeError, ValueError):
+                vals.append(0.0)
+        n = min(len(labels), len(vals))
+        # 负值无法用柱宽/柱高表达，宁可不给 chart（渲染层会退回要点页）
+        if n >= 2 and min(vals) >= 0:
+            ctype = str(c.get("type") or "bar").strip().lower()
+            chart = {
+                "type": ctype if ctype in ("bar", "line", "hbar") else "bar",
+                "labels": labels[:n], "values": vals[:n],
+                "unit": str(c.get("unit") or "")[:8],
+                "caption": str(c.get("caption") or "")[:80],
+                "series_name": str(c.get("series_name") or c.get("name") or "")[:24],
+            }
+
+    # 流程/结构图：2-4 步，标题必须有，否则整页空白
+    steps = []
+    for st in (s.get("steps") or [])[:4]:
+        if isinstance(st, dict) and str(st.get("title") or "").strip():
+            steps.append({"title": str(st["title"])[:40],
+                          "desc": str(st.get("desc") or "")[:90]})
+
     return {
         "slide_index": index,
         "chapter": chapter,
@@ -285,6 +316,10 @@ def _normalize_slide(s: dict, index: int, chapter: str = "") -> dict:
         "kicker": str(s.get("kicker", "") or "")[:40],
         "title": str(s.get("title", f"第 {index + 1} 页"))[:300],
         "lead": str(s.get("lead", "") or "")[:200],
+        "detail": str(s.get("detail", "") or "")[:400],
+        "example": str(s.get("example", "") or "")[:200],
+        "chart": chart,
+        "steps": steps,
         "key_question": str(s.get("key_question", "") or "")[:200],
         "chapter_no": int(s.get("chapter_no", 0) or 0),
         "bullets": bullets[:20],
@@ -307,25 +342,34 @@ _OUTLINE_SYSTEM = """你是资深课程设计师，擅长把主题拆解成有�
  "chapters": [{"title": "章标题", "key_question": "本章要解决的核心问题",
                "points": ["知识点1", "知识点2"]}]}"""
 
-_CHAPTER_SYSTEM = """你是顶级课程设计师，也是答辩 PPT 撰稿人。把指定章节展开成「一页一个论点」的演示页。
+_CHAPTER_SYSTEM = """你是顶级课程设计师，也是答辩 PPT 与课堂讲义撰稿人。把指定章节展开成「一页一个论点」的演示页。
 
 硬性要求：
 1. 每页只表达一个观点；标题必须是结论句（≤20 字），不要「XX 概述/介绍」这类话题词；
 2. lead 用一句话说清本页核心结论（≤40 字），不要重复标题；
-3. 从下列版式中选一种，只填该版式需要的字段：
-   - bullets：2-4 条并列论点，每条 ≤22 字，必须是短语，禁止整句长段（默认）
+3. detail 写「讲透这一页」的核心解释（60-100 字，含原理、因果或操作步骤），供教师备课与讲义使用；
+4. example 写一个具体案例、例题或应用场景（30-60 字，要有具体对象 + 数字/现象，禁止空话）；
+5. bullets 版式给 3-5 条主点，每条 ≤28 字；可再补 1-2 条 level=1 的子点（≤34 字）说明「为什么/怎么做」；
+6. 从下列版式中选一种，只填该版式需要的字段：
+   - bullets：主点 + 子点（最常用，默认）
    - cards：2-4 个并列要素，title ≤12 字、desc ≤30 字
    - compare：两组对照，各 2-3 条，每条 ≤18 字
    - metric：2-3 个关键数字，value 为数字、unit 为单位、label ≤16 字
+   - chart：一页数据图，chart={"type":"bar|line|hbar","unit":"%","labels":[2-6 个类别],"values":[同长度的真实数字],"caption":"数据来源","series_name":"指标名"}
+     （values 只写数字不带单位；一页只能同一量纲，百分比与耗时/分数不能混画）
+   - flow：2-4 步流程/机制，steps=[{"title":"步骤名≤12 字","desc":"≤30 字"}]
+   - table：对照表，tables=[[["表头1","表头2"],["第1行1","第1行2"],["第2行1","第2行2"]]]
    - quote：一句可被记住的结论（≤40 字）
-   不要每一页都用 bullets，至少安排 1 页 cards / metric / compare；
-4. 事实与数据必须准确；没把握就写「已有研究表明」；优先融入近 1-2 年的真实进展；
-5. kicker 写所属小节名（≤8 字），让页面有导航感；
-6. notes 写给讲师的速记（怎么讲、举什么例、学生可能问什么），80-180 字；
-7. 直接进入内容，不要写「本章导览」这种空页（章节过渡页由系统生成）；
-8. 输出严格 JSON，不要多余文字：
+7. 同一章内版式不得重复，且本章必须至少有 1 页 chart 或 flow（要有图），至少 1 页 table 或 compare（要有对照）；
+8. 事实与数据必须准确；没把握就写「已有研究表明」；优先融入近 1-2 年的真实进展；
+9. kicker 写所属小节名（≤8 字），让页面有导航感；
+10. notes 写给讲师的授课速记（怎么开场、举什么例、学生易问什么），120-200 字；
+11. 直接进入内容，不要写「本章导览」这种空页（章节过渡页由系统生成）；
+12. 输出严格 JSON，不要多余文字：
 {"slides": [{"layout": "bullets", "kicker": "小节名", "title": "结论式标题", "lead": "一句话结论",
-  "bullets": [{"level": 0, "text": "短语"}], "cards": [], "metrics": [],
+  "detail": "讲透这一页的解释", "example": "具体案例",
+  "bullets": [{"level": 0, "text": "短语"}, {"level": 1, "text": "补充说明"}],
+  "cards": [], "metrics": [], "chart": null, "steps": [], "tables": [],
   "compare": {"left": {"title": "", "items": []}, "right": {"title": "", "items": []}},
   "notes": "讲师速记"}]}"""
 
@@ -415,14 +459,17 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
             }, len(slides), chapter_name))
         pts = [str(p)[:80] for p in (ch.get("points") or [])]
         pts_text = "；".join(pts) or "自拟"
+        # 每页要带 detail / example / notes，输出量比旧版翻倍，token 上限同步放大
         cres = await call_qwen(_CHAPTER_SYSTEM, f"""课程主题：{topic}（{domain or '通用'} · 面向 {audience} · {style}）
 本章标题：{chapter_name}
 本章要解决的问题：{key_q or '自拟'}
 本章知识点：{pts_text}
-请输出 {slides_per_chapter} 页，版式要有变化{ref_block if i == 0 else ''}
+请输出 {slides_per_chapter} 页：同一章内版式不重复，其中至少 1 页用 chart 画数据、
+至少 1 页用 flow 画流程或 table 做对照，其余页面用 bullets（带 detail 与 example）。
+每页都要有 detail、example 与 notes。{ref_block if i == 0 else ''}
 
 只输出 {{"slides": [...]}}。""", project_id=project_id,
-                              max_tokens=min(6000, 900 + slides_per_chapter * 620), model=mdl)
+                              max_tokens=min(8000, 1400 + slides_per_chapter * 900), model=mdl)
         cost += cres.get("cost", 0)
         tin += cres["tokens"]["input"]
         tout += cres["tokens"]["output"]

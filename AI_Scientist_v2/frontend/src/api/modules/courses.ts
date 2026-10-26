@@ -68,7 +68,8 @@ export interface SlideMeta {
   updated_by_ai: boolean
   // 版式语义（AI 生成课件才有；上传课件缺失时回退到要点+配图）
   chapter?: string
-  layout?: 'cover' | 'section' | 'bullets' | 'cards' | 'compare' | 'metric' | 'quote' | 'table' | 'end'
+  layout?: 'cover' | 'section' | 'bullets' | 'cards' | 'compare' | 'metric'
+    | 'chart' | 'flow' | 'split' | 'quote' | 'table' | 'end'
   kicker?: string
   lead?: string
   cards?: SlideCard[]
@@ -79,6 +80,25 @@ export interface SlideMeta {
   takeaway?: string[]
   key_question?: string
   chapter_no?: number
+  // 「讲透这一页」与图表/流程（新版生成器产出，旧课件为空）
+  detail?: string
+  example?: string
+  chart?: SlideChart | null
+  steps?: SlideStep[]
+}
+
+export interface SlideChart {
+  type: 'bar' | 'hbar' | 'line'
+  labels: string[]
+  values: number[]
+  unit?: string
+  caption?: string
+  series_name?: string
+}
+
+export interface SlideStep {
+  title: string
+  desc?: string
 }
 
 export interface CoursewareDetail {

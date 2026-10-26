@@ -183,12 +183,31 @@ def convert_pptx_to_slides(pptx_path: str, courseware_id: int) -> list[dict[str,
 
 
 def layout_points(slide: dict[str, Any]) -> list[tuple[int, str]]:
-    """把版式语义（卡片/对比/数据/金句）摊平成「层级 + 文本」
+    """把版式语义（卡片/对比/数据/图/流程/金句）摊平成「层级 + 文本」
 
     网页阅读器与 pptx 用版式渲染，而电子书与课堂讲义是线性 Markdown。
     这里做一次降维，避免这些内容在非版式产物里凭空消失。
     """
     out: list[tuple[int, str]] = []
+    detail = str(slide.get("detail") or "").strip()
+    if detail:
+        out.append((0, detail))
+    example = str(slide.get("example") or "").strip()
+    if example:
+        out.append((0, f"案例：{example}"))
+    chart = slide.get("chart") or {}
+    values = chart.get("values") or []
+    if values:
+        unit = str(chart.get("unit") or "")
+        head = str(chart.get("series_name") or "数据").strip()
+        out.append((0, head))
+        for lb, v in zip(chart.get("labels") or [], values):
+            out.append((1, f"{lb}：{v}{unit}"))
+    for st in slide.get("steps") or []:
+        title = str(st.get("title") or "").strip()
+        desc = str(st.get("desc") or "").strip()
+        if title:
+            out.append((0, f"{title}：{desc}" if desc else title))
     for c in slide.get("cards") or []:
         title = str(c.get("title") or "").strip()
         desc = str(c.get("desc") or "").strip()

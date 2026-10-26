@@ -65,20 +65,136 @@
           <div class="mt-4 h-px bg-surface-200"></div>
 
           <div class="mt-5 flex-1">
-            <!-- 要点 -->
-            <ul v-if="layout === 'bullets'" class="space-y-4">
-              <li v-for="(b, i) in slide.bullets" :key="i"
-                  :class="[b.level >= 1 ? 'ml-10' : '', 'flex items-start gap-3']">
-                <span v-if="b.level >= 1" class="mt-2.5 h-0.5 w-3 bg-indigo-300 flex-shrink-0"></span>
-                <span v-else
-                      class="mt-0.5 h-7 w-7 flex-shrink-0 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-bold flex items-center justify-center">
-                  {{ i + 1 }}
-                </span>
-                <span :class="[b.level >= 1 ? 'text-sm text-surface-600' : 'text-[15px] md:text-base text-surface-800 font-medium', 'leading-relaxed pt-1']">
-                  {{ b.text }}
-                </span>
-              </li>
-            </ul>
+            <!-- 要点 + 「讲透这一页」侧栏 -->
+            <div v-if="layout === 'bullets'"
+                 :class="slide.detail || slide.example ? 'grid gap-4 md:grid-cols-5' : ''">
+              <ul class="space-y-4" :class="slide.detail || slide.example ? 'md:col-span-3' : ''">
+                <li v-for="(b, i) in bulletRows" :key="i"
+                    :class="[b.level >= 1 ? 'ml-8' : '', 'flex items-start gap-3']">
+                  <span v-if="b.level >= 1" class="mt-2.5 h-0.5 w-3 bg-indigo-300 flex-shrink-0"></span>
+                  <span v-else
+                        class="mt-0.5 h-7 w-7 flex-shrink-0 rounded-lg bg-indigo-50 text-indigo-600 text-xs font-bold flex items-center justify-center">
+                    {{ b.num }}
+                  </span>
+                  <span :class="[b.level >= 1 ? 'text-sm text-surface-600' : 'text-[15px] md:text-base text-surface-800 font-medium', 'leading-relaxed pt-1']">
+                    {{ b.text }}
+                  </span>
+                </li>
+              </ul>
+              <div v-if="slide.detail || slide.example" class="md:col-span-2 rounded-xl bg-surface-50 p-4">
+                <p class="text-[11px] font-semibold text-indigo-600">讲透这一页</p>
+                <p v-if="slide.detail" class="mt-2 text-xs text-surface-700 leading-relaxed">{{ slide.detail }}</p>
+                <div v-if="slide.example" class="mt-3 rounded-lg bg-amber-50 p-3">
+                  <p class="text-[10px] font-semibold text-amber-700">案例 / 例题</p>
+                  <p class="mt-1 text-xs text-amber-900 leading-relaxed">{{ slide.example }}</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- 数据图：柱状 / 条形 / 折线 -->
+            <div v-else-if="layout === 'chart' && slide.chart" class="space-y-3">
+              <div v-if="slide.chart.type === 'line'" class="rounded-xl bg-surface-50 p-3">
+                <svg viewBox="0 0 100 46" preserveAspectRatio="none" class="w-full h-48">
+                  <polyline :points="linePoints" fill="none" stroke="#4338CA" stroke-width="1.4" />
+                  <circle v-for="(p, i) in lineDots" :key="i" :cx="p.x" :cy="p.y" r="1.4"
+                          fill="#fff" stroke="#4338CA" stroke-width="1" />
+                </svg>
+                <div class="mt-1 flex text-[10px] text-surface-500">
+                  <span v-for="(l, i) in slide.chart.labels" :key="i" class="flex-1 text-center truncate">{{ l }}</span>
+                </div>
+              </div>
+
+              <div v-else-if="slide.chart.type === 'hbar'" class="space-y-3 rounded-xl bg-surface-50 p-4">
+                <div v-for="(b, i) in chartBars" :key="i" class="space-y-1">
+                  <div class="flex items-baseline justify-between text-[11px]">
+                    <span class="text-surface-700">{{ b.label }}</span>
+                    <span class="font-semibold" :class="b.hot ? 'text-cyan-700' : 'text-indigo-700'">
+                      {{ b.value }}{{ slide.chart.unit || '' }}
+                    </span>
+                  </div>
+                  <div class="h-2.5 rounded bg-white">
+                    <div class="h-2.5 rounded" :class="b.hot ? 'bg-cyan-600' : 'bg-indigo-600'"
+                         :style="{ width: b.pct + '%' }"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else class="rounded-xl bg-surface-50 px-4 pt-4 pb-2">
+                <div class="flex h-48 items-end gap-3">
+                  <div v-for="(b, i) in chartBars" :key="i" class="flex-1 flex flex-col items-center justify-end h-full">
+                    <span class="mb-1 text-[10px] font-semibold" :class="b.hot ? 'text-cyan-700' : 'text-indigo-700'">
+                      {{ b.value }}{{ slide.chart.unit || '' }}
+                    </span>
+                    <div class="w-full max-w-[54px] rounded-t-md" :class="b.hot ? 'bg-cyan-600' : 'bg-indigo-600'"
+                         :style="{ height: b.pct + '%' }"></div>
+                    <span class="mt-1.5 w-full truncate text-center text-[10px] text-surface-500">{{ b.label }}</span>
+                  </div>
+                </div>
+              </div>
+              <p v-if="slide.chart.caption" class="text-[10px] text-surface-400">数据来源：{{ slide.chart.caption }}</p>
+              <p v-if="slide.detail" class="text-xs text-surface-600 leading-relaxed">{{ slide.detail }}</p>
+            </div>
+
+            <!-- 流程 / 机制图 -->
+            <div v-else-if="layout === 'flow'" class="space-y-3">
+              <div v-for="(s, i) in (slide.steps || [])" :key="i" class="flex gap-3">
+                <div class="flex flex-col items-center">
+                  <span class="h-7 w-7 shrink-0 rounded-full bg-indigo-600 text-white text-xs font-bold flex items-center justify-center">
+                    {{ i + 1 }}
+                  </span>
+                  <span v-if="i < (slide.steps || []).length - 1" class="mt-1 w-px flex-1 bg-indigo-200"></span>
+                </div>
+                <div class="pb-3">
+                  <p class="text-sm font-bold text-surface-900">{{ s.title }}</p>
+                  <p v-if="s.desc" class="mt-0.5 text-xs text-surface-600 leading-relaxed">{{ s.desc }}</p>
+                </div>
+              </div>
+              <p v-if="slide.detail" class="text-xs text-surface-600 leading-relaxed">{{ slide.detail }}</p>
+            </div>
+
+            <!-- 图文分栏：左论点 + 右图 -->
+            <div v-else-if="layout === 'split'" class="grid gap-4 md:grid-cols-2">
+              <ul class="space-y-3">
+                <li v-for="(b, i) in bulletRows" :key="i"
+                    :class="[b.level >= 1 ? 'ml-7' : '', 'flex items-start gap-2.5']">
+                  <span v-if="b.level >= 1" class="mt-2 h-0.5 w-3 bg-indigo-300 flex-shrink-0"></span>
+                  <span v-else
+                        class="mt-0.5 h-6 w-6 flex-shrink-0 rounded-lg bg-indigo-50 text-indigo-600 text-[11px] font-bold flex items-center justify-center">
+                    {{ b.num }}
+                  </span>
+                  <span :class="[b.level >= 1 ? 'text-xs text-surface-600' : 'text-sm text-surface-800 font-medium', 'leading-relaxed']">
+                    {{ b.text }}
+                  </span>
+                </li>
+              </ul>
+              <div class="space-y-2">
+                <div v-if="slide.chart" class="space-y-2 rounded-xl bg-surface-50 p-3.5">
+                  <div v-for="(b, i) in chartBars" :key="i" class="space-y-1">
+                    <div class="flex items-baseline justify-between text-[11px]">
+                      <span class="text-surface-700">{{ b.label }}</span>
+                      <span class="font-semibold" :class="b.hot ? 'text-cyan-700' : 'text-indigo-700'">
+                        {{ b.value }}{{ slide.chart.unit || '' }}
+                      </span>
+                    </div>
+                    <div class="h-2 rounded bg-white">
+                      <div class="h-2 rounded" :class="b.hot ? 'bg-cyan-600' : 'bg-indigo-600'"
+                           :style="{ width: b.pct + '%' }"></div>
+                    </div>
+                  </div>
+                </div>
+                <ol v-else-if="slide.steps" class="space-y-2">
+                  <li v-for="(s, i) in slide.steps" :key="i" class="flex gap-2.5 rounded-lg bg-surface-50 p-2.5">
+                    <span class="h-5 w-5 shrink-0 rounded-full bg-indigo-600 text-white text-[10px] font-bold flex items-center justify-center">
+                      {{ i + 1 }}
+                    </span>
+                    <div class="min-w-0">
+                      <p class="text-xs font-semibold text-surface-800">{{ s.title }}</p>
+                      <p v-if="s.desc" class="mt-0.5 text-[11px] text-surface-500 leading-relaxed">{{ s.desc }}</p>
+                    </div>
+                  </li>
+                </ol>
+              </div>
+            </div>
 
             <!-- 卡片 -->
             <div v-else-if="layout === 'cards'" class="grid gap-3 sm:grid-cols-2">
@@ -195,8 +311,42 @@ const layout = computed(() => {
   if (raw === 'metric' && !props.slide?.metrics?.length) return 'bullets'
   if (raw === 'compare' && !props.slide?.compare) return 'bullets'
   if (raw === 'table' && !props.slide?.tables?.length) return 'bullets'
+  if (raw === 'chart' && !props.slide?.chart?.values?.length) return 'bullets'
+  if (raw === 'flow' && !props.slide?.steps?.length) return 'bullets'
+  if (raw === 'split' && !(props.slide?.chart?.values?.length || props.slide?.steps?.length)) return 'bullets'
   return raw || (props.slide?.tables?.length ? 'table' : 'bullets')
 })
+
+/** 主点单独编号（子点不占号），与导出的 pptx 一致 */
+const bulletRows = computed(() => {
+  let n = 0
+  return (props.slide?.bullets || []).map(b => {
+    const main = (b.level || 0) < 1
+    if (main) n += 1
+    return { ...b, num: n }
+  })
+})
+
+const chartBars = computed(() => {
+  const c = props.slide?.chart
+  if (!c?.values?.length) return []
+  const max = Math.max(...c.values, 1)
+  return c.values.map((v, i) => ({
+    value: v,
+    label: c.labels?.[i] ?? '',
+    pct: Math.max(4, Math.round((v / max) * 100)),
+    hot: v === max,
+  }))
+})
+
+const lineDots = computed(() => {
+  const c = props.slide?.chart
+  if (!c?.values?.length) return []
+  const max = Math.max(...c.values, 1)
+  const step = c.values.length > 1 ? 88 / (c.values.length - 1) : 0
+  return c.values.map((v, i) => ({ x: 6 + i * step, y: 42 - (v / max) * 36 }))
+})
+const linePoints = computed(() => lineDots.value.map(p => `${p.x},${p.y}`).join(' '))
 const isDark = computed(() => layout.value === 'cover' || layout.value === 'end')
 const richLayout = computed(() => !!props.slide?.layout)
 const chapterNo = computed(() => String(props.slide?.chapter_no || 0).padStart(2, '0'))

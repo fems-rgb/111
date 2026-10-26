@@ -387,7 +387,8 @@ async def upload_courseware(course_id: int, file: UploadFile = File(...),
 # 版式语义字段：Slide 表不新增列，侧挂在 Courseware.staleness_report 里，
 # 阅读器与导出 pptx 读回后与文本层合并
 _DECK_EXTRA_KEYS = ("layout", "kicker", "lead", "cards", "metrics", "compare",
-                    "quote", "quote_by", "takeaway", "key_question", "chapter_no")
+                    "quote", "quote_by", "takeaway", "key_question", "chapter_no",
+                    "detail", "example", "chart", "steps")
 
 
 def _deck_extras(slides: list[dict]) -> dict[str, dict]:
