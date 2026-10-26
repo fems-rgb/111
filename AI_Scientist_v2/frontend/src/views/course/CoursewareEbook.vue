@@ -22,6 +22,8 @@
         </div>
         <button class="btn" @click="cycleTheme" :title="`主题：${themeLabel}`">{{ themeIcon }}</button>
         <button class="btn" :class="{ on: showPlates }" @click="togglePlates" title="显示每页原版式插图">🖼 插图</button>
+        <button class="btn" :class="{ on: showHlPanel }" @click="showHlPanel = !showHlPanel" title="荧光笔标注列表">🖊 标注{{ highlights.length ? ` ${highlights.length}` : '' }}</button>
+        <button class="btn" :class="{ on: penOn }" @click="togglePen" title="手绘圈画：在书页上直接画线/圈重点">✏️ 圈画</button>
         <button v-if="meta?.is_teacher" class="btn" :class="{ on: showNotes }" @click="toggleNotes" title="显示讲师备注">🗒 备注</button>
         <a class="btn" :href="coursewareApi.ebookUrl(cwId, 'pdf')" target="_blank" rel="noopener" title="下载 PDF">PDF</a>
         <a class="btn" :href="coursewareApi.ebookUrl(cwId, 'epub')" target="_blank" rel="noopener" title="下载 EPUB">EPUB</a>
@@ -196,6 +198,17 @@
               </aside>
 
               <p v-if="p.risk_score >= 0.4" class="risk">⚠ 本页内容可能陈旧：{{ p.ai_suggestion || p.ai_reason }}</p>
+
+              <!-- 手绘圈画层（笔迹按页存，随书保存） -->
+              <svg v-if="penOn || strokes[String(p.slide_index)]?.length" class="ink" :class="{ drawing: penOn }"
+                   viewBox="0 0 100 100" preserveAspectRatio="none"
+                   @pointerdown="penDown($event, p.slide_index)" @pointermove="penMove"
+                   @pointerup="penUp" @pointerleave="penUp" @pointercancel="penUp">
+                <polyline v-for="(s, si) in (strokes[String(p.slide_index)] || [])" :key="si"
+                          :points="s.points.map((pt) => pt.join(',')).join(' ')"
+                          fill="none" :stroke="s.color" :stroke-width="s.width"
+                          stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+              </svg>
             </section>
           </article>
 
@@ -219,11 +232,51 @@
 
           <footer class="foot">
             《{{ meta.title }}》 · {{ meta.course_title }} · 共 {{ totalPages }} 节
-            <span class="foot-tip">快捷键 ← → 翻节 · 点击右上「PDF / EPUB」可下载到本地</span>
+            <span class="foot-tip">选中文字可荧光笔标注 · ✏️ 圈画可手绘 · 快捷键 ← → 翻节</span>
           </footer>
         </template>
       </main>
     </div>
+
+    <!-- 标注列表（只有荧光笔结果） -->
+    <aside v-if="showHlPanel" class="eb-hl-panel">
+      <div class="eb-hl-head">
+        <p>标注 · {{ highlights.length }}</p>
+        <button @click="showHlPanel = false">✕</button>
+      </div>
+      <div class="eb-hl-list">
+        <p v-if="!highlights.length" class="eb-hl-empty">在正文里选中文字，会弹出荧光笔工具条；高亮会随书保存。</p>
+        <div v-for="h in sortedHighlights" :key="h.id" class="eb-hl-item">
+          <span class="eb-hl-dot" :style="{ background: hlBg(h.color) }"></span>
+          <button class="eb-hl-text" :title="`跳到第 ${h.page + 1} 页`" @click="jumpToHl(h)">{{ h.text }}</button>
+          <button class="eb-hl-del" title="删除这条标注" @click="removeHl(h.id)">×</button>
+        </div>
+      </div>
+      <button v-if="highlights.length" class="eb-hl-clear" @click="clearHl">清除全部标注</button>
+    </aside>
+
+    <!-- 圈画工具条 -->
+    <div v-if="penOn" class="eb-pen-bar">
+      <span class="eb-pen-label">圈画</span>
+      <button v-for="c in PEN_COLORS" :key="c" class="eb-pen-color" :class="{ on: penColor === c }"
+              :style="{ background: c }" @click="penColor = c"></button>
+      <button class="eb-pen-btn" :class="{ on: penWidth === 2.5 }" @click="penWidth = 2.5">细</button>
+      <button class="eb-pen-btn" :class="{ on: penWidth === 5 }" @click="penWidth = 5">粗</button>
+      <button class="eb-pen-btn" @click="undoInk">撤销</button>
+      <button class="eb-pen-btn" @click="clearInk">清本页</button>
+      <button class="eb-pen-btn primary" @click="penOn = false">完成</button>
+    </div>
+
+    <!-- 选中文字后的荧光笔菜单（渲染到 body，避免被书页层叠上下文裁剪） -->
+    <Teleport to="body">
+      <div v-if="hlMenu.show" class="eb-hl-menu" :style="{ left: `${hlMenu.x}px`, top: `${hlMenu.y}px` }"
+           @mousedown.prevent>
+        <span class="eb-hl-menu-label">荧光笔</span>
+        <button v-for="c in HL_COLORS" :key="c.key" class="eb-hl-swatch" :style="{ background: c.bg }"
+                :title="c.label" @click="addHighlight(c.key)"></button>
+        <button class="eb-hl-menu-x" @click="closeHlMenu">✕</button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -254,6 +307,214 @@ const themeIcon = computed(() => ({ paper: '☀️', sepia: '🌿', night: '🌙
 const activePage = ref(0)
 const activeChapter = ref(1)
 let observer: IntersectionObserver | null = null
+
+// ── 圈画：荧光笔标注 + 手绘 ────────────────────────────────
+type HlColor = 'yellow' | 'green' | 'pink' | 'blue'
+interface Hl { id: string; page: number; start: number; end: number; color: HlColor; text: string; at: number }
+interface InkStroke { color: string; width: number; points: [number, number][] }
+
+const HL_COLORS: { key: HlColor; label: string; bg: string }[] = [
+  { key: 'yellow', label: '黄色荧光笔', bg: '#fde68a' },
+  { key: 'green', label: '绿色荧光笔', bg: '#bbf7d0' },
+  { key: 'pink', label: '粉色荧光笔', bg: '#fbcfe8' },
+  { key: 'blue', label: '蓝色荧光笔', bg: '#bfdbfe' },
+]
+const PEN_COLORS = ['#e11d48', '#2563eb', '#059669']
+
+const highlights = ref<Hl[]>([])
+const showHlPanel = ref(false)
+const hlMenu = ref({ show: false, x: 0, y: 0, page: 0, start: 0, end: 0, text: '' })
+const penOn = ref(false)
+const penColor = ref(PEN_COLORS[0])
+const penWidth = ref(2.5)
+const strokes = ref<Record<string, InkStroke[]>>({})
+let drawing: { key: string; stroke: InkStroke } | null = null
+
+const sortedHighlights = computed(() =>
+  [...highlights.value].sort((a, b) => a.page - b.page || a.start - b.start))
+
+function hlBg(c: HlColor) { return HL_COLORS.find((x) => x.key === c)?.bg || '#fde68a' }
+
+function saveHl() { localStorage.setItem(`ebook_hl_${cwId.value}`, JSON.stringify(highlights.value)) }
+function saveInk() { localStorage.setItem(`ebook_ink_${cwId.value}`, JSON.stringify(strokes.value)) }
+
+/** 页内字符偏移：把 Range 的两端换算成相对页面文本的序号，重渲染后还能复原 */
+function offsetWithin(root: HTMLElement, node: Node, offset: number) {
+  try {
+    const r = document.createRange()
+    r.selectNodeContents(root)
+    r.setEnd(node, offset)
+    return r.toString().length
+  } catch { return 0 }
+}
+
+function rangeFromOffsets(root: HTMLElement, start: number, end: number): Range | null {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let pos = 0
+  let startNode: Text | null = null
+  let endNode: Text | null = null
+  let startOffset = 0
+  let endOffset = 0
+  let n: Node | null
+  while ((n = walker.nextNode())) {
+    const t = n as Text
+    if (!startNode && pos + t.data.length >= start) {
+      startNode = t
+      startOffset = start - pos
+    }
+    if (pos + t.data.length >= end) {
+      endNode = t
+      endOffset = end - pos
+      break
+    }
+    pos += t.data.length
+  }
+  if (!startNode || !endNode) return null
+  const r = document.createRange()
+  r.setStart(startNode, Math.max(0, Math.min(startOffset, startNode.data.length)))
+  r.setEnd(endNode, Math.max(0, Math.min(endOffset, endNode.data.length)))
+  return r
+}
+
+/** 用 CSS Custom Highlight 上色：不改 DOM，字号/主题/插图切换后范围依然有效 */
+function applyHighlights() {
+  const cssAny = window.CSS as any
+  if (!cssAny?.highlights || typeof (window as any).Highlight === 'undefined') return
+  for (const c of HL_COLORS) cssAny.highlights.delete(`eb-${c.key}`)
+  for (const c of HL_COLORS) {
+    const items = highlights.value.filter((h) => h.color === c.key)
+    if (!items.length) continue
+    const hi = new (window as any).Highlight()
+    for (const h of items) {
+      const el = document.getElementById(`pg-${h.page}`)
+      const r = el ? rangeFromOffsets(el, h.start, h.end) : null
+      if (r) hi.add(r)
+    }
+    cssAny.highlights.set(`eb-${c.key}`, hi)
+  }
+}
+
+function onTextSelect() {
+  if (penOn.value) return
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { hlMenu.value.show = false; return }
+  const range = sel.getRangeAt(0)
+  const startEl = (range.startContainer.nodeType === 1 ? range.startContainer as Element : range.startContainer.parentElement)
+  const pageEl = startEl?.closest('[data-page]') as HTMLElement | null
+  if (!pageEl) { hlMenu.value.show = false; return }
+  const endEl = (range.endContainer.nodeType === 1 ? range.endContainer as Element : range.endContainer.parentElement)
+  if (endEl?.closest('[data-page]') !== pageEl) { hlMenu.value.show = false; return }
+  const start = offsetWithin(pageEl, range.startContainer, range.startOffset)
+  const end = offsetWithin(pageEl, range.endContainer, range.endOffset)
+  if (end - start < 2) { hlMenu.value.show = false; return }
+  const rect = range.getBoundingClientRect()
+  hlMenu.value = {
+    show: true,
+    x: Math.min(Math.max(12, rect.left + rect.width / 2 - 100), window.innerWidth - 220),
+    y: Math.min(rect.bottom + 10, window.innerHeight - 56),
+    page: Number(pageEl.dataset.page),
+    start,
+    end,
+    text: sel.toString().trim().replace(/\s+/g, ' ').slice(0, 160),
+  }
+}
+
+function addHighlight(color: HlColor) {
+  const m = hlMenu.value
+  if (!m.show) return
+  highlights.value.push({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    page: m.page, start: m.start, end: m.end, color, text: m.text, at: Date.now(),
+  })
+  saveHl()
+  applyHighlights()
+  closeHlMenu()
+}
+
+function closeHlMenu() {
+  hlMenu.value.show = false
+  window.getSelection()?.removeAllRanges()
+}
+
+function removeHl(id: string) {
+  highlights.value = highlights.value.filter((h) => h.id !== id)
+  saveHl()
+  applyHighlights()
+}
+
+function clearHl() {
+  if (!confirm('清除本书全部荧光笔标注？')) return
+  highlights.value = []
+  saveHl()
+  applyHighlights()
+}
+
+function jumpToHl(h: Hl) {
+  scrollTo(`pg-${h.page}`)
+  if (!wide.value) showHlPanel.value = false
+}
+
+function togglePen() {
+  penOn.value = !penOn.value
+  hlMenu.value.show = false
+  if (penOn.value) showHlPanel.value = false
+}
+
+function penPoint(e: PointerEvent, el: Element): [number, number] {
+  const r = el.getBoundingClientRect()
+  const x = r.width ? ((e.clientX - r.left) / r.width) * 100 : 0
+  const y = r.height ? ((e.clientY - r.top) / r.height) * 100 : 0
+  return [Math.round(Math.max(0, Math.min(100, x)) * 10) / 10, Math.round(Math.max(0, Math.min(100, y)) * 10) / 10]
+}
+
+function penDown(e: PointerEvent, page: number) {
+  if (!penOn.value) return
+  const svg = e.currentTarget as Element
+  const pageEl = svg.closest('.page') as HTMLElement | null
+  if (!pageEl) return
+  ;(svg as any).setPointerCapture?.(e.pointerId)
+  const stroke: InkStroke = { color: penColor.value, width: penWidth.value, points: [penPoint(e, pageEl)] }
+  const key = String(page)
+  if (!strokes.value[key]) strokes.value[key] = []
+  strokes.value[key].push(stroke)
+  drawing = { key, stroke }
+}
+
+function penMove(e: PointerEvent) {
+  if (!drawing) return
+  const svg = e.currentTarget as Element
+  const pageEl = svg.closest('.page') as HTMLElement | null
+  if (!pageEl) return
+  drawing.stroke.points.push(penPoint(e, pageEl))
+}
+
+function penUp() {
+  if (!drawing) return
+  const list = strokes.value[drawing.key] || []
+  // 点一下不画线，避免误触留下小圆点
+  if (drawing.stroke.points.length < 2) {
+    const i = list.indexOf(drawing.stroke)
+    if (i >= 0) list.splice(i, 1)
+  }
+  drawing = null
+  saveInk()
+}
+
+function undoInk() {
+  const key = String(activePage.value)
+  const list = strokes.value[key] || []
+  if (!list.length) return
+  list.pop()
+  if (!list.length) delete strokes.value[key]
+  saveInk()
+}
+
+function clearInk() {
+  const key = String(activePage.value)
+  if (!strokes.value[key]?.length) return
+  delete strokes.value[key]
+  saveInk()
+}
 
 const coverSlide = computed(() => meta.value?.slides.find((s) => s.layout === 'cover'))
 const coverLead = computed(() => {
@@ -401,6 +662,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'Escape' && !wide.value) tocOpen.value = false
 }
 function onResize() { wide.value = window.innerWidth >= 1180 }
+function hideHlMenu() { if (hlMenu.value.show) hlMenu.value.show = false }
 
 // ── 操作 ────────────────────────────────────────────────────
 function bumpFont(d: number) {
@@ -414,8 +676,13 @@ function cycleTheme() {
 function togglePlates() {
   showPlates.value = !showPlates.value
   localStorage.setItem('ebook_plates', showPlates.value ? '1' : '0')
+  // 插图会插入 <figure>，重算一遍标注范围
+  nextTick(applyHighlights)
 }
-function toggleNotes() { showNotes.value = !showNotes.value }
+function toggleNotes() {
+  showNotes.value = !showNotes.value
+  nextTick(applyHighlights)
+}
 function goBack() { router.push(courseId.value ? `/course/${courseId.value}` : '/courses') }
 function toSlides() {
   router.push({ name: 'CoursewareReader', params: { courseId: courseId.value, cwId: cwId.value } })
@@ -430,6 +697,8 @@ watch(activePage, () => {
 onMounted(async () => {
   window.addEventListener('keydown', onKey)
   window.addEventListener('resize', onResize)
+  window.addEventListener('mouseup', onTextSelect)
+  window.addEventListener('scroll', hideHlMenu, { passive: true })
   try {
     meta.value = await coursewareApi.detail(cwId.value).then((r) => r.data)
     if (meta.value?.is_teacher) showNotes.value = localStorage.getItem('ebook_notes') === '1'
@@ -438,8 +707,14 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
+  // 标注与笔迹都是本书本地保存，换设备不会同步
+  try {
+    highlights.value = JSON.parse(localStorage.getItem(`ebook_hl_${cwId.value}`) || '[]')
+    strokes.value = JSON.parse(localStorage.getItem(`ebook_ink_${cwId.value}`) || '{}')
+  } catch { highlights.value = []; strokes.value = {} }
   await nextTick()
   observePages()
+  applyHighlights()
   // 恢复上次阅读位置
   const at = Number(localStorage.getItem(`ebook_at_${cwId.value}`) || 0)
   if (at > 0) setTimeout(() => scrollTo(`pg-${at}`), 120)
@@ -448,7 +723,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('mouseup', onTextSelect)
+  window.removeEventListener('scroll', hideHlMenu)
   observer?.disconnect()
+  const cssAny = window.CSS as any
+  if (cssAny?.highlights) for (const c of HL_COLORS) cssAny.highlights.delete(`eb-${c.key}`)
   localStorage.setItem('ebook_notes', showNotes.value ? '1' : '0')
 })
 </script>
@@ -530,7 +809,7 @@ a.btn { text-decoration: none; }
 .ch-head h2 { font-size: clamp(22px, 3vw, 30px); line-height: 1.4; margin: 12px 0 10px; }
 .ch-question { font-size: 13px; color: var(--muted); padding-left: 12px; border-left: 2px solid var(--accent); line-height: 1.8; }
 
-.page { padding: 34px 0 38px; scroll-margin-top: 74px; border-bottom: 1px dashed var(--line); }
+.page { position: relative; padding: 34px 0 38px; scroll-margin-top: 74px; border-bottom: 1px dashed var(--line); }
 .page:last-child { border-bottom: none; }
 .eyebrow { font-size: 11px; letter-spacing: .14em; color: var(--muted); font-family: system-ui, "Microsoft YaHei", sans-serif; }
 .page-title { display: flex; align-items: baseline; gap: 10px; font-size: calc(var(--fs) * 1.3); line-height: 1.5; margin: 8px 0 12px; font-weight: 700; }
@@ -626,5 +905,65 @@ a.btn { text-decoration: none; }
   .cover { padding: 56px 0 44px; }
   .compare { grid-template-columns: 1fr; }
   .chart-row { grid-template-columns: 66px 1fr 44px; }
+}
+</style>
+
+<!-- 圈画/标注必须放在全局样式里：Teleport 到 body 的菜单不受 scoped 约束，
+     荧光笔用 CSS Custom Highlight 上色（不改 DOM，重渲染/切字号也不会丢） -->
+<style>
+::highlight(eb-yellow) { background-color: #fde68a; }
+::highlight(eb-green) { background-color: #bbf7d0; }
+::highlight(eb-pink) { background-color: #fbcfe8; }
+::highlight(eb-blue) { background-color: #bfdbfe; }
+
+.ink { position: absolute; inset: 0; z-index: 3; pointer-events: none; overflow: visible; }
+.ink.drawing { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.page:has(.ink.drawing) { user-select: none; }
+
+.eb-hl-menu {
+  position: fixed; z-index: 90; display: flex; align-items: center; gap: 6px;
+  padding: 7px 8px; border-radius: 10px; background: #fff;
+  border: 1px solid #e5e7eb; box-shadow: 0 10px 30px rgba(15, 23, 42, .18);
+  font-family: system-ui, "Microsoft YaHei", sans-serif;
+}
+.eb-hl-menu-label { font-size: 11px; color: #6b7280; margin-right: 2px; }
+.eb-hl-swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.eb-hl-swatch:hover { transform: scale(1.12); }
+.eb-hl-menu-x { font-size: 12px; color: #9ca3af; padding: 2px 4px; cursor: pointer; }
+
+.eb-hl-panel {
+  position: fixed; right: 16px; top: 64px; bottom: 16px; width: 300px; z-index: 60;
+  display: flex; flex-direction: column; background: #fff; border: 1px solid #e5e7eb;
+  border-radius: 12px; box-shadow: 0 10px 30px rgba(15, 23, 42, .15);
+  font-family: system-ui, "Microsoft YaHei", sans-serif;
+}
+.eb-hl-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; font-size: 12px; font-weight: 600; color: #374151; }
+.eb-hl-list { flex: 1; overflow-y: auto; padding: 8px; }
+.eb-hl-item { display: flex; align-items: flex-start; gap: 6px; padding: 6px; border-radius: 8px; }
+.eb-hl-item:hover { background: #f9fafb; }
+.eb-hl-dot { width: 4px; align-self: stretch; border-radius: 999px; flex-shrink: 0; }
+.eb-hl-text { flex: 1; text-align: left; font-size: 12px; line-height: 1.6; color: #374151; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.eb-hl-del { color: #9ca3af; font-size: 14px; padding: 0 4px; flex-shrink: 0; }
+.eb-hl-del:hover { color: #dc2626; }
+.eb-hl-clear { margin: 8px 12px 12px; padding: 7px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 12px; }
+.eb-hl-empty { font-size: 12px; color: #9ca3af; line-height: 1.8; padding: 12px; }
+
+.eb-pen-bar {
+  position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 70;
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+  background: #111827; color: #f9fafb; box-shadow: 0 12px 32px rgba(0, 0, 0, .28);
+  font-family: system-ui, "Microsoft YaHei", sans-serif;
+}
+.eb-pen-label { font-size: 11px; color: #9ca3af; }
+.eb-pen-color { width: 18px; height: 18px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.eb-pen-color.on { border-color: #fff; box-shadow: 0 0 0 2px rgba(255, 255, 255, .25); }
+.eb-pen-btn { font-size: 11px; padding: 4px 9px; border-radius: 999px; background: #1f2937; color: #e5e7eb; cursor: pointer; }
+.eb-pen-btn:hover { background: #374151; }
+.eb-pen-btn.on { background: #4b5563; color: #fff; }
+.eb-pen-btn.primary { background: #4f46e5; color: #fff; }
+
+@media (max-width: 760px) {
+  .eb-hl-panel { left: 12px; right: 12px; width: auto; top: auto; height: 45vh; }
+  .eb-pen-bar { gap: 6px; padding: 7px 10px; }
 }
 </style>

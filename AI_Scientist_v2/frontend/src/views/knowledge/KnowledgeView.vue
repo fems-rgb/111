@@ -248,14 +248,18 @@
     <!-- 文档预览弹窗 -->
     <Teleport to="body">
       <div v-if="previewVisible" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" @click.self="previewVisible = false">
-        <div class="bg-white rounded-2xl shadow-2xl w-[90vw] h-[85vh] flex flex-col overflow-hidden">
-          <div class="flex items-center justify-between px-6 py-4 border-b border-surface-200">
+        <div class="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+             :class="showDocReader ? 'w-[94vw] h-[90vh]' : 'w-[90vw] h-[85vh]'">
+          <div v-if="!showDocReader" class="flex items-center justify-between px-6 py-4 border-b border-surface-200">
             <h3 class="font-semibold text-surface-800 truncate">{{ previewTitle }}</h3>
             <button class="text-surface-400 hover:text-surface-700 text-xl" @click="previewVisible = false">&times;</button>
           </div>
-          <div class="flex-1 overflow-auto p-6">
+          <div class="flex-1 min-h-0" :class="showDocReader ? '' : 'overflow-auto p-6'">
+            <!-- ✅ 文本类资料：电子书式阅读（封面 + 章节目录 + 排版本） -->
+            <EbookDocPreview v-if="showDocReader" :title="previewTitle" :content="previewContent"
+                             closable @close="previewVisible = false" />
             <!-- ✅ 图片预览 -->
-            <div v-if="previewIsImage" class="flex items-center justify-center h-full">
+            <div v-else-if="previewIsImage" class="flex items-center justify-center h-full">
               <img :src="previewImageUrl" class="max-w-full max-h-full object-contain rounded-lg shadow-lg" />
             </div>
             <!-- ✅ PDF 预览 -->
@@ -297,8 +301,7 @@
                 ⚠️ 该文献暂无可跳转的原文链接
               </div>
             </div>
-            <!-- 文本预览 -->
-            <pre v-else-if="previewContent" class="whitespace-pre-wrap text-sm text-surface-700 dark:text-surface-200 font-mono leading-relaxed">{{ previewContent }}</pre>
+            <!-- 文本预览已改用 EbookDocPreview（上面），这里不再用 <pre> 平铺全文 -->
             <div v-else class="flex items-center justify-center h-full text-surface-400">
               <span v-if="previewLoading" class="inline-block w-5 h-5 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mr-2"></span>
               {{ previewLoading ? '加载中...' : '该文档类型暂不支持预览' }}
@@ -316,6 +319,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import type { ExternalPaper } from '@/api/modules/knowledge'
 import { knowledgeApi, type KnowledgeDoc } from '@/api/modules/knowledge'
+import EbookDocPreview from '@/components/common/EbookDocPreview.vue'
 import { useAppStore } from '@/stores/app'
 
 const router = useRouter()
@@ -482,6 +486,9 @@ const previewImageUrl = ref('')
 const previewPdfUrl = ref('')
 const previewIsMeta = ref(false)
 const previewMetaData = ref<any>(null)
+/** 文本类资料用电子书阅读器展示（图片/PDF/文献元信息仍用原预览） */
+const showDocReader = computed(() =>
+  !!previewContent.value && !previewIsImage.value && !previewIsPdf.value && !previewIsMeta.value)
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 // ✅ 扩展支持的文件类型
@@ -649,11 +656,12 @@ const previewDoc = async (doc: KnowledgeDoc) => {
   try {
     const res = await knowledgeApi.getDocContent(doc.id)
     const data = res.data as any
-    if (data?.type === 'meta') {
+    // ★ 有正文优先走电子书阅读器（含课件电子化写入的虚拟文档）
+    if (data?.content) {
+      previewContent.value = data.content
+    } else if (data?.type === 'meta') {
       previewIsMeta.value = true
       previewMetaData.value = data
-    } else if (data?.content) {
-      previewContent.value = data.content
     } else if (data?.type === 'binary') {
       previewContent.value = data.message || `二进制文件 (${data.size} bytes)，请下载后查看`
     } else {

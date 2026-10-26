@@ -170,6 +170,16 @@ async def preview_document(doc_id: int, db: AsyncSession = Depends(get_db), curr
     # ★ 无物理文件的文档（如AI生成的.meta记录），返回结构化数据
     if not doc.saved_name or doc.file_ext == ".meta":
         sd = doc.structured_data or {}
+        # 虚拟文档（课件电子化等）：正文存在 structured_data.content 里，有正文时按文本返回，前端可做电子书式阅读
+        body = sd.get("content")
+        if isinstance(body, str) and len(body.strip()) >= 80:
+            return {
+                "type": "text",
+                "content": body,
+                "filename": doc.filename,
+                "title": doc.filename,
+                "summary": doc.summary or "",
+            }
         return {
             "type": "meta",
             "filename": doc.filename,
