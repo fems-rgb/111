@@ -1,0 +1,67 @@
+/* AI 通识课三个页面共用的少量样式。
+   刻意用 g- 前缀而不是 .input/.label，避免和 Element Plus 或其它模块的通用类撞名。
+   这是普通 CSS（非 scoped），所以直接用后代选择器，不用 :deep()。 */
+
+.g-input {
+  @apply px-3 py-2 text-sm border border-surface-200 rounded-lg bg-white outline-none transition-colors;
+}
+.g-input:focus {
+  @apply border-primary-400 ring-2 ring-primary-100;
+}
+.g-input::placeholder {
+  @apply text-surface-400;
+}
+
+.g-label {
+  @apply block text-xs font-medium text-surface-600 mb-1.5;
+}
+
+.g-badge {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] bg-surface-100 text-surface-600;
+}
+
+.g-badge-warn {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] bg-amber-100 text-amber-700;
+}
+
+.g-badge-ok {
+  @apply inline-flex items-center px-2 py-0.5 rounded-md text-[11px] bg-accent-100 text-accent-700;
+}
+
+/* 正文排版：包一层 .g-read 覆写 MarkdownView 的 .prose 默认值（行高更宽、标题更克制） */
+.g-read .prose {
+  @apply text-[15.5px] leading-[1.95] text-surface-700 max-w-none;
+}
+.g-read .prose h1 {
+  @apply text-xl font-bold text-surface-900 mt-0 mb-4;
+}
+.g-read .prose h2 {
+  @apply text-lg font-bold text-surface-900 mt-8 mb-3 pb-1.5 border-b border-surface-100;
+}
+.g-read .prose h3 {
+  @apply text-base font-semibold text-surface-900 mt-6 mb-2;
+}
+.g-read .prose p {
+  @apply mb-4;
+}
+.g-read .prose strong {
+  @apply text-surface-900 font-semibold;
+}
+.g-read .prose ul {
+  @apply list-disc pl-6 mb-4 space-y-1.5;
+}
+.g-read .prose ol {
+  @apply list-decimal pl-6 mb-4 space-y-1.5;
+}
+.g-read .prose blockquote {
+  @apply border-l-[3px] border-primary-300 pl-4 my-5 text-surface-600 bg-surface-50 py-2 pr-3 rounded-r-lg not-italic;
+}
+.g-read .prose code {
+  @apply bg-surface-100 px-1.5 py-0.5 rounded text-[13px] font-mono text-primary-700;
+}
+.g-read .prose pre {
+  @apply bg-surface-800 text-surface-100 p-4 rounded-xl overflow-x-auto mb-4 text-[13px];
+}
+.g-read .prose pre code {
+  @apply bg-transparent text-surface-100 p-0;
+}

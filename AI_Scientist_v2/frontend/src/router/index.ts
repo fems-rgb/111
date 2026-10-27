@@ -26,6 +26,10 @@ const router = createRouter({
         { path: 'course/:id', name: 'CourseDetail', component: () => import('@/views/course/CourseDetail.vue'), meta: { title: '课程详情' } },
         { path: 'course/:courseId/read/:cwId', name: 'CoursewareReader', component: () => import('@/views/course/CoursewareReader.vue'), meta: { title: '课件阅读' } },
         { path: 'course/:courseId/read/:cwId/ebook', name: 'CoursewareEbook', component: () => import('@/views/course/CoursewareEbook.vue'), meta: { title: '在线电子书' } },
+        // === AI 通识课（图文微课 / 随堂自测 / AI 助教） ===
+        { path: 'general', name: 'GeneralHome', component: () => import('@/views/general/GeneralHome.vue'), meta: { title: 'AI 通识课' } },
+        { path: 'general/lesson/:lid', name: 'GeneralLesson', component: () => import('@/views/general/GeneralLessonView.vue'), meta: { title: '通识课学习' } },
+        { path: 'general/:id', name: 'GeneralCourse', component: () => import('@/views/general/GeneralCourseView.vue'), meta: { title: '通识课详情' } },
         { path: 'settings', name: 'Settings', component: () => import('@/views/settings/SettingsView.vue') },
         { path: 'admin', name: 'Admin', component: () => import('@/views/admin/AdminView.vue'), meta: { requiresAdmin: true } },
       ]

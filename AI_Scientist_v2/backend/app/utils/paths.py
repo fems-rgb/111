@@ -45,11 +45,13 @@ KINDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "agent_output":   ("agent_output",   ("uploads",)),
     "tmp":            ("tmp/external",   ("uploads",)),
     "cache":          ("cache/literature", ("output",)),
+    "general":        ("general",        ("uploads",)),
 }
 
 # 启动时预建的骨架目录（保证「地方固定」开箱即存在）
 _SKELETON = ("reports", "questions", "deliverables", "pdf", "experiments",
-             "courseware", "exports", "agent_output", "tmp/external", "cache/literature")
+             "courseware", "exports", "agent_output", "tmp/external", "cache/literature",
+             "general")
 
 
 def _safe_parts(parts: tuple, kind: str) -> list[str]:

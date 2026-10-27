@@ -80,6 +80,8 @@ const navItems = computed(() => {
     { path: '/chat', icon: '💬', label: 'AI对话' },
     { path: '/knowledge', icon: '📚', label: '资料库' },
     { path: '/courses', icon: '🎓', label: '课程中心', badge: staleCourses.value > 0 },
+    // 通识课：面向所有人（不只师生），所以不限制角色
+    { path: '/general', icon: '🌱', label: 'AI 通识课' },
     // 课件工坊：一级入口，避免“生成 PPT”藏在课程详情弹窗里找不到
     ...(canTeach ? [{ path: '/courseware-studio', icon: '📽️', label: 'AI 生成 PPT', badge: false }] : []),
     { path: '/questions', icon: '🔬', label: '科学问题题库' },

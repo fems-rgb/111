@@ -21,7 +21,7 @@ from app.database.session import engine, Base
 from app.scheduler import register_pipeline_jobs
 from app.observability.logger import setup_logging
 from app.core.exceptions import global_exception_handler, AppException
-from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents, courses
+from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents, courses, general_courses
 from app.api.v1.experiment_lab import router as experiment_lab_router
 
 # 前端构建产物路径（优先 frontend/dist 开发模式，后补 backend/static 预构建分发）
@@ -63,6 +63,10 @@ async def lifespan(app: FastAPI):
     from app.database.session import AsyncSessionLocal as _ASL
     async with _ASL() as _db:
         await seed_builtin_templates(_db)
+    # 通识课种子：表为空时铺一门已发布示例课，保证登录即有内容可学
+    from app.api.v1.general_seed import seed_general_courses as _seed_gc
+    async with _ASL() as _db:
+        await _seed_gc(_db)
     yield
 
 app = FastAPI(
@@ -106,6 +110,8 @@ app.include_router(experiment_lab_router, prefix="/api/v1")
 # ── 课程中心（开课/选课/课件电子化/AI 更新） ──
 app.include_router(courses.router, prefix="/api/v1")
 app.include_router(courses.cw_router, prefix="/api/v1")
+# ── AI 通识课（人人都要学的图文微课） ──
+app.include_router(general_courses.router, prefix="/api/v1")
 # [FIXED] duplicate multimodal router removed
 
 @app.get("/api/health")

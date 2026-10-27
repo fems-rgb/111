@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from sqlalchemy import (Boolean,
     Column, Integer, String, Text, DateTime, Float,
-    ForeignKey, JSON, Enum as SAEnum
+    ForeignKey, JSON, Enum as SAEnum, UniqueConstraint
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -650,4 +650,69 @@ class GenerateJob(Base):
     result = Column(JSON, default=dict)                      # 完成时放 _build_deck 返回值
     error = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+# ════════════════════════════════════════════════════════════
+#  AI 通识课（面向非专业学习者的图文微课）
+#  独立建表，不动现有 Course/Courseware，避免影响课程中心与课件工坊
+# ════════════════════════════════════════════════════════════
+
+class GeneralCourse(Base):
+    """一门通识课：课程广场的卡片 + 章节容器"""
+    __tablename__ = "general_courses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String(200), nullable=False)
+    subtitle = Column(String(300), default="")
+    emoji = Column(String(16), default="🌱")
+    category = Column(String(50), default="AI 入门", index=True)
+    level = Column(String(20), default="零基础")          # 零基础 / 进阶 / 专题
+    summary = Column(Text, default="")
+    tags = Column(JSON, default=list)
+    cover_image = Column(String(300), default="")            # 封面插画（generated/general/ 下的相对路径）
+    status = Column(String(20), default="draft", index=True)   # draft / published
+    author_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    lesson_count = Column(Integer, default=0)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    lessons = relationship("GeneralLesson", back_populates="course",
+                           cascade="all, delete-orphan",
+                           order_by="GeneralLesson.order_index")
+
+
+class GeneralLesson(Base):
+    """一节课：Markdown 正文（电子书渲染）+ 随堂自测"""
+    __tablename__ = "general_lessons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    course_id = Column(Integer, ForeignKey("general_courses.id", ondelete="CASCADE"),
+                       nullable=False, index=True)
+    order_index = Column(Integer, default=0, index=True)
+    title = Column(String(200), nullable=False)
+    kicker = Column(String(100), default="")
+    summary = Column(Text, default="")
+    content = Column(Text, default="")                    # Markdown 正文
+    quiz = Column(JSON, default=list)                     # [{q,options,answer,explain}]
+    figure = Column(JSON, default=list)                   # 图解块：[{kind,...}]，前端矢量渲染
+    cover_image = Column(String(300), default="")         # 本节插画（generated/general/ 下的相对路径）
+    minutes = Column(Integer, default=6)
+    status = Column(String(20), default="pending")        # pending / ready
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    course = relationship("GeneralCourse", back_populates="lessons")
+
+
+class GeneralProgress(Base):
+    """学习进度：按 (user, lesson) 唯一，用于课程卡片完成度与续学定位"""
+    __tablename__ = "general_progress"
+    __table_args__ = (UniqueConstraint("user_id", "lesson_id", name="uq_gp_user_lesson"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_id = Column(Integer, ForeignKey("general_courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    lesson_id = Column(Integer, ForeignKey("general_lessons.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(20), default="learning")       # learning / done
+    percent = Column(Integer, default=0)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
