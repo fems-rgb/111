@@ -5,6 +5,7 @@
 > 挑战杯「揭榜挂帅」专项赛参赛作品 · 题目编号 **XH-202619**
 > 发榜单位：浙江阿里巴巴云计算有限公司
 > 基座模型：通义千问 Qwen（qwen-max / qwen-plus / qwen-vl-max）· 调用平台：阿里云百炼（DashScope）
+> 多供应商可选：DeepSeek / Kimi（Moonshot）/ 智谱 GLM / 任意 OpenAI 兼容端点 —— 配了对应密钥即在顶栏模型切换器与所有生成入口可选
 
 ---
 
@@ -23,8 +24,13 @@
 | 技能市场 | 🛠️ 技能市场 | `/skills` | 内置 / 自主 prompt / git 与网络搜集的 webhook 外接技能 | `skills.py` |
 | 自动化流水线 | ⚡ 自动化流水线 | `/automation` | 多 Agent 编排、定时触发、反馈迭代、断点续跑（retry-from） | `automation.py` `agents/orchestrator.py` |
 | Agent 中心 | 🤖 Agent中心 | `/agents` | 单 Agent Playground 调试 | `agents.py` |
-| 追踪 / 成本 | 🔍 追踪回放 · 💵 成本分析 | `/traces` `/cost` | Span 链路回放与 Token 花费统计 | `observability.py` |
+| 追踪 / 成本 | 🔍 追踪回放 · 💵 成本分析 | `/traces` `/cost` | Span 链路回放；Token 花费统计 + 30 天历史 + 本月费用线性预测 | `observability.py` `services/prediction.py` |
+| **计划中心** | 🗒️ 计划中心 | `/plans` | 个人 / 团队(项目) / 流水线 / AI 自主 四形态计划；AI 按主题拆解；流水线计划一键转 Pipeline 执行 | `plans.py` |
+| **AI 通识课** | 🌐 AI 通识课 | `/general` | 图文微课 · 随堂自测 · AI 助教 · 课程知识图谱 · 学习进度预测 | `general_courses.py` |
+| **知识图谱** | （四处内嵌） | 通识课详情 / 课程详情 / 资料库 / 项目详情 | 一张表四个 scope，AI 抽取 or 零 LLM 组装，自研 SVG 力导向交互 | `graphs.py` |
 | 管理后台 | 🛡️ 管理后台 | `/admin` | 用户、配额、系统开关 | `admin.py` |
+
+**顶栏两个全局控件**：`◀ 模型 ▶` 切换器 —— 一处选定，全站所有 AI 生成入口生效（localStorage 持久化，「自动」档按模式定档）；`🔔` 预警铃铛 —— 60s 轮询 `/api/v1/alerts`，成本超阈 / 模型限流 / 供应商密钥缺失 / 任务失败四类聚合，按严重级分组可直接跳转。
 
 **找「生成 PPT」的三个入口**：① 侧边栏 `📽️ AI 生成 PPT`（教师/研究员角色可见）；② 工作台「课程中心 · 课件工坊」条上的渐变主按钮；③ `Ctrl+K` 命令面板输入 `做 PPT`。
 AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记录）作为素材直接带进工坊。
@@ -52,21 +58,25 @@ AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记
 - **🎓 课程与课件闭环**：开课选课、PPT 电子化、AI 陈旧度体检与自动更新、一个主题秒出整套课件
 - **🧩 跨模块素材**：课件生成可引用原资料、科学问题、研究报告、项目对话、流水线产出、技能结果
 - **🖼️ 多模态**：Qwen-VL 处理图像与科学图表；文档上传支持分片与解析
+- **🔀 多模型供应商**：Qwen 系为默认基座，DeepSeek / Kimi / GLM / 自定义 OpenAI 兼容端点配密钥即用；顶栏全局切换 + 各生成面板下拉旁 ◀▶ 循环，优先级「面板显式选择 > 全局首选 > 模式档位」
+- **📈 线性预测与预警**：本月成本、任务 ETA、学习完课天数三类最小二乘外推，统一 `/alerts` 预警中心承载
+- **🕸️ 通用知识图谱**：一张表四个 scope（通识课 / 大纲 / 知识库 / 项目），零依赖 SVG 力导向组件内嵌四处视图
+- **🗒️ 自由计划中心**：个人 / 团队 / 流水线 / AI 自主四形态，AI 拆解主题后可一键转 Pipeline 真正跑起来
 - **🔁 一键复现**：Docker / pip + npm / 免 Node（预构建 SPA）/ Alembic 迁移
-- **🔐 自主可控**：全链路 Qwen，满足赛题「国产模型」要求
+- **🔐 自主可控**：默认全链路 Qwen，满足赛题「国产模型」要求；多供应商为可选增强，不配密钥不出现在切换列表
 
 ### 关键指标（脚本实测，非估算）
 
 | 指标 | 数值 |
 | --- | --- |
-| 后端 Python（`backend/app`） | 101 文件 / 15,829 行 |
-| 前端 Vue + TS（`frontend/src`） | 59 文件 / 11,723 行 |
-| REST API | 150 个操作 / 127 条唯一路径（课程中心 27：`/courses` 13 · `/coursewares` 14） |
-| 数据表 | 27 张 |
+| 后端 Python（`backend/app`） | 112 文件 / 22,205 行 |
+| 前端 Vue + TS（`frontend/src`） | 74 文件 / 16,091 行 |
+| REST API | 173 个操作 / 141 条 `/api` 路径 |
+| 数据表 | 33 张（新增 `knowledge_graphs` · `plans` · `cost_daily` · `generate_jobs` · 通识课 3 表） |
 | Agent | 15 项注册 · 9 阶段默认流水线 |
 | 内置科学问题 | 125 题（Science 2005 前沿难题） |
-| 前端视图 / 组件 / API 模块 | 18 / 12 / 13 |
-| 单元测试 | 12 用例 pytest 全通过 |
+| 前端视图 / 组件 / API 模块 | 24 / 17 / 17 |
+| 单元测试 | 12 用例 pytest 全通过（另有 ASGITransport 进程内端到端脚本覆盖全模块） |
 
 ---
 
@@ -208,7 +218,65 @@ GET /api/v1/coursewares/quick-generate/{job_id}   ← 前端每 1.2s 轮询，�
 
 ---
 
-## 5. 系统架构
+## 5. 平台治理：模型 · 预警 · 预测 · 图谱 · 计划
+
+### 5.1 模型选用与多供应商
+
+- **供应商注册表**：Qwen（DashScope，默认）+ DeepSeek / Kimi / 智谱 GLM / 自定义 OpenAI 兼容端点；`.env` 里配了对应 `*_API_KEY` 才出现在可选列表（自定义供应商需 `CUSTOM_BASE_URL` + `CUSTOM_API_KEY` + `CUSTOM_MODELS` 三元组齐全）
+- **优先级三档**：`mode_policy.apply_mode()` 统一裁决 —— 显式模型 > 模式档位（快速/专家）> 默认；回退管线不变
+- **顶栏全局切换器**：`◀ 模型 ▶` 一处选定全站生效，localStorage `ai_pref_model` 持久化，「自动」档按模式定档
+- **各生成面板下拉旁 ◀▶** 循环切换（课件工坊 / 课程详情 / Agent Playground）；请求层兜底规则：面板显式选择 > 全局首选 > 不传（后端按 mode 定档）
+- 模型列表来自 `GET /coursewares/generate-models`（含 provider_label 分组）
+
+### 5.2 统一预警中心
+
+`GET /api/v1/alerts` 聚合四类（全部数据驱动，不新增人工规则配置）：
+
+| type | 触发条件 | 跳转 |
+| --- | --- | --- |
+| `cost_over_threshold` | 线性外推本月费用超 `COST_ALERT_THRESHOLD_YUAN`（含预计超阈日） | 成本分析 |
+| `model_rate_limited` | `qwen_client.model_status()` 报告限流 | 课件工坊 |
+| `provider_key_missing` | 已注册模型但 `CUSTOM_*` 三元组不齐 | 设置 / `.env` |
+| `job_failed` | 近 24h 失败的生成作业与 PipelineRun | 对应项目 |
+
+前端：顶栏铃铛 60s 轮询，按 severity 分组，error 级首次出现 toast 一次。
+
+### 5.3 三类线性预测（`services/prediction.py`）
+
+统一最小二乘外推 `linear_forecast(series)` → slope / predicted / confidence（R²），数据不足 3 天返回 `insufficient` 不瞎猜：
+
+| 预测 | 数据源 | 展示位 |
+| --- | --- | --- |
+| 本月 API 成本 | `cost_daily` 日桶（内存热路径累计 + ≥ 60s 低频刷库，挂既有 5s progress_sync 循环） | `/cost` 折线 + 预测虚线段 + 概览卡 |
+| 任务完成时间 ETA | 生成作业 / PipelineRun 已完成比例 × 开始时间 | 小窗进度条与自动化页「预计还需 N 分钟」 |
+| 学习完课进度 | `general_progress` 近 14 天学习频次 | 通识课首页 / 课程卡「预计 X 天后学完」 |
+
+### 5.4 通用知识图谱（一张表 · 一个组件 · 四处落位）
+
+```
+KnowledgeGraph(scope, scope_id, nodes JSON, edges JSON, status)   唯一约束 (scope, scope_id)
+scope ∈ general（通识课+章节）| syllabus（课程大纲）| kb（用户文档标题+摘要）| project（结构图）
+```
+
+- **AI 抽取**：general / syllabus / kb 每次 rebuild 只调 **1 次** `call_qwen`（复用模式档位与回退管线），产出 `{nodes:[{id,label,group}], edges:[[s,t,rel]]}`，服务端收敛 ≤ 40 节点、去重、剔除悬空/自环边；结果缓存，命中不重复耗 token
+- **零 LLM**：project scope 由 Project + AgentTask + Hypothesis 外键直接组装，GET 即出图
+- **前端**：自研 `components/common/GraphView.vue`（约 300 行 SVG 力导向：斥力+弹簧+中心引力，缩放平移拖拽，group 分色），**不引入任何新 npm 依赖**；落位：通识课详情折叠面板 / 课程详情大纲区 / 资料库图谱视图 / 项目详情结构图
+
+### 5.5 自由计划中心
+
+```
+Plan(scope: personal|team|pipeline|auto, items:[{text,due,agent,done}], source: manual|ai)
+  └─ pipeline 计划──POST /plans/{id}/to-pipeline──▶ Pipeline.steps（可立即 run）
+```
+
+- 四 tab：个人待办 / 团队（以项目为载体，同项目成员可见）/ 流水线 / AI 自主
+- `POST /plans/ai`：主题 → 5-8 条可执行分解；团队/流水线场景注入项目研究问题与已有进展；`agent` 字段按 `AGENT_REGISTRY` 白名单收敛
+- `to-pipeline`：items[].agent 必须在注册表内且 ≥ 2 步；已有 pipeline_id 时幂等更新步骤
+- 到期提醒复用 `/alerts` 机制；流水线 tab 保存后可一键启动执行
+
+---
+
+## 6. 系统架构
 
 ```
 ┌─ 浏览器（Vue 3 SPA，vite build 产物由后端 static 直出）
@@ -216,29 +284,30 @@ GET /api/v1/coursewares/quick-generate/{job_id}   ← 前端每 1.2s 轮询，�
 ├─ FastAPI · /api/v1
 │   ├─ 认证 JWT（access / refresh，支持 ?token= 的 flexible 模式）
 │   ├─ SSE 实时通道（流水线进度、Token 流、实验状态）
-│   ├─ REST：projects · questions · courses · coursewares · automation
+│   ├─ REST：projects · questions · courses · coursewares · automation · plans
 │   │        skills · knowledge(+external) · documents · evidence · export
-│   │        chat · stream · multimodal · experiment-lab · observability · admin · team · batch
+│   │        chat · stream · multimodal · experiment-lab · observability · alerts · graphs
+│   │        general（通识课）· admin · team · batch
 │   └─ Orchestrator（多 Agent 编排 + 反思循环 + retry-from 断点续跑）
 │
-├─ 服务层：qwen_client · literature_search · experiment_engine · ppt_service
-│          course_ai_service · external_collector · skill_engine · …
+├─ 服务层：qwen_client · mode_policy · prediction · literature_search · experiment_engine
+│          ppt_service · course_ai_service · generate_progress · external_collector · skill_engine · …
 ├─ 数据层：SQLAlchemy 2.x async + SQLite（aiosqlite），Alembic 迁移
 └─ 文件层：uploads/（用户原件） · generated/（系统产物，固定根） · logs/（滚动日志）
 ```
 
-## 6. 技术栈
+## 7. 技术栈
 
 | 层 | 选型 |
 | --- | --- |
 | 前端 | Vue 3 + TypeScript + Vite 6 · Pinia · vue-router · TailwindCSS · Element Plus · KaTeX |
 | 后端 | Python 3.11+ · FastAPI · SQLAlchemy 2 (async) · Pydantic v2 · Alembic |
-| 模型 | Qwen-Max / Plus（文本）· Qwen-VL-Max（多模态）· DashScope SDK |
+| 模型 | Qwen-Max / Plus / VL（默认基座）· DashScope SDK；可选 DeepSeek / Kimi / GLM / 自定义 OpenAI 兼容端点 |
 | 课件 | python-pptx（解析与反向导出）· Pillow（逐页渲染与压缩） |
 | 实验 | matplotlib / numpy / pandas，子进程沙箱执行 |
 | 部署 | Docker Compose · 单端口同时提供 SPA 与 API |
 
-## 7. 多智能体与九阶段流水线
+## 8. 多智能体与九阶段流水线
 
 默认工作流（可在自动化模块自定义顺序、增删步骤，支持从任意阶段续跑）：
 
@@ -250,26 +319,28 @@ knowledge_gap → literature → hypothesis → design → experiment_plan
 另有文档生成工作流（`document_planner → section_writer → quality_gate → revision → multimodal_enricher`）与
 `AGENT_REGISTRY` 中的 15 项注册（含 `experiment` 别名）。任一 Agent 都可在 Agent 中心单独调试并观察其 Trace。
 
-## 8. 实验执行引擎
+## 9. 实验执行引擎
 
 `services/experiment_engine.py` 在 backend 生成的隔离目录中执行代码，产出图表、动画与指标，全部写入
 `generated/experiments/`；前端「实验模拟场」通过 `/experiment-lab/chart/{run}/{file}` 与 `/video/{run}` 懒加载。
 沙箱限制执行时长、内存与网络，失败信息回灌反思循环。
 
-## 9. 目录结构
+## 10. 目录结构
 
 ```
 AI_Scientist_v2/
 ├── backend/
 │   ├── app/
-│   │   ├── agents/            # 25 个 Agent 文件 + orchestrator + tools
-│   │   ├── api/v1/            # 22 个端点模块（courses.py 含课程 + 课件双 router）
-│   │   ├── services/          # 16 个服务：qwen_client / ppt_service / course_ai_service / generate_progress / …
+│   │   ├── agents/            # 22 个 Agent 文件 + orchestrator + tools（15 项注册）
+│   │   ├── api/v1/            # 28 个端点模块（courses.py 含课程 + 课件双 router；
+│   │   │                      #   新增 alerts / graphs / plans / general_courses）
+│   │   ├── services/          # 20 个服务：qwen_client · mode_policy · prediction · ppt_service ·
+│   │   │                      #   course_ai_service · generate_progress · …
 │   │   ├── schemas/           # Pydantic 契约
-│   │   ├── database/          # models（27 表）· session · init_db · Alembic
+│   │   ├── database/          # models（33 表）· session · init_db · Alembic
 │   │   ├── core/ · security/  # 事件总线 · 加密 · JWT · 速率限制
 │   │   ├── utils/paths.py     # ★ 生成文件唯一路径入口
-│   │   ├── observability/     # tracer · 成本统计
+│   │   ├── observability/     # tracer · 成本统计（含 cost_daily 内存日桶）
 │   │   └── main.py            # 路由注册 · SPA 托管 · 启动建树
 │   ├── generated/             # ★ 所有系统生成文件（gitignore，保留骨架）
 │   ├── uploads/               # 用户上传原件
@@ -278,11 +349,13 @@ AI_Scientist_v2/
 │   └── run.py · requirements.txt · .env
 ├── frontend/
 │   └── src/{api,components,composables,router,stores,types,views,i18n,…}
+│       ├── components/common/  # GraphView（自研 SVG 力导向）· ModelSwitcher（顶栏模型切换）
+│       └── views/plans/        # PlansView（四 tab 计划中心）
 ├── docker-compose.yml · Dockerfile
 └── README.md
 ```
 
-## 10. 配置与环境变量
+## 11. 配置与环境变量
 
 `backend/.env`（片段）：
 
@@ -296,6 +369,21 @@ QWEN_MODEL=qwen-max
 QWEN_VL_MODEL=qwen-vl-max
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
 CORS_ORIGINS=http://localhost:5173,http://localhost:8000
+
+# ── 可选供应商（密钥留空则该供应商不出现在模型切换列表）──
+DEEPSEEK_API_KEY=
+DEEPSEEK_MODELS=deepseek-chat,deepseek-reasoner
+MOONSHOT_API_KEY=
+MOONSHOT_MODELS=moonshot-v1-8k,moonshot-v1-32k,moonshot-v1-128k
+ZHIPU_API_KEY=
+ZHIPU_MODELS=glm-4-flash,glm-4-air,glm-4-plus
+# 自定义 OpenAI 兼容端点：三元组齐全才生效
+CUSTOM_API_KEY=
+CUSTOM_BASE_URL=
+CUSTOM_MODELS=
+
+# ── 预警阈值 ──
+COST_ALERT_THRESHOLD_YUAN=100.0
 ```
 
 路径类配置在 `app/config.py` 里已改为**绝对默认值**，通常无需覆盖：
@@ -306,7 +394,7 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 | `GENERATED_DIR` | `<backend>/generated` | 系统生成文件唯一根 |
 | `LOG_DIR` | `<backend>/logs` | 滚动日志 |
 
-## 11. API 参考
+## 12. API 参考
 
 统一前缀 `/api/v1`，除 `/api/health` 外均需 `Authorization: Bearer <token>`（下载/图片类端点可用 `?token=`）。
 
@@ -315,39 +403,45 @@ CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 | 认证 | `/auth` | 5 | `POST /auth/login` · `/auth/refresh` |
 | 项目 | `/projects` | 13 | `POST /projects` · `/projects/{id}/pipeline` |
 | 科学问题 | `/questions` | 19 | `POST /questions/{qid}/research` · `GET /questions/{qid}/report` |
-| 课程中心 | `/courses` | 13 | `POST /courses` · `/{id}/courseware` · `/{id}/sync-from-pipeline` · `/ai/outline` |
-| 课件 | `/coursewares` | 14 | `POST /quick-generate` · `GET /quick-generate/{job_id}` · `GET /ai-mine` · `/{id}/staleness-scan` · `/{id}/ai-refresh` · `/{id}/ebook` · `/{id}/handout` · `/{id}/export/pptx` · `/{id}/versions` |
+| 课程中心 | `/courses` | 15 | `POST /courses` · `/{id}/courseware` · `/{id}/sync-from-pipeline` · `/ai/outline` |
+| 课件 | `/coursewares` | 16 | `POST /quick-generate` · `GET /quick-generate/{job_id}` · `GET /generate-models` · `GET /ai-mine` · `/{id}/staleness-scan` · `/{id}/ai-refresh` · `/{id}/ebook` · `/{id}/handout` · `/{id}/export/pptx` · `/{id}/versions` |
+| **计划中心** | `/plans` | 7 | CRUD · `POST /plans/ai`（主题拆解）· `POST /plans/{id}/to-pipeline`（转流水线） |
+| **知识图谱** | `/graphs` | 2 | `GET /graphs/{scope}/{scope_id}`（project 零 LLM 即出）· `POST .../rebuild`（一次 LLM 抽取，缓存命中免耗） |
+| **预警中心** | `/alerts` | 1 | `GET /alerts`：成本超阈 / 模型限流 / 密钥缺失 / 任务失败四类聚合 |
+| **AI 通识课** | `/general` | 11 | 课程/微课列表 · 进度上报 · AI 助教 · 起草 · `GET /learning-forecast`（完课预测） |
 | 自动化 | `/automation` | 12 | `POST /{pid}/run` · `/{pid}/run-from` · 定时与反馈迭代 |
 | 实验模拟场 | `/experiment-lab` | 12 | `POST /run` · `GET /status/{run}` · `/chart/…` · `/video/{run}` |
 | 资料库 | `/knowledge` · `/knowledge/external` | 9 · 5 | 上传解析 · 检索 · 外部学术源 |
 | 技能市场 | `/skills` | 4 | 内置 / prompt 自主 / git·webhook 外接 |
 | 对话 · 推送 | `/chat` · `/stream` | 5 · 1 | 多轮对话 · SSE |
 | 多模态 · 文档 · 证据 | `/multimodal` · `/documents` · `/evidence` | 7 · 5 · 5 | 图文理解 · 分片上传 · 证据链 |
-| 观测 · 管理 | `/observability` · `/admin` | 3 · 3 | Trace 回放 · 成本 · 用户管理 |
+| 观测 · 管理 | `/observability` · `/admin` | 3 · 3 | Trace 回放 · 成本汇总+历史+预测 · 用户管理 |
 | 导出 · 批量 · 团队 | `/export` · `/batch` · `/projects(team)` | 1 · 2 · 2 | 赛题文档一键导出 |
 
 完整交互文档：启动后访问 `/docs`（Swagger）或 `/redoc`。
 
-## 12. 数据库 Schema（26 表）
+## 13. 数据库 Schema（33 表）
 
 | 分组 | 表（`__tablename__`） |
 | --- | --- |
 | 用户与协作 | `users` · `project_shares` · `notifications` · `audit_logs` |
 | 科研项目与执行 | `projects` · `agent_tasks` · `tool_calls` · `chat_messages` · `documents` · `upload_chunks` |
-| 观测与成本 | `trace_records` · `cost_records` |
+| 观测与成本 | `trace_records` · `cost_records` · `cost_daily`（日成本桶）· `generate_jobs`（异步作业落库） |
 | 假设与迭代 | `hypotheses` · `iteration_records` |
-| 流水线 | `pipelines` · `pipeline_runs` · `pipeline_run_logs` |
+| 流水线与计划 | `pipelines` · `pipeline_runs` · `pipeline_run_logs` · `plans` |
+| 知识图谱 | `knowledge_graphs`（scope/scope_id 唯一，nodes/edges JSON） |
 | 科学问题 | `science_questions` · `question_tasks` |
 | 实验 | `experiment_runs` · `experiment_templates` |
 | 技能 | `custom_skills` |
 | 课程与课件 | `courses` · `coursewares` · `slides` · `enrollments` |
+| AI 通识课 | `general_courses` · `general_lessons` · `general_progress` |
 
 > 课件相关四表是课程中心的地基：`Courseware` 只存元数据与体积统计，页面正文存在 `Slide`（文本层 + 逐页图路径），
 > AI 更新不覆盖原稿而是新开一条 `Courseware` 并用 `parent_id` 串成版本链；`Enrollment` 记录选课、进度与断点。
 
 迁移：`alembic revision --autogenerate -m "..."` + `alembic upgrade head`；全新环境可直接 `python -m app.database.init_db`。
 
-## 13. Docker 部署
+## 14. Docker 部署
 
 `docker-compose.yml`（实际配置，单容器同时提供 SPA 与 API）：
 
@@ -372,7 +466,7 @@ docker compose up --build     # → http://localhost:8000 ｜ /docs
 
 Dockerfile 已 `mkdir -p /app/generated`，容器内路径与本地完全一致；环境变量 `DATABASE_URL` 在容器内指向 `./data/zhixing.db`。
 
-## 14. 质量闸门（本地执行）
+## 15. 质量闸门（本地执行）
 
 项目未随仓提供 CI 配置文件；推荐在提交前执行下面三步（已验证均绿）：
 
@@ -384,7 +478,7 @@ robocopy ../frontend/dist ./static /MIR         # 同步免 Node 产物
 
 若需接入 CI，直接把上面三段写进 `.github/workflows/ci.yml` 即可。
 
-## 15. 测试
+## 16. 测试
 
 ```bash
 cd AI_Scientist_v2/backend
@@ -399,16 +493,17 @@ pytest tests -q          # 12 用例，约 1s 跑完（不依赖外部 API Key�
 未覆盖部分（课程/课件、路径解析）目前以端到端冒烟脚本 + 人工验证为主；后续可为 `courses.py` 与
 `utils/paths.py` 补上 pytest（重点：跨角色权限、版本链不覆盖原稿、旧路径回退、`..` 穿越拒绝）。
 
-## 16. 可观测性与安全
+## 17. 可观测性与安全
 
 - **Trace**：每个 Agent 步骤生成 span，落库后可在 `/traces` 逐层回放，含输入输出与耗时
-- **成本**：按模型统计 prompt/completion token 与金额，`/cost` 汇总，流水线级别可归因到项目
+- **成本**：按模型统计 prompt/completion token 与金额，`/cost` 汇总 + 近 30 天历史 + 线性预测，流水线级别可归因到项目；`cost_daily` 走「内存热路径累计 + ≥ 60s 低频刷库」的混合持久化，不拖慢请求
+- **预警**：`/alerts` 四类聚合（见 §5.2），成本超阈预测到具体日期，失败作业覆盖近 24h 生成作业与 PipelineRun
 - **认证**：JWT access + refresh（`python-jose`），密码 passlib/bcrypt 散列；student / teacher / researcher / admin 角色分级，课程与课件按 owner 校验
 - **文件安全**：文件名 sanitize + 扩展名白名单 + 大小上限；生成文件路径统一经 `paths` 校验，拒绝 `..` 与绝对路径注入
 - **执行安全**：实验代码在受限子进程运行，超时/超限即终止；外部 webhook 技能带签名与超时
 - **速率限制**：登录与生成类接口按 IP 限流
 
-## 17. 已知问题与排坑
+## 18. 已知问题与排坑
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
@@ -422,8 +517,12 @@ pytest tests -q          # 12 用例，约 1s 跑完（不依赖外部 API Key�
 | 后台生成报错但页面不提示 | 失败信息写在作业表的 `error` 字段 | 轮询到 `status=failed` 会显示红色提示；也可 `GET /coursewares/quick-generate/{job_id}` 直查 |
 | 聚合报告写进大模型时报 `SyntaxError: '(' was never closed` | f-string 里嵌了同种引号（PEP 701 仅 Py3.12+ 合法），如 `f"{'、'.join(x)}"` | 先在外部算好变量再插值 |
 | 讲义/电子书里表格只剩一行表头 | `Slide.tables` 是 `[表格[行[单元格]]]` 三层，易误当成单行 | 按 `tbl[0]` 表头、`tbl[1:]` 正文渲染，单元格内的竖线自动转全角｜ |
+| `from app.agents import mode_policy` 报 ImportError | 模式策略在服务层不在 Agent 层 | 正确路径 `from app.services import mode_policy` |
+| 顶栏切换了模型但生成请求没生效 | 请求层兜底优先级被面板显式值覆盖 | 规则固定：面板显式选择 > `preferredModel` > 不传；面板选「自动」即交还全局首选 |
+| 自定义供应商模型不出现在切换列表 | `CUSTOM_*` 三元组不齐（静默过滤） | `.env` 同时配 `CUSTOM_API_KEY` / `CUSTOM_BASE_URL` / `CUSTOM_MODELS`；预警铃铛会提示缺失项 |
+| 图谱 rebuild 返回空节点 | 模型输出带 ```json 围栏或前后废话 | `_extract_json` 已容忍围栏与前置文本；仍失败时直接重试一次即可 |
 
-## 18. FAQ
+## 19. FAQ
 
 **Q：生成 PPT 的入口在哪？**
 A：侧边栏 `📽️ AI 生成 PPT`（`/courseware-studio`）。若看不到，说明当前账号不是 teacher/researcher/admin 角色 —— 学生账号只做阅读与选课。
@@ -455,7 +554,16 @@ A：能，且不限于资料库 —— 原文件、科学问题、研究报告�
 **Q：换台机器跑，历史文件还在吗？**
 A：只要 `backend/generated/`（产物）与 `backend/uploads/`（原件）以及 `zhixing.db` 一起搬走就都在；数据库中存的是相对路径。
 
-## 19. 许可证与致谢
+**Q：怎么切换生成用的模型？想用 DeepSeek/Kimi/GLM 怎么办？**
+A：顶栏 `◀ 模型 ▶` 切换器一处选定全站生效；各生成面板下拉旁也有 ◀▶ 循环箭头。第三方供应商在 `.env` 配对应 `*_API_KEY` 即自动出现在列表，未配密钥的供应商不展示（铃铛预警会提示缺失项）。都不选时后端按「快速/专家」模式自动定档。
+
+**Q：知识图谱耗 token 吗？**
+A：general / syllabus / kb 三类每次 rebuild 只调 1 次 LLM，结果落 `knowledge_graphs` 表，缓存命中不重复耗；project 结构图由外键直接组装，完全零 LLM，GET 即出图。
+
+**Q：AI 生成的计划能直接执行吗？**
+A：流水线 scope 的计划可以：每条 item 指定 `agent`（限 `AGENT_REGISTRY` 白名单），`POST /plans/{id}/to-pipeline` 落成 `Pipeline.steps`（≥ 2 步）后可直接 run；重复点击幂等更新步骤。
+
+## 20. 许可证与致谢
 
 本项目为挑战杯「揭榜挂帅」专项赛参赛作品，基座模型为阿里巴巴通义千问 Qwen，通过阿里云百炼（DashScope）调用。
 感谢发榜单位浙江阿里巴巴云计算有限公司提供赛题与算力支持。
