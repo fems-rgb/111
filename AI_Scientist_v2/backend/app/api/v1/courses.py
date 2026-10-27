@@ -23,6 +23,7 @@ from app.database.models import (User, UserRole, Course, CourseStatus, Coursewar
 from app.api.deps import get_current_user, get_current_user_flexible
 from app.config import settings
 from app.agents import qwen_client
+from app.agents import model_providers
 from app.security.sanitizer import sanitize_filename
 from app.utils import paths
 from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, GenerateDeckRequest,
@@ -491,6 +492,7 @@ async def list_generate_models():
     """课件生成可选模型列表（供前端下拉）；必须在 /{cw_id} 之前声明，否则会被当成 cw_id
 
     默认值跟随后端配置 settings.QWEN_MODEL_NAME。
+    只暴露已配置密钥的供应商；按 provider 分组，前端用 <optgroup> 展示。
     """
     default = settings.QWEN_MODEL_NAME
     labels = {
@@ -498,15 +500,35 @@ async def list_generate_models():
         "qwen-plus": ("Qwen-Plus（均衡）", "质量与速度均衡，推荐"),
         "qwen-max": ("Qwen-Max（强力）", "质量最高，较慢较贵"),
         "qwen-max-longcontext": ("Qwen-Max 长文", "适合超长大纲/参考资料"),
+        "deepseek-chat": ("DeepSeek-V3（均衡）", "DeepSeek 对话模型，性价比高"),
+        "deepseek-reasoner": ("DeepSeek-R1（推理）", "深度思考型，适合复杂推理，较慢"),
+        "moonshot-v1-8k": ("Kimi 8K", "Moonshot 短上下文"),
+        "moonshot-v1-32k": ("Kimi 32K", "Moonshot 中等上下文"),
+        "moonshot-v1-128k": ("Kimi 128K", "Moonshot 长上下文，适合长材料"),
+        "glm-4-flash": ("GLM-4 Flash（快速）", "智谱轻量模型，快且经用"),
+        "glm-4-air": ("GLM-4 Air（均衡）", "智谱均衡型"),
+        "glm-4-plus": ("GLM-4 Plus（强力）", "智谱旗舰，质量最高"),
     }
     # 进程内限流记忆：最近撞过 429/未开通的模型标出来，避免用户反复踩同一个坑
     blocked = qwen_client.model_status()
-    items = [{"value": m, "label": labels.get(m, (m, ""))[0],
-              "desc": labels.get(m, ("", ""))[1], "is_default": m == default,
-              "unavailable": blocked.get(m, {}).get("blocked_seconds", 0) > 0,
-              "unavailable_reason": blocked.get(m, {}).get("reason", "")}
-             for m in course_ai_service.SUPPORTED_MODELS]
-    return {"ok": True, "default": default, "items": items}
+
+    def _mk(m: str, p) -> dict:
+        label, desc = labels.get(m, (m, f"{p.label} 模型"))
+        return {"value": m, "label": label, "desc": desc,
+                "is_default": m == default,
+                "provider": p.id, "provider_label": p.label,
+                "unavailable": blocked.get(m, {}).get("blocked_seconds", 0) > 0,
+                "unavailable_reason": blocked.get(m, {}).get("reason", "")}
+
+    groups = []
+    items: list[dict] = []
+    for p in model_providers.providers():
+        if not p.configured:
+            continue
+        g_items = [_mk(m, p) for m in p.models]
+        items.extend(g_items)
+        groups.append({"provider": p.id, "label": p.label, "items": g_items})
+    return {"ok": True, "default": default, "items": items, "groups": groups}
 
 
 @cw_router.get("/{cw_id}")

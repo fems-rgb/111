@@ -205,6 +205,17 @@ export interface GenerateModelItem {
   label: string
   desc: string
   is_default: boolean
+  provider?: string
+  provider_label?: string
+  unavailable?: boolean
+  unavailable_reason?: string
+}
+
+/** 按供应商分组的模型列表 */
+export interface GenerateModelGroup {
+  provider: string
+  label: string
+  items: GenerateModelItem[]
 }
 
 /** 工坊历史列表项 */
@@ -326,7 +337,7 @@ export const coursewareApi = {
 
   /** 可选模型列表 */
   generateModels: () =>
-    client.get<{ ok: boolean; default: string; items: GenerateModelItem[] }>('/coursewares/generate-models'),
+    client.get<{ ok: boolean; default: string; items: GenerateModelItem[]; groups?: GenerateModelGroup[] }>('/coursewares/generate-models'),
 
   /** 我在工坊里生成过的课件 */
   aiMine: (limit = 30) =>

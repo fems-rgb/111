@@ -112,7 +112,9 @@
             <div class="flex items-center gap-2">
               <select v-model="form.model" class="input-field text-sm py-1.5 max-w-xs">
                 <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
-                <option v-for="m in models" :key="m.value" :value="m.value">{{ m.label }}{{ m.unavailable ? ' ⚠️ 额度受限' : '' }}</option>
+                <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.label">
+                  <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}{{ m.unavailable ? ' ⚠️ 额度受限' : '' }}</option>
+                </optgroup>
               </select>
               <span v-if="selectedModelDesc" class="text-[11px] text-surface-400">{{ selectedModelDesc }}</span>
             </div>
@@ -296,7 +298,7 @@ import { useAppStore } from '@/stores/app'
 import {
   courseApi, coursewareApi,
   type AiCoursewareItem, type Course, type DeckResult, type GenerateJobStatus,
-  type GenerateModelItem, type MaterialSelection, type SlideMeta,
+  type GenerateModelItem, type GenerateModelGroup, type MaterialSelection, type SlideMeta,
 } from '@/api/modules/courses'
 
 const STYLES = ['标准', '精炼讲稿', '详尽讲义', '研究进展', '科普通识']
@@ -369,6 +371,7 @@ const form = reactive({
   model: '',
 })
 const models = ref<(GenerateModelItem & { unavailable?: boolean; unavailable_reason?: string })[]>([])
+const modelGroups = ref<GenerateModelGroup[]>([])
 const defaultModel = ref('')
 const selectedModelDesc = computed(() => {
   const m = models.value.find(x => x.value === form.model)
@@ -647,6 +650,9 @@ async function loadModels() {
   try {
     const r = await coursewareApi.generateModels()
     models.value = r.data?.items || []
+    modelGroups.value = r.data?.groups?.length
+      ? r.data.groups
+      : (models.value.length ? [{ provider: 'default', label: '模型', items: models.value }] : [])
     defaultModel.value = r.data?.default || ''
   } catch { /* ignore：下拉会退化为“默认模型” */ }
 }

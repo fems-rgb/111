@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from app.agents.qwen_client import call_qwen
+from app.agents import model_providers
 from app.config import settings
 from app.services import mode_policy
 
@@ -20,15 +21,21 @@ logger = logging.getLogger(__name__)
 
 BATCH_SIZE = 8  # 每次体检喂给 LLM 的页数，控制上下文长度
 
-# 课件生成可选模型（与 AgentPlayground 下拉保持一致）；不在表内的一律回退到默认模型，
-# 避免把任意字符串透传给通义千问 API。默认值跟随 settings.QWEN_MODEL_NAME。
+# 通义千问基础模型（向后兼容保留）；真正的可选集由各供应商注册表动态给出，
+# 只暴露已配置密钥的供应商，避免把任意字符串或无密钥供应商透传给 API。
 SUPPORTED_MODELS = ("qwen-turbo", "qwen-plus", "qwen-max", "qwen-max-longcontext")
 
 
+def supported_models() -> list[str]:
+    """当前可用的全部模型名（仅来自已配置密钥的供应商）"""
+    return [m for p in model_providers.configured_providers() for m in p.models]
+
+
 def resolve_model(model: str | None) -> str:
-    """校验前端传入的模型名：命中白名单则用之，否则回退默认（不传死值）"""
+    """校验前端传入的模型名：命中已配置供应商的模型则用之，否则回退默认（不传死值）"""
     m = (model or "").strip()
-    return m if m in SUPPORTED_MODELS else settings.QWEN_MODEL_NAME
+    p = model_providers.provider_for_model(m)
+    return m if (p and p.configured) else settings.QWEN_MODEL_NAME
 
 
 class GenerationCancelled(Exception):

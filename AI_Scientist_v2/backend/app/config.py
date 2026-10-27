@@ -28,6 +28,26 @@ class Settings(BaseSettings):
     QWEN_MAX_RETRIES: int = 2
     # 首选模型不可用（429 限流 / 403 未开通）时按顺序回退的模型，逗号分隔
     QWEN_FALLBACK_MODELS: str = "qwen-plus,qwen-max,qwen-max-longcontext"
+    # 通义千问兼容端点（OpenAI Chat Completions 接口），可被 env 覆盖
+    QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+
+    # ── 多模型供应商（均为 OpenAI 兼容 /chat/completions 接口；密钥留空则该供应商不出现）──
+    # DeepSeek（深度求索）
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1/chat/completions"
+    DEEPSEEK_MODELS: str = "deepseek-chat,deepseek-reasoner"
+    # Moonshot Kimi
+    MOONSHOT_API_KEY: str = ""
+    MOONSHOT_BASE_URL: str = "https://api.moonshot.cn/v1/chat/completions"
+    MOONSHOT_MODELS: str = "moonshot-v1-8k,moonshot-v1-32k,moonshot-v1-128k"
+    # 智谱 GLM
+    ZHIPU_API_KEY: str = ""
+    ZHIPU_BASE_URL: str = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+    ZHIPU_MODELS: str = "glm-4-flash,glm-4-air,glm-4-plus"
+    # 自定义通用 OpenAI 兼容端点（Base URL + Key + 逗号分隔模型名，三者齐全才生效）
+    CUSTOM_API_KEY: str = ""
+    CUSTOM_BASE_URL: str = ""
+    CUSTOM_MODELS: str = ""
 
     # ── 安全 ──
     RATE_LIMIT_PER_MINUTE: int = 60

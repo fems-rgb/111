@@ -14,11 +14,11 @@ import time
 import httpx
 
 from app.config import settings
+from app.agents import model_providers
 from app.observability.tracer import Tracer
 from app.observability.cost_tracker import cost_tracker
 
 logger = logging.getLogger(__name__)
-API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 
 # 模型级冷却：{model: (解除时间戳, 原因)}
 # 429 冷却 60s（瞬时打满几分钟内会恢复）；403/未开通冷却 15min（换多久都一样）
@@ -71,8 +71,17 @@ def _error_info(payload) -> tuple[str, str]:
 
 
 def _fallback_chain(preferred: str) -> list[str]:
-    """首选模型 + 配置的回退链（去重保序）"""
+    """首选模型 + 本供应商同类回退 + 配置的回退链（去重保序）
+
+    跨供应商选择时不硬拼其他家的模型：若首选模型属于非通义供应商，
+    仅在该供应商内部回退；同供应商没有余下候选时再回退到通义系（兼容旧行为）。
+    """
     chain = [preferred]
+    pref_provider = model_providers.provider_for_model(preferred)
+    if pref_provider and pref_provider.id != "qwen":
+        for m in pref_provider.models:
+            if m != preferred and m not in chain:
+                chain.append(m)
     for m in (settings.QWEN_FALLBACK_MODELS or "").split(","):
         m = m.strip()
         if m and m not in chain:
@@ -101,19 +110,19 @@ def _usable_models(preferred: str) -> list[str]:
             for m in chain
         )
         raise QwenRateLimited(
-            f"通义千问暂时不可用（请求额度受限）。{detail}。"
-            "可以稍后再试，或检查阿里云百炼控制台的模型配额。"
+            f"候选模型暂时不可用（请求额度受限）。{detail}。"
+            "可以稍后再试，或到对应供应商控制台确认模型配额。"
         )
     return [soonest]
 
 
-async def _post_chat(model: str, payload: dict) -> tuple[int, dict | str, dict]:
+async def _post_chat(model: str, payload: dict, base_url: str, api_key: str) -> tuple[int, dict | str, dict]:
     async with httpx.AsyncClient(timeout=180.0, headers={"Accept-Encoding": "identity"}) as client:
         resp = await client.post(
-            API_URL,
+            base_url,
             json={"model": model, **payload},
             headers={
-                "Authorization": f"Bearer {settings.QWEN_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
         )
@@ -135,8 +144,11 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
     max_tokens = max_tokens or settings.QWEN_MAX_TOKENS
     temperature = temperature if temperature is not None else settings.QWEN_TEMPERATURE
 
-    if not settings.QWEN_API_KEY or settings.QWEN_API_KEY.startswith("sk-xxxx"):
-        raise QwenAuthError("QWEN_API_KEY未配置，请在backend/.env中设置有效的通义千问API密钥")
+    if not model_providers.configured_providers():
+        raise QwenAuthError(
+            "未配置任何模型供应商密钥，请在 backend/.env 设置 QWEN_API_KEY"
+            "（或 DEEPSEEK_API_KEY / MOONSHOT_API_KEY / ZHIPU_API_KEY / CUSTOM_API_KEY）"
+        )
 
     chain = _usable_models(preferred)
     attempts = max(1, int(settings.QWEN_MAX_RETRIES or 1))
@@ -149,7 +161,7 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
         ],
     }
 
-    span = Tracer.create_span("llm_call", f"qwen:{preferred}", project_id=project_id, task_id=task_id)
+    span = Tracer.create_span("llm_call", f"llm:{preferred}", project_id=project_id, task_id=task_id)
     span.set_input({"system": system_prompt[:500], "user": user_prompt[:2000]})
     span.metadata = {"model": preferred, "max_tokens": max_tokens, "temperature": temperature}
 
@@ -158,14 +170,20 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
 
     for m in chain:
         tried.append(m)
+        base_url, api_key, provider = model_providers.endpoint_for_model(m)
+        if not api_key or api_key.startswith("sk-xxxx"):
+            # 该供应商未配密钥：标冷却（本进程内不再重试），换下一个候选模型
+            _mark_block(m, _TTL_NO_ACCESS, f"{provider.label} 未配置 API Key")
+            logger.warning(f"[LLM] {m} 属于 {provider.label}，但未配置密钥，换下一个模型")
+            continue
         for i in range(attempts):
             if i > 0:
                 # 指数退避 + 抖动：避免多个作业同一秒集体重试再次撞墙
                 delay = 1.5 * (2 ** (i - 1)) + random.uniform(0, 0.6)
-                logger.warning(f"[QWEN] {m} 第 {i} 次失败，{delay:.1f}s 后重试：{last_error[:160]}")
+                logger.warning(f"[LLM] {m} 第 {i} 次失败，{delay:.1f}s 后重试：{last_error[:160]}")
                 await asyncio.sleep(delay)
             try:
-                status, data, headers = await _post_chat(m, payload)
+                status, data, headers = await _post_chat(m, payload, base_url, api_key)
             except asyncio.CancelledError:
                 raise
             except httpx.TimeoutException:
@@ -191,9 +209,9 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
                 Tracer.finish_span(span)
 
                 if finish_reason == "length":
-                    logger.warning(f"[QWEN] truncated model={m} max={max_tokens} out={out_tokens}")
+                    logger.warning(f"[LLM] truncated model={m} max={max_tokens} out={out_tokens}")
                 if m != preferred:
-                    logger.warning(f"[QWEN] 首选模型 {preferred} 不可用，已自动回退到 {m}")
+                    logger.warning(f"[LLM] 首选模型 {preferred} 不可用，已自动回退到 {m}")
                 return {
                     "content": content,
                     "tokens": {"input": inp_tokens, "output": out_tokens},
@@ -210,8 +228,7 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
                 span.set_error(last_error)
                 Tracer.finish_span(span)
                 raise QwenAuthError(
-                    "通义千问 API Key 无效或已过期，请在 backend/.env 更新 QWEN_API_KEY"
-                    "（阿里云百炼控制台 → API-KEY 管理）。"
+                    f"{provider.label} API Key 无效或已过期，请在 backend/.env 更新 {provider.env_key}"
                 )
 
             if status == 429 or code in {"limit_requests", "throttling", "rate_limit_exceeded"}:
@@ -219,12 +236,12 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
                 if i < attempts - 1:
                     continue
                 _mark_block(m, _TTL_RATE_LIMIT, "请求额度受限")
-                logger.warning(f"[QWEN] {m} 限流，冷却 {_TTL_RATE_LIMIT}s 后切换下一个模型")
+                logger.warning(f"[LLM] {m} 限流，冷却 {_TTL_RATE_LIMIT}s 后切换下一个模型")
                 break
 
             if status in (403, 404) or code in _FATAL_MODEL_CODES:
                 _mark_block(m, _TTL_NO_ACCESS, "该模型未开通或无权限")
-                logger.warning(f"[QWEN] {m} 不可用（{code or status}），换模型")
+                logger.warning(f"[LLM] {m} 不可用（{code or status}），换模型")
                 break
 
             if status >= 500:
@@ -235,13 +252,13 @@ async def call_qwen(system_prompt: str, user_prompt: str, model: str = None,
             # 400 之类：参数/上下文问题，换模型也大概率不行，直接抛出
             span.set_error(last_error)
             Tracer.finish_span(span)
-            raise QwenError(f"通义千问API错误: {last_error}")
+            raise QwenError(f"{provider.label} API 错误: {last_error}")
 
     span.set_error(f"全部模型失败: {last_error}")
     span.metadata["tried_models"] = tried
     Tracer.finish_span(span)
     raise QwenRateLimited(
-        f"通义千问请求失败：已尝试 {' / '.join(tried)}，最后一个错误是 {last_error[:160]}。"
-        "常见原因：该模型的请求额度已用尽或未开通；"
-        "可在「生成模型」里换成 Qwen-Plus / Qwen-Max，或在阿里云百炼控制台确认配额。"
+        f"模型请求失败：已尝试 {' / '.join(tried)}，最后一个错误是 {last_error[:160]}。"
+        "常见原因：该模型的请求额度已用尽、未开通或密钥未配置；"
+        "可在「生成模型」里换一个可用模型，或到对应供应商控制台确认配额与密钥。"
     )

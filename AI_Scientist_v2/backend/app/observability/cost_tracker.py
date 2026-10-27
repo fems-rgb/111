@@ -11,6 +11,15 @@ MODEL_PRICING = {
     "qwen-long": {"input": 0.0005, "output": 0.002},
     "qwen-vl-max": {"input": 0.002, "output": 0.005},
     "qwen-vl-max": {"input": 0.003, "output": 0.009},
+    # 多模型供应商（元/千 tokens，大致档位；与实际账单无关紧要地接近即可）
+    "deepseek-chat": {"input": 0.001, "output": 0.002},
+    "deepseek-reasoner": {"input": 0.004, "output": 0.016},
+    "moonshot-v1-8k": {"input": 0.012, "output": 0.012},
+    "moonshot-v1-32k": {"input": 0.024, "output": 0.024},
+    "moonshot-v1-128k": {"input": 0.06, "output": 0.06},
+    "glm-4-flash": {"input": 0.0001, "output": 0.0001},
+    "glm-4-air": {"input": 0.001, "output": 0.001},
+    "glm-4-plus": {"input": 0.05, "output": 0.05},
 }
 
 

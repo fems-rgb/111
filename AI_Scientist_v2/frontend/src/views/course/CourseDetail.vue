@@ -305,7 +305,9 @@
                 <label class="block text-[11px] font-medium text-surface-600 mb-1">🧠 生成模型（可选）</label>
                 <select v-model="gen.model" class="input-field text-sm">
                   <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
-                  <option v-for="m in models" :key="m.value" :value="m.value">{{ m.label }} — {{ m.desc }}</option>
+                  <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.label">
+                    <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }} — {{ m.desc }}</option>
+                  </optgroup>
                 </select>
               </div>
               <div>
@@ -481,7 +483,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection, type GenerateJobStatus, type GenerateModelItem } from '@/api/modules/courses'
+import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection, type GenerateJobStatus, type GenerateModelItem, type GenerateModelGroup } from '@/api/modules/courses'
 import { useAuthStore } from '@/stores/auth'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
 
@@ -630,6 +632,7 @@ const genElapsed = ref(0)
 const genCancelling = ref(false)
 const genCancelled = ref(false)
 const models = ref<GenerateModelItem[]>([])
+const modelGroups = ref<GenerateModelGroup[]>([])
 const defaultModel = ref('')
 let genPoll: number | null = null
 let genTick: number | null = null
@@ -751,6 +754,9 @@ async function loadModels() {
   try {
     const r = await coursewareApi.generateModels()
     models.value = r.data?.items || []
+    modelGroups.value = r.data?.groups?.length
+      ? r.data.groups
+      : (models.value.length ? [{ provider: 'default', label: '模型', items: models.value }] : [])
     defaultModel.value = r.data?.default || ''
   } catch { /* ignore */ }
 }

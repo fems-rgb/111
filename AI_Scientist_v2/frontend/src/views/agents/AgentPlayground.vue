@@ -134,9 +134,16 @@
           <option v-for="a in agents" :key="a.name" :value="a.name">{{ a.display_name }}</option>
         </select>
         <select v-model="selectedModel" class="input-field w-48">
-          <option value="qwen-turbo">Qwen-Turbo（快速）</option>
-          <option value="qwen-plus">Qwen-Plus（均衡）</option>
-          <option value="qwen-max">Qwen-Max（强力）</option>
+          <template v-if="modelGroups.length">
+            <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.label">
+              <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}</option>
+            </optgroup>
+          </template>
+          <template v-else>
+            <option value="qwen-turbo">Qwen-Turbo（快速）</option>
+            <option value="qwen-plus">Qwen-Plus（均衡）</option>
+            <option value="qwen-max">Qwen-Max（强力）</option>
+          </template>
         </select>
       </div>
       <div class="flex gap-3">
@@ -161,6 +168,7 @@ import { ref, computed, onMounted, watch, nextTick, reactive } from 'vue'
 import { useAgentStore } from '@/stores/agent'
 import { useAppStore } from '@/stores/app'
 import { usePipelineStore } from '@/stores/pipeline'
+import { coursewareApi, type GenerateModelGroup } from '@/api/modules/courses'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { useSSE } from '@/composables/useSSE'
 import PipelineProgress from '@/components/pipeline/PipelineProgress.vue'
@@ -528,6 +536,11 @@ async function handleAbortPipeline() {
 // ===== 对话逻辑 =====
 const selectedAgent = ref('general')
 const selectedModel = ref('qwen-plus')
+// 模型下拉：从后端供应商注册表加载（含 DeepSeek/Kimi/GLM/自定义，仅已配密钥的）；失败则退化 qwen 三档
+const modelGroups = ref<GenerateModelGroup[]>([])
+coursewareApi.generateModels()
+  .then((r) => { modelGroups.value = r.data?.groups || (r.data?.items?.length ? [{ provider: 'default', label: '模型', items: r.data.items }] : []) })
+  .catch(() => { /* ignore：保留写死的 qwen 三档 */ })
 const chatInput = ref('')
 const chatReply = ref('')
 const chatMeta = ref('')
