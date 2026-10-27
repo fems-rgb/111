@@ -1,8 +1,0 @@
-安全加固：修复 auth 洪峰卡死、限流未挂载、SECRET_KEY 占位与凭据泄露
-
-- auth_service.py：bcrypt 哈希/校验改用 run_in_threadpool，移出 async 事件循环，根治"被多次登录/注册请求拖死全站"
-- rate_limiter.py / deps.py / auth.py：新增每 IP 每分钟 10 次的 auth_rate_limiter 与 check_auth_rate_limit 依赖，挂到 /auth/login、/auth/register（此前 check_rate_limit 定义了却从未挂载，等于无频率保护）
-- config.py：SECRET_KEY 启动守卫，占位符/过短值自动换成随机密钥并告警；.env 已写入真实随机密钥（gitignore 不入库）
-- schemas/auth.py：注册密码下限 6→8、邮箱加格式校验（登录仍允许旧短密码，避免老用户登不进）；LoginView.vue 提示同步
-- LoginView.vue：移除登录页明文展示的默认管理员账号口令，杜绝凭据泄露
-- 重新构建前端并镜像 backend/static
