@@ -88,6 +88,7 @@ const navItems = computed(() => {
     { path: '/experiment-lab', icon: '🧪', label: '实验模拟场', badge: expRunning.value },
     { path: '/skills', icon: '🛜', label: '技能市场' },
     { path: '/automation', icon: '⚡', label: '自动化流水线' },
+    { path: '/plans', icon: '🗒️', label: '计划中心' },
     { path: '/agents', icon: '🤖', label: 'Agent中心' },
     { path: '/traces', icon: '🔍', label: '追踪回放' },
     { path: '/cost', icon: '💵', label: '成本分析' },

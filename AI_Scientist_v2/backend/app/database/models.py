@@ -740,6 +740,32 @@ class KnowledgeGraph(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class Plan(Base):
+    """自由计划中心（Phase D）
+
+    四种形态共存一张表：
+    - personal   个人计划（仅 owner_id 可见）
+    - team       团队计划（挂在项目上，同项目成员可见）
+    - pipeline   可一键转 Pipeline 执行的计划（items[].agent 对应 AGENT_REGISTRY）
+    - auto       AI 自主计划（/plans/ai 生成后直接入库）
+    source: manual | ai
+    """
+    __tablename__ = "plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    scope = Column(String(16), default="personal", index=True)   # personal / team / pipeline / auto
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    title = Column(String(200), nullable=False)
+    items = Column(JSON, default=list)                             # [{text, due, agent, done}]
+    source = Column(String(16), default="manual")                  # manual / ai
+    status = Column(String(16), default="active")                  # active / done / cancelled
+    due_at = Column(DateTime(timezone=True), nullable=True)
+    pipeline_id = Column(String(32), nullable=True)                # 转成流水线后的 pipeline id
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class GeneralProgress(Base):
     """学习进度：按 (user, lesson) 唯一，用于课程卡片完成度与续学定位"""
     __tablename__ = "general_progress"

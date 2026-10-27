@@ -18,6 +18,7 @@ const router = createRouter({
         { path: 'knowledge', name: 'KnowledgeBase', component: () => import('@/views/knowledge/KnowledgeView.vue'), meta: { title: '资料库' } },
         { path: 'skills', name: 'SkillMarket', component: () => import('@/views/skills/SkillMarketView.vue'), meta: { title: '技能市场' } },
         { path: 'automation', name: 'Automation', component: () => import('@/views/automation/AutomationView.vue'), meta: { title: '自动化流水线' } },
+        { path: 'plans', name: 'Plans', component: () => import('@/views/plans/PlansView.vue'), meta: { title: '计划中心' } },
         { path: 'questions', name: 'Questions', component: () => import('@/views/workspace/QuestionsView.vue'), meta: { title: '科学问题题库' } },
         { path: 'experiment-lab', name: 'ExperimentLab', component: () => import('@/views/workspace/ExperimentLab.vue'), meta: { title: '实验模拟场' } },
         // === 课程中心（开课 / 选课 / PPT 电子化阅读 / AI 更新） ===
