@@ -40,6 +40,14 @@ class RateLimitException(AppException):
         self.retry_after = retry_after
 
 
+class AccountLockedException(RateLimitException):
+    """登录失败次数过多，账号被临时锁定（沿用 RateLimit 的 429 + Retry-After）"""
+    def __init__(self, retry_after: int = 900):
+        super().__init__(retry_after=retry_after)
+        self.error_code = "ACCOUNT_LOCKED"
+        self.message = f"登录失败次数过多，账号已被临时锁定，请{retry_after}秒后重试"
+
+
 class AgentException(AppException):
     """Agent执行异常"""
     def __init__(self, message: str = "Agent执行失败", agent_name: str = ""):

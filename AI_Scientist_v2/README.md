@@ -498,10 +498,29 @@ pytest tests -q          # 12 用例，约 1s 跑完（不依赖外部 API Key�
 - **Trace**：每个 Agent 步骤生成 span，落库后可在 `/traces` 逐层回放，含输入输出与耗时
 - **成本**：按模型统计 prompt/completion token 与金额，`/cost` 汇总 + 近 30 天历史 + 线性预测，流水线级别可归因到项目；`cost_daily` 走「内存热路径累计 + ≥ 60s 低频刷库」的混合持久化，不拖慢请求
 - **预警**：`/alerts` 四类聚合（见 §5.2），成本超阈预测到具体日期，失败作业覆盖近 24h 生成作业与 PipelineRun
-- **认证**：JWT access + refresh（`python-jose`），密码 passlib/bcrypt 散列；student / teacher / researcher / admin 角色分级，课程与课件按 owner 校验
+- **认证**：JWT access + refresh（`python-jose`），密码 passlib/bcrypt 散列（**非明文**）；student / teacher / researcher / admin 角色分级，课程与课件按 owner 校验
 - **文件安全**：文件名 sanitize + 扩展名白名单 + 大小上限；生成文件路径统一经 `paths` 校验，拒绝 `..` 与绝对路径注入
 - **执行安全**：实验代码在受限子进程运行，超时/超限即终止；外部 webhook 技能带签名与超时
-- **速率限制**：登录与生成类接口按 IP 限流
+
+### 17.1 认证与防刷加固（已实测）
+
+针对「注册数据加密」与「被多次/并发请求拖到卡死」两点：
+
+- **bcrypt 移出事件循环**：登录/注册为 `async` 端点，早期直接同步调用慢哈希会**独占事件循环**，洪峰时冻结全站。现改为 `await run_in_threadpool(verify_password/hash_password, ...)`（`services/auth_service.py`），慢哈希在线程池执行，不再阻塞。
+- **按 IP 限流**：`auth_rate_limiter`（每 IP 每分钟 10 次）经 `check_auth_rate_limit` 依赖挂在 `/auth/login`、`/auth/register`，抵御高频卡死。（注：`deps.py` 的 `check_rate_limit` 历史上定义了却从未挂载，等于无保护，现已修正。）
+- **按账号失败锁定**：`security/login_guard.py` 的 `login_guard` —— 15 分钟内同一用户名连续失败 5 次即临时锁定该账号 15 分钟，返回 `429 ACCOUNT_LOCKED` + `Retry-After`；成功登录或到期自动解除。与按 IP 限流互补，专治撞库/暴力破解。
+- **SECRET_KEY 守卫**：`config.py` 启动时检测 `SECRET_KEY`，若仍为样板占位值或长度 < 32，自动替换为 `secrets.token_hex(32)` 随机密钥并告警，避免用公开密钥签发可伪造的 JWT。**正式部署应在 `.env` 固定一个强随机密钥**（`.env` 已 gitignore，不入库）。
+- **注册强度**：密码下限 6→8 位、邮箱加格式正则校验（登录仍允许旧的 6 位短密码，避免老用户登不进）；已移除登录页明文展示的默认管理员口令。
+
+### 17.2 HTTPS 与生产部署
+
+本应用签发 JWT 且处理上传文件，**生产必须走 HTTPS**，否则令牌与凭据在链路上明文可嗅探：
+
+- **反向代理终结 TLS**：应用本身只监听 `http://:8000`，用 Nginx / Caddy 在前面挂证书并 `proxy_pass`。Caddy 一行即可自动签发 Let's Encrypt：`reverse_proxy 127.0.0.1:8000`。
+- **代理头**：`app.main` 需信任 `X-Forwarded-Proto`/`X-Forwarded-For`（`ProxyHeadersMiddleware` 或 uvicorn `--proxy-headers --forwarded-allow-ips=*`），否则 `request.client.host` 会全是代理 IP，导致按 IP 限流失效。
+- **Cookie/令牌**：跨端或公网部署时确保前端用 `https://` 访问 API；`Set-Cookie`（若有）加 `Secure; HttpOnly; SameSite=Lax`。
+- **HSTS + 跳转**：代理层配置 80→443 强制跳转与 `Strict-Transport-Security`。
+- **密钥与凭据**：生产 `.env` 固定强 `SECRET_KEY`；各供应商 `*_API_KEY` 只放服务端环境，绝不入库或下发前端。
 
 ## 18. 已知问题与排坑
 
