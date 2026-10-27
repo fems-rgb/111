@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     # Ollama 本地（github.com/ollama/ollama，无需 key、完全免费离线；本机 ollama pull 后即可用）
     OLLAMA_API_KEY: str = "ollama"   # 占位值：Ollama 不校验 key，非空即可通过调用前的密钥检查
     OLLAMA_BASE_URL: str = "http://localhost:11434/v1/chat/completions"
-    OLLAMA_MODELS: str = "qwen2.5:7b,llama3.1,deepseek-r1:7b"
+    OLLAMA_MODELS: str = "qwen3:8b,qwen2.5:14b,qwen2.5:7b-instruct,qwen2.5vl:7b"  # 兜底：启动时会优先实时探测本机已装模型
 
     # ── 安全 ──
     RATE_LIMIT_PER_MINUTE: int = 60

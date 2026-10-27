@@ -31,6 +31,33 @@ def _key_ok(key: str) -> bool:
     return bool(k) and not k.startswith("sk-xxxx") and k.lower() not in {"ollama", "changeme", "none"}
 
 
+def _ollama_origin() -> str:
+    """从 OLLAMA_BASE_URL 推导服务根地址（用于查 /api/tags）"""
+    base = (settings.OLLAMA_BASE_URL or "").strip()
+    for suffix in ("/v1/chat/completions", "/chat/completions", "/v1"):
+        if base.endswith(suffix):
+            return base[: -len(suffix)]
+    return base.rstrip("/")
+
+
+def detect_ollama_models() -> list[str]:
+    """实时探测本机 Ollama 已安装的模型名（短超时、失败回空）。
+
+    让下拉只列出真正能用的免费本地模型，避免写死的模型名与本机实际拉取的
+    不一致导致选中后调用失败。未启 Ollama / 不可达时返回空，上层退回静态配置。"""
+    origin = _ollama_origin()
+    if not origin:
+        return []
+    try:
+        import httpx
+        r = httpx.get(origin + "/api/tags", timeout=2.0)
+        if r.status_code == 200:
+            return [m["name"] for m in r.json().get("models", []) if m.get("name")]
+    except Exception as e:  # 连不上/超时/格式异常均视为无本地模型
+        logger.debug("Ollama 模型探测失败：%s", e)
+    return []
+
+
 class Provider:
     """一个模型供应商：一个 OpenAI 兼容端点 + 一把密钥 + 若干模型名"""
 
@@ -99,12 +126,14 @@ def build_providers() -> list[Provider]:
                  env_key="OPENROUTER_API_KEY",
                  hint="openrouter.ai 领 key，:free 后缀模型免费"),
     ]
-    # Ollama 本地：无需密钥（默认已占位 key），本机装并运行 Ollama 后即可用
-    if settings.OLLAMA_BASE_URL and _split_names(settings.OLLAMA_MODELS):
+    # Ollama 本地：优先用实时探测到的本机已装模型（下拉只显示真正能用的），
+    # 探测不到时（本机未启 Ollama）退回 .env 里静态配置的模型名。
+    _ollama_models = detect_ollama_models() or _split_names(settings.OLLAMA_MODELS)
+    if settings.OLLAMA_BASE_URL and _ollama_models:
         providers.append(Provider("ollama", "Ollama 本地（免费离线）", settings.OLLAMA_BASE_URL,
-                                  settings.OLLAMA_API_KEY, _split_names(settings.OLLAMA_MODELS),
+                                  settings.OLLAMA_API_KEY, _ollama_models,
                                   env_key="OLLAMA_API_KEY", local=True,
-                                  hint="本机安装并运行 ollama，再 ollama pull qwen2.5:7b 即可"))
+                                  hint="本机运行 ollama，用 ollama pull <模型> 拉取后重启后端即可选用"))
     if settings.CUSTOM_BASE_URL and _split_names(settings.CUSTOM_MODELS):
         providers.append(Provider("custom", "自定义（OpenAI 兼容）", settings.CUSTOM_BASE_URL,
                                   settings.CUSTOM_API_KEY, _split_names(settings.CUSTOM_MODELS),

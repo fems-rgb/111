@@ -544,8 +544,12 @@ async def list_generate_models():
         "deepseek-ai/DeepSeek-V3": ("DeepSeek-V3（硅基流动）", "高性价比，中文强"),
         "meta-llama/llama-3.3-70b-instruct:free": ("Llama 3.3 70B（OpenRouter 免费）", "OpenRouter :free 免费模型"),
         "qwen2.5:7b": ("Qwen2.5 7B（本地 Ollama）", "本机运行、完全免费离线"),
+        "qwen2.5:7b-instruct": ("Qwen2.5 7B 指令版（本地）", "本机免费离线，通用对话/生成"),
+        "qwen2.5:14b": ("Qwen2.5 14B（本地）", "本机免费，质量高于 7B、较慢"),
+        "qwen2.5vl:7b": ("Qwen2.5-VL 7B（本地·视觉）", "本机免费，支持图片理解"),
+        "qwen3:8b": ("Qwen3 8B（本地·思考）", "本机免费，带 thinking 推理"),
         "llama3.1": ("Llama 3.1（本地 Ollama）", "本机运行、免费离线"),
-        "deepseek-r1:7b": ("DeepSeek-R1 7B（本地 Ollama）", "本机推理模型、免费离线"),
+        "deepseek-r1:7b": ("DeepSeek-R1 7B（本地 Ollama）", "本机推理模型、免费离线（需先 ollama pull）"),
     }
     # 进程内限流记忆：最近撞过 429/未开通的模型标出来，避免用户反复踩同一个坑
     blocked = qwen_client.model_status()
