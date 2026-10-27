@@ -1,4 +1,5 @@
 ﻿import client from '../client'
+import { apiUrl } from '@/api/base'
 import { useAuthStore } from '@/stores/auth'
 
 export interface ExperimentStatus {
@@ -41,12 +42,12 @@ export function deleteTemplate(id: number) {
 /** Get chart URL - uses authenticated API endpoint */
 export function getChartUrl(runId: number, filename: string) {
   const token = useAuthStore().token || ''
-  return `/api/v1/experiment-lab/chart/${runId}/${filename}?token=${encodeURIComponent(token)}`
+  return apiUrl(`/api/v1/experiment-lab/chart/${runId}/${filename}?token=${encodeURIComponent(token)}`)
 }
 /** Get video URL - uses authenticated API endpoint */
 export function getVideoUrl(runId: number) {
   const token = useAuthStore().token || ''
-  return `/api/v1/experiment-lab/video/${runId}?token=${encodeURIComponent(token)}`
+  return apiUrl(`/api/v1/experiment-lab/video/${runId}?token=${encodeURIComponent(token)}`)
 }
 /** Detect if video path is a video format (mp4/avi/mov/webm) vs gif */
 export function isVideoFormat(videoPath: string | null): boolean {

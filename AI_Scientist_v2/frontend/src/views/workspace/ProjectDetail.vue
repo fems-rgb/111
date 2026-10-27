@@ -202,6 +202,7 @@ import { useAgentStore } from '@/stores/agent'
 import { useAppStore } from '@/stores/app'
 import { usePipelineStore } from '@/stores/pipeline'
 import { projectApi } from '@/api/modules/project'
+import { apiUrl } from '@/api/base'
 import { usePolling } from '@/composables/usePolling'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
@@ -449,7 +450,7 @@ async function handleAbortPipeline() {
 async function exportReport(format: 'markdown' | 'pdf') {
   try {
     const pid = projectId.value
-    const url = `/api/v1/export/competition-report/${pid}?format=${format}`
+    const url = apiUrl(`/api/v1/export/competition-report/${pid}?format=${format}`)
     const response = await fetch(url, {
       headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
     })
@@ -476,7 +477,7 @@ const compForm = ref<any>({})
 
 async function loadCompConfig() {
   try {
-    const r = await fetch(`/api/v1/export/${projectId.value}/competition-config`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('token') } })
+    const r = await fetch(apiUrl(`/api/v1/export/${projectId.value}/competition-config`), { headers: { Authorization: 'Bearer ' + localStorage.getItem('token') } })
     if (r.ok) { compConfig.value = await r.json(); compForm.value = { ...compConfig.value } }
   } catch(e) { console.error(e) }
 }
@@ -484,7 +485,7 @@ async function loadCompConfig() {
 async function saveCompConfig() {
   savingComp.value = true
   try {
-    const r = await fetch(`/api/v1/export/${projectId.value}/competition-config`, {
+    const r = await fetch(apiUrl(`/api/v1/export/${projectId.value}/competition-config`), {
       method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + localStorage.getItem('token') },
       body: JSON.stringify(compForm.value)
     })
@@ -497,7 +498,7 @@ async function saveCompConfig() {
 
 async function exportFullProposal() {
   try {
-    const r = await fetch(`/api/v1/export/competition-proposal/${projectId.value}`, {
+    const r = await fetch(apiUrl(`/api/v1/export/competition-proposal/${projectId.value}`), {
       headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
     })
     if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || r.statusText) }
@@ -510,7 +511,7 @@ async function exportFullProposal() {
 
 async function exportP1P20(fmt: 'markdown'|'pdf') {
   try {
-    const r = await fetch(`/api/v1/export/competition-report/${projectId.value}?format=${fmt}`, {
+    const r = await fetch(apiUrl(`/api/v1/export/competition-report/${projectId.value}?format=${fmt}`), {
       headers: { Authorization: 'Bearer ' + localStorage.getItem('token') }
     })
     if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.detail || r.statusText) }

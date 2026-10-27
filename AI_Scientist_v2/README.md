@@ -582,7 +582,42 @@ A：general / syllabus / kb 三类每次 rebuild 只调 1 次 LLM，结果落 `k
 **Q：AI 生成的计划能直接执行吗？**
 A：流水线 scope 的计划可以：每条 item 指定 `agent`（限 `AGENT_REGISTRY` 白名单），`POST /plans/{id}/to-pipeline` 落成 `Pipeline.steps`（≥ 2 步）后可直接 run；重复点击幂等更新步骤。
 
-## 20. 许可证与致谢
+## 20. 多端形态：桌面 · 手机 · 小程序
+
+后端是**单 REST API + 单库**，数据天然多端共享。同一份前端可产出三种形态：
+
+### 20.1 PWA（桌面 + 手机，零改动即可用）
+
+已接入 `vite-plugin-pwa`（`frontend/vite.config.ts`），构建产物含 `manifest.webmanifest`、`sw.js` 与图标（`frontend/public/`）。
+
+- **桌面安装**：Chrome / Edge 打开 `http://localhost:8000` → 地址栏右侧点“安装应用”→ 生成桌面图标，独立窗口运行。
+- **手机安装**：手机与电脑连**同一 WiFi**，浏览器开 `http://<局域网IP>:8000`（如 `http://10.5.30.207:8000`）→ “添加到主屏幕”。
+- **同步**：SW 只预缓存前端静态产物，**不缓存 `/api`**，因此各端读的都是同一份实时后端数据。
+- `run.py` 已绑 `host="0.0.0.0"`，局域网可达；SPA 与 API 同源，无需改 CORS。
+
+> 注：PWA 安装与 Service Worker 需要安全上下文（`localhost` 或 HTTPS）；纯局域网 IP 的 `http://` 在手机浏览器里可能不弹出“安装”，但页面与同步照常可用。真正要“像 App 一样”就走下面的原生包。
+
+### 20.2 原生 App（Capacitor）
+
+已装 `@capacitor/{core,cli,android}` 并生成 `capacitor.config.ts`；`android/` 工程不入库，一条命令重生成。
+
+```bash
+cd AI_Scientist_v2/frontend
+copy .env.example .env          # 将 VITE_API_BASE=http://<后端IP>:8000 填上（webview 需绝对地址）
+npm run build                    # 产出 dist
+npx cap add android              # 首次：生成 android/ 工程
+npx cap sync                     # 把 dist 同步进原生工程
+npx cap open android             # 用 Android Studio 打开
+# 在 Android Studio 里 Build > Build APK(s)，或命令：cd android && ./gradlew assembleDebug
+```
+
+打包 APK 需要本机装 **Android Studio + JDK**（首次会下载 SDK）。iOS 同理 `npx cap add ios`（需 macOS + Xcode）。
+
+### 20.3 微信小程序（需重写，分期交付）
+
+当前前端基于 **Element Plus（网页组件）**，小程序运行环境不支持，**无法直接复用**，需用 **uni-app / Taro** 重写 UI 层（API 层可直接复用，因为后端就是同一套 REST）。这是独立且成本最高的一条赛道，建议排在 PWA + 原生 App 跑通之后。
+
+## 21. 许可证与致谢
 
 本项目为挑战杯「揭榜挂帅」专项赛参赛作品，基座模型为阿里巴巴通义千问 Qwen，通过阿里云百炼（DashScope）调用。
 感谢发榜单位浙江阿里巴巴云计算有限公司提供赛题与算力支持。

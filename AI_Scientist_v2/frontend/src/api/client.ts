@@ -1,8 +1,9 @@
 ﻿import axios from 'axios'
 import { useAuthStore } from '@/stores/auth'
+import { API_BASE } from '@/api/base'
 
 const client = axios.create({
-  baseURL: '/api/v1',
+  baseURL: `${API_BASE}/api/v1`,
   timeout: 120000,
   headers: { 'Content-Type': 'application/json' }
 })
@@ -33,7 +34,7 @@ client.interceptors.response.use(
       const authStore = useAuthStore()
       if (authStore.refreshToken) {
         try {
-          const res = await axios.post('/api/v1/auth/refresh', { refresh_token: authStore.refreshToken })
+          const res = await axios.post(`${API_BASE}/api/v1/auth/refresh`, { refresh_token: authStore.refreshToken })
           authStore.setToken(res.data.access_token)
           failedQueue.forEach(({ resolve }) => resolve())
           failedQueue = []

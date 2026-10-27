@@ -1,4 +1,5 @@
 import client from '../client'
+import { apiUrl } from '@/api/base'
 import { useAuthStore } from '@/stores/auth'
 
 // ═══════ 类型 ═══════
@@ -153,5 +154,5 @@ export function generalCoverUrl(cover: string): string {
   if (!cover) return ''
   const auth = useAuthStore()
   const t = auth.token ? encodeURIComponent(auth.token) : ''
-  return `/api/v1/general/media/${encodeURIComponent(cover)}${t ? `?token=${t}` : ''}`
+  return apiUrl(`/api/v1/general/media/${encodeURIComponent(cover)}${t ? `?token=${t}` : ''}`)
 }

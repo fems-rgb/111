@@ -1,4 +1,5 @@
 ﻿import { ref, onUnmounted } from 'vue'
+import { apiUrl } from '@/api/base'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 
@@ -27,7 +28,7 @@ export function useSSE(initialSteps?: Array<{agent_name: string; display_name?: 
     const authStore = useAuthStore()
     if (!authStore.token || source) return
 
-    source = new EventSource(`/api/v1/stream/events?token=${authStore.token}`)
+    source = new EventSource(apiUrl(`/api/v1/stream/events?token=${authStore.token}`))
 
     source.onopen = () => {
       connected.value = true

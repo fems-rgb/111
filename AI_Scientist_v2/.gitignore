@@ -34,6 +34,11 @@ frontend/.vite/
 .npm
 *.tsbuildinfo
 
+# Capacitor 原生工程（一条命令可重生成：npx cap add android）
+# 仅保留 capacitor.config.ts 与 package.json 作为可复现配置
+frontend/android/
+frontend/.capacitor/
+
 # IDE
 .vscode/
 .idea/

@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import axios from 'axios'
+import { apiUrl } from '@/api/base'
 import MarkdownView from './MarkdownView.vue'
 import { useAppStore } from '@/stores/app'
 
@@ -85,7 +86,7 @@ async function analyze() {
     const formData = new FormData()
     formData.append('file', selectedFile)
     formData.append('question', question.value)
-    const res = await axios.post('/api/v1/multimodal/analyze-image', formData, {
+    const res = await axios.post(apiUrl('/api/v1/multimodal/analyze-image'), formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
       timeout: 120000
     })
