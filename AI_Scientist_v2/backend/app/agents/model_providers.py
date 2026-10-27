@@ -23,8 +23,12 @@ def _split_names(raw: str) -> list[str]:
 
 
 def _key_ok(key: str) -> bool:
-    """密钥是否可用：非空且不是样板里的占位值"""
-    return bool(key) and not key.startswith("sk-xxxx")
+    """密钥是否可用：非空、不是样板占位值（sk-xxxx…），也不是本地占位词（ollama）
+
+    注：Ollama 用占位 key“ollama”通过校验，但它靠 Provider.local 单独判定，
+    不依赖本函数；把“ollama”列入黑名单可避免系统环境变量残留把它误当真实密钥。"""
+    k = (key or "").strip()
+    return bool(k) and not k.startswith("sk-xxxx") and k.lower() not in {"ollama", "changeme", "none"}
 
 
 class Provider:
@@ -45,7 +49,8 @@ class Provider:
 
     @property
     def configured(self) -> bool:
-        return _key_ok(self.api_key)
+        # 本地端点（如 Ollama）无需真实密钥，只要启用即视为可用
+        return True if self.local else _key_ok(self.api_key)
 
     def to_dict(self) -> dict:
         return {"id": self.id, "label": self.label, "models": list(self.models),
@@ -73,6 +78,10 @@ def build_providers() -> list[Provider]:
                  settings.ZHIPU_API_KEY, _split_names(settings.ZHIPU_MODELS),
                  env_key="ZHIPU_API_KEY",
                  hint="open.bigmodel.cn 注册领免费 key（glm-4-flash 免费）"),
+        Provider("openai", "OpenAI / ChatGPT", settings.OPENAI_BASE_URL,
+                 settings.OPENAI_API_KEY, _split_names(settings.OPENAI_MODELS),
+                 env_key="OPENAI_API_KEY",
+                 hint="platform.openai.com 付费（无免费额度），能力最强"),
         Provider("gemini", "Google Gemini", settings.GEMINI_BASE_URL,
                  settings.GEMINI_API_KEY, _split_names(settings.GEMINI_MODELS),
                  env_key="GEMINI_API_KEY",

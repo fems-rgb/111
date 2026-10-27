@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     CUSTOM_MODELS: str = ""
 
     # ── 免费额度云端供应商（均为 OpenAI 兼容 /chat/completions；领个免费 key 填上即出现在下拉）──
+    # OpenAI / ChatGPT（platform.openai.com 付费、无免费额度，但能力强）
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1/chat/completions"
+    OPENAI_MODELS: str = "gpt-4o-mini,gpt-4o,gpt-4.1"
     # Google Gemini（aistudio.google.com 免费额度，快且强）
     GEMINI_API_KEY: str = ""
     GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
