@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # DeepSeek（深度求索）
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1/chat/completions"
-    DEEPSEEK_MODELS: str = "deepseek-chat,deepseek-reasoner"
+    DEEPSEEK_MODELS: str = "deepseek-flash,deepseek-v4-pro"
     # Moonshot Kimi
     MOONSHOT_API_KEY: str = ""
     MOONSHOT_BASE_URL: str = "https://api.moonshot.cn/v1/chat/completions"
