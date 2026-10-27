@@ -255,6 +255,8 @@ async function submitDraft() {
     const r = await generalApi.draft({
       topic: form.topic, audience: form.audience, level: form.level,
       mode: appStore.mode,
+      // 顶栏全局首选模型（未选则后端按模式定档）
+      model: appStore.preferredModel || undefined,
       // 快速模式不传节数，由后端按模式默认（约 4 节）；专家模式用用户自定
       ...(isExpert.value ? { chapter_count: form.chapter_count } : {}),
     })

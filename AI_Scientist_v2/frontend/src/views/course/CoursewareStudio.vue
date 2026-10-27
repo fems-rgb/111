@@ -110,12 +110,16 @@
           <div v-if="isExpert">
             <label class="block text-xs font-medium text-surface-600 mb-1">🧠 生成模型（可选，留空按模式自动定档）</label>
             <div class="flex items-center gap-2">
+              <button type="button" @click="cycleModel(-1)" title="上一个模型" v-if="models.length"
+                      class="px-1.5 py-1 text-xs rounded-md border border-surface-200 text-surface-500 hover:bg-surface-100">◀</button>
               <select v-model="form.model" class="input-field text-sm py-1.5 max-w-xs">
                 <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
                 <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.label">
                   <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }}{{ m.unavailable ? ' ⚠️ 额度受限' : '' }}</option>
                 </optgroup>
               </select>
+              <button type="button" @click="cycleModel(1)" title="下一个模型" v-if="models.length"
+                      class="px-1.5 py-1 text-xs rounded-md border border-surface-200 text-surface-500 hover:bg-surface-100">▶</button>
               <span v-if="selectedModelDesc" class="text-[11px] text-surface-400">{{ selectedModelDesc }}</span>
             </div>
           </div>
@@ -609,7 +613,8 @@ async function generate() {
       course_id: form.course_id,
       sources: form.sources,
       auto_save: true,
-      model: form.model || undefined,
+      // 面板显式选择 > 顶栏全局首选 > 不传（后端按模式定档）
+      model: form.model || appStore.preferredModel || undefined,
       mode: appStore.mode,
     })
     const jobId = res.data.job_id
@@ -644,6 +649,16 @@ async function stop() {
       errMsg.value = e?.response?.data?.detail || '停止失败，请重试'
     }
   }
+}
+
+// 下拉两侧 ◀▶：在「默认 → 各模型」间循环切换（默认档永远参与，模型列表原样保留）
+function cycleModel(dir: number) {
+  const names = models.value.map(m => m.value)
+  if (!names.length) return
+  const ring = ['', ...names]
+  const idx = ring.indexOf(form.model)
+  const next = (idx + dir + ring.length) % ring.length
+  form.model = ring[next]
 }
 
 async function loadModels() {

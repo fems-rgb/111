@@ -410,7 +410,7 @@ async function aiOutline() {
   aiLoading.value = true
   createMsg.value = ''
   try {
-    const res = await courseApi.aiOutline({ text: form.syllabus, domain: form.domain, sources: form.sources, mode: appStore.mode })
+    const res = await courseApi.aiOutline({ text: form.syllabus, domain: form.domain, sources: form.sources, mode: appStore.mode, model: appStore.preferredModel || undefined })
     const d = res.data
     outlineChapters.value = d.chapters || []
     if (d.title && !form.title) form.title = d.title

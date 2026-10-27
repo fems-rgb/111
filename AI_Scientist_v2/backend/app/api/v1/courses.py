@@ -1366,7 +1366,7 @@ async def ai_outline(req: OutlineRequest, user: User = Depends(require_teacher),
     """粘贴大纲/讲义文本（也可叠加素材）→ 自动结构化章节，开课辅助"""
     material, provenance = await _resolve_material(db, user, req.sources, "", None, None)
     text = req.text + (("\n\n" + material) if material else "")
-    data, usage = await course_ai_service.outline_from_syllabus(text, req.domain, mode=req.mode)
+    data, usage = await course_ai_service.outline_from_syllabus(text, req.domain, mode=req.mode, model=req.model)
     return {"ok": True, "title": data.get("title", ""), "domain": data.get("domain", ""),
             "chapters": data.get("chapters", []), "cost": usage.get("cost", 0),
             "sources_used": provenance}

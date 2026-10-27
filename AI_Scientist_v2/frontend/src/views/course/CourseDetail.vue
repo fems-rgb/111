@@ -303,12 +303,18 @@
               </div>
               <div>
                 <label class="block text-[11px] font-medium text-surface-600 mb-1">🧠 生成模型（可选）</label>
-                <select v-model="gen.model" class="input-field text-sm">
-                  <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
-                  <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.label">
-                    <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }} — {{ m.desc }}</option>
-                  </optgroup>
-                </select>
+                <div class="flex items-center gap-2">
+                  <button type="button" @click="cycleModel(-1)" title="上一个模型" v-if="models.length"
+                          class="px-1.5 py-1 text-xs rounded-md border border-surface-200 text-surface-500 hover:bg-surface-100">◀</button>
+                  <select v-model="gen.model" class="input-field text-sm">
+                    <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
+                    <optgroup v-for="g in modelGroups" :key="g.provider" :label="g.label">
+                      <option v-for="m in g.items" :key="m.value" :value="m.value">{{ m.label }} — {{ m.desc }}</option>
+                    </optgroup>
+                  </select>
+                  <button type="button" @click="cycleModel(1)" title="下一个模型" v-if="models.length"
+                          class="px-1.5 py-1 text-xs rounded-md border border-surface-200 text-surface-500 hover:bg-surface-100">▶</button>
+                </div>
               </div>
               <div>
                 <label class="block text-xs font-medium text-surface-600 mb-1">补充要求（可选）</label>
@@ -485,11 +491,13 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareBrief, type MaterialSources, type MaterialSelection, type GenerateJobStatus, type GenerateModelItem, type GenerateModelGroup } from '@/api/modules/courses'
 import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const appStore = useAppStore()
 
 const courseId = computed(() => Number(route.params.id || 0))
 const loading = ref(true)
@@ -720,7 +728,8 @@ async function runGenerate() {
       topic: gen.topic, syllabus: gen.syllabus, chapter_count: gen.chapter_count,
       slides_per_chapter: gen.slides_per_chapter, style: gen.style, audience: gen.audience,
       domain: course.value?.domain, sources: gen.sources, course_id: courseId.value, auto_save: true,
-      model: gen.model || undefined,
+      // 面板显式选择 > 顶栏全局首选 > 不传（后端按模式定档）
+      model: gen.model || appStore.preferredModel || undefined,
     })
     const jobId = res.data.job_id
     if (!jobId) throw new Error('服务端未返回 job_id')
@@ -747,6 +756,16 @@ async function stopGen() {
     genCancelling.value = false
     if (e?.response?.status !== 409) genMsg.value = e?.response?.data?.detail || '停止失败，请重试'
   }
+}
+
+// 下拉两侧 ◀▶：在「默认 → 各模型」间循环切换
+function cycleModel(dir: number) {
+  const names = models.value.map(m => m.value)
+  if (!names.length) return
+  const ring = ['', ...names]
+  const idx = ring.indexOf(gen.model)
+  const next = (idx + dir + ring.length) % ring.length
+  gen.model = ring[next]
 }
 
 async function loadModels() {

@@ -91,3 +91,5 @@ class OutlineRequest(BaseModel):
     domain: str = Field(default="", max_length=100)
     sources: Optional[dict[str, Any]] = None
     mode: str = Field(default="quick", max_length=12)
+    # 显式选模（顶栏全局首选/面板选择）；为空则按模式定档
+    model: Optional[str] = Field(None, max_length=60)

@@ -601,12 +601,13 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 
 
 async def outline_from_syllabus(text: str, domain: str = "", project_id: int = None,
-                                mode: str = None) -> dict:
+                                mode: str = None, model: str = None) -> dict:
     """辅助联动：把粘贴的大纲/研报文本抽取成章节结构
 
     mode：'quick' 每章只提 3-4 个核心知识点；'expert' 每章展开更细（5-8 个知识点、可再带子项）。
+    model：显式选模优先，为空按模式定档。
     """
-    policy = mode_policy.apply_mode(mode, long_text=text)
+    policy = mode_policy.apply_mode(mode, model, long_text=text)
     fine = ("每章提炼 5-8 个知识点，尽量把原理、方法、案例都覆盖到。"
             if policy["mode"] == mode_policy.EXPERT
             else "每章只留 3-4 个最核心的知识点，抓主干。")

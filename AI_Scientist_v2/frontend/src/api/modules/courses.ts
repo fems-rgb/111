@@ -291,7 +291,7 @@ export const courseApi = {
     slides_per_chapter?: number; skill_runs?: { skill_id: string }[]; title?: string
   }) => client.post<any>(`/courses/${courseId}/sync-from-pipeline`, data, { timeout: 300000 }),
 
-  aiOutline: (data: { text: string; domain?: string; sources?: MaterialSelection; mode?: string }) =>
+  aiOutline: (data: { text: string; domain?: string; sources?: MaterialSelection; mode?: string; model?: string }) =>
     client.post<{ ok: boolean; title: string; domain: string; chapters: Chapter[] }>(
       '/courses/ai/outline', data, { timeout: 240000 }),
 }

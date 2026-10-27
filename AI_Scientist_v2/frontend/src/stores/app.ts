@@ -15,6 +15,8 @@ export const useAppStore = defineStore('app', () => {
   const darkMode = ref(localStorage.getItem('ai_dark_mode') === 'true')
   const mode = ref<'quick' | 'expert'>((localStorage.getItem('ai_mode') as any) || 'quick')
   const currentWorkspace = ref(localStorage.getItem('ai_workspace') || 'personal')
+  // 全局首选模型：'' = 按模式自动定档；顶栏 ModelSwitcher 与各请求层共用
+  const preferredModel = ref(localStorage.getItem('ai_pref_model') || '')
 
   function applyDarkMode(val: boolean) {
     if (val) document.documentElement.classList.add('dark')
@@ -27,6 +29,7 @@ export const useAppStore = defineStore('app', () => {
   })
   watch(mode, (val) => localStorage.setItem('ai_mode', val))
   watch(currentWorkspace, (val) => localStorage.setItem('ai_workspace', val))
+  watch(preferredModel, (val) => localStorage.setItem('ai_pref_model', val))
 
   // ===== 题库视图持久化状态（跨路由切换不丢失） =====
   // 内部字段用宽松类型，消费端 (QuestionsView) 通过带类型的 computed 消费
@@ -102,11 +105,12 @@ export const useAppStore = defineStore('app', () => {
   function toggleDarkMode() { darkMode.value = !darkMode.value }
   function setMode(m: 'quick' | 'expert') { mode.value = m }
   function setWorkspace(ws: string) { currentWorkspace.value = ws }
+  function setPreferredModel(m: string) { preferredModel.value = m }
 
   return {
     // UI
-    sidebarCollapsed, darkMode, mode, currentWorkspace,
-    toggleSidebar, toggleDarkMode, setMode, setWorkspace,
+    sidebarCollapsed, darkMode, mode, currentWorkspace, preferredModel,
+    toggleSidebar, toggleDarkMode, setMode, setWorkspace, setPreferredModel,
     // 题库视图
     questionsView,
     // Toast

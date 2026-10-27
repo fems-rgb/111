@@ -39,6 +39,9 @@
 
       <span class="text-sm text-surface-500 dark:text-surface-400 hidden sm:inline">{{ new Date().toLocaleDateString('zh-CN') }}</span>
 
+      <!-- 全局模型左右切换（◀ 自动/模型 ▶） -->
+      <ModelSwitcher />
+
       <!-- 快速/专家模式 -->
       <div class="flex items-center bg-surface-100 dark:bg-surface-700 rounded-lg p-0.5">
         <button @click="switchMode('quick')"
@@ -70,6 +73,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
+import ModelSwitcher from '@/components/common/ModelSwitcher.vue'
 
 const router = useRouter()
 const appStore = useAppStore()

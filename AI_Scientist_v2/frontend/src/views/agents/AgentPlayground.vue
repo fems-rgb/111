@@ -535,7 +535,8 @@ async function handleAbortPipeline() {
 }
 // ===== 对话逻辑 =====
 const selectedAgent = ref('general')
-const selectedModel = ref('qwen-plus')
+// 初值取顶栏全局首选模型（未选则保持 qwen-plus）
+const selectedModel = ref(appStore.preferredModel || 'qwen-plus')
 // 模型下拉：从后端供应商注册表加载（含 DeepSeek/Kimi/GLM/自定义，仅已配密钥的）；失败则退化 qwen 三档
 const modelGroups = ref<GenerateModelGroup[]>([])
 coursewareApi.generateModels()
