@@ -15,8 +15,9 @@ from app.config import settings
 QUICK = "quick"
 EXPERT = "expert"
 
-# 模式 -> 模型档位（成本优先：quick 用最省的 qwen-turbo，expert 才上最贵的 qwen-max）
-MODE_MODEL = {QUICK: "qwen-turbo", EXPERT: "qwen-max"}
+# 模式 -> 模型档位（成本优先：默认 quick 走本地免费 DeepSeek，仅 expert 才上云端 qwen-max）
+# 注：deepseek-r1:7b 需本机 Ollama 已 pull 且后端重启后才会被路由到本地；未就绪时会回退到云端默认档
+MODE_MODEL = {QUICK: "deepseek-r1:7b", EXPERT: "qwen-max"}
 # 专家档遇到超长素材时升长上下文模型
 LONGCONTEXT_MODEL = "qwen-max-longcontext"
 
