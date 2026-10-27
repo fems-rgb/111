@@ -404,6 +404,13 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
     model：命白名单则用该模型，否则用默认；should_cancel() 为真时抛 GenerationCancelled。
     """
     mdl = resolve_model(model)
+    # 实际用到的模型（限流时 qwen_client 会自动回退，这里如实记录供前端提示）
+    models_used: list[str] = []
+
+    def _track(res: dict) -> None:
+        m = str(res.get("model") or mdl)
+        if m not in models_used:
+            models_used.append(m)
 
     def _cancelled() -> bool:
         return bool(should_cancel and should_cancel())
@@ -434,6 +441,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 章节数：{chapter_count}，每章约 {slides_per_chapter} 页{syl_block}{ref_block}
 
 只输出 JSON。""", project_id=project_id, max_tokens=1600, model=mdl)
+    _track(res)
     cost += res.get("cost", 0)
     tin += res["tokens"]["input"]
     tout += res["tokens"]["output"]
@@ -487,6 +495,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 
 只输出 {{"slides": [...]}}。""", project_id=project_id,
                               max_tokens=min(8000, 1600 + slides_per_chapter * 1200), model=mdl)
+        _track(cres)
         cost += cres.get("cost", 0)
         tin += cres["tokens"]["input"]
         tout += cres["tokens"]["output"]
@@ -529,6 +538,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
             f"另给 detail 80-120 字串起全课因果链、notes 150 字以上的结课速记）、"
             f"3 个可带走的结论（takeaway，每条≤22 字）、3 道思考题、2-4 条延伸阅读建议。\n只输出 JSON。",
             project_id=project_id, max_tokens=2000, model=mdl)
+        _track(sres)
         cost += sres.get("cost", 0)
         tin += sres["tokens"]["input"]
         tout += sres["tokens"]["output"]
@@ -569,6 +579,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
         "exercises": exercises,
         "reading": reading,
         "model": mdl,
+        "models_used": models_used or [mdl],
         "cost": round(cost, 6),
         "tokens": {"input": tin, "output": tout},
     }

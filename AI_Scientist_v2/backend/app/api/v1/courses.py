@@ -22,6 +22,7 @@ from app.database.models import (User, UserRole, Course, CourseStatus, Coursewar
                                  Enrollment, Document, Project, Pipeline, PipelineRun)
 from app.api.deps import get_current_user, get_current_user_flexible
 from app.config import settings
+from app.agents import qwen_client
 from app.security.sanitizer import sanitize_filename
 from app.utils import paths
 from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, GenerateDeckRequest,
@@ -493,13 +494,17 @@ async def list_generate_models():
     """
     default = settings.QWEN_MODEL_NAME
     labels = {
-        "qwen-turbo": ("Qwen-Turbo（快速）", "速度快、成本低，适合初稿"),
+        "qwen-turbo": ("Qwen-Turbo（快速）", "速度快、成本低；部分账号该模型无配额，选中后失败会自动回退"),
         "qwen-plus": ("Qwen-Plus（均衡）", "质量与速度均衡，推荐"),
         "qwen-max": ("Qwen-Max（强力）", "质量最高，较慢较贵"),
         "qwen-max-longcontext": ("Qwen-Max 长文", "适合超长大纲/参考资料"),
     }
+    # 进程内限流记忆：最近撞过 429/未开通的模型标出来，避免用户反复踩同一个坑
+    blocked = qwen_client.model_status()
     items = [{"value": m, "label": labels.get(m, (m, ""))[0],
-              "desc": labels.get(m, ("", ""))[1], "is_default": m == default}
+              "desc": labels.get(m, ("", ""))[1], "is_default": m == default,
+              "unavailable": blocked.get(m, {}).get("blocked_seconds", 0) > 0,
+              "unavailable_reason": blocked.get(m, {}).get("reason", "")}
              for m in course_ai_service.SUPPORTED_MODELS]
     return {"ok": True, "default": default, "items": items}
 
@@ -1204,7 +1209,8 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
 
     if not req.auto_save:
         return {"ok": True, "saved": False, "slides": slides, "chapters": meta.get("chapters", []),
-                "cost": meta.get("cost", 0), "sources_used": provenance}
+                "cost": meta.get("cost", 0), "sources_used": provenance,
+                "models_used": meta.get("models_used", [])}
 
     cw = Courseware(course_id=course.id, title=req.title or f"{req.topic} · AI 生成课件",
                     source_type="ai_generated", status="converting", slide_count=len(slides))
@@ -1243,6 +1249,8 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
     rep["exercises"] = meta.get("exercises", [])
     rep["reading"] = meta.get("reading", [])
     rep["objectives"] = meta.get("objectives", [])
+    # 限流回退后实际用的模型：阅读页/工坊可据此提示“已自动切换”
+    rep["models_used"] = meta.get("models_used", [])
     cw.staleness_report = rep
     await db.commit()
     logger.info(f"🎓 AI 生成课件 cw{cw.id} {len(slides)}页 (cost ¥{meta.get('cost', 0):.4f}, "
@@ -1251,6 +1259,7 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
             "slide_count": cw.slide_count, "chapters": meta.get("chapters", []),
             "cost": meta.get("cost", 0), "tokens": meta.get("tokens", {}), "version": cw.version,
             "model": meta.get("model", ""),
+            "models_used": meta.get("models_used", []),
             "title": cw.title, "exercises": meta.get("exercises", []),
             "reading": meta.get("reading", []),
             "pptx_url": f"/api/v1/coursewares/{cw.id}/export/pptx",

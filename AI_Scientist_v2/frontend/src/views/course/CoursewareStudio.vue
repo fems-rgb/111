@@ -92,7 +92,7 @@
             <div class="flex items-center gap-2">
               <select v-model="form.model" class="input-field text-sm py-1.5 max-w-xs">
                 <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
-                <option v-for="m in models" :key="m.value" :value="m.value">{{ m.label }}</option>
+                <option v-for="m in models" :key="m.value" :value="m.value">{{ m.label }}{{ m.unavailable ? ' ⚠️ 额度受限' : '' }}</option>
               </select>
               <span v-if="selectedModelDesc" class="text-[11px] text-surface-400">{{ selectedModelDesc }}</span>
             </div>
@@ -299,9 +299,15 @@ const form = reactive({
   course_id: null as number | null, sources: {} as MaterialSelection,
   model: '',
 })
-const models = ref<GenerateModelItem[]>([])
+const models = ref<(GenerateModelItem & { unavailable?: boolean; unavailable_reason?: string })[]>([])
 const defaultModel = ref('')
-const selectedModelDesc = computed(() => models.value.find(m => m.value === form.model)?.desc || '')
+const selectedModelDesc = computed(() => {
+  const m = models.value.find(x => x.value === form.model)
+  if (!m) return ''
+  return m.unavailable
+    ? `⚠️ ${m.unavailable_reason || '该模型当前额度受限'}；生成时会自动换用其他可用模型`
+    : m.desc
+})
 
 const busy = ref(false)
 const errMsg = ref('')
@@ -468,6 +474,11 @@ async function pollJob(jobId: string) {
       forgetJob()
       result.value = s.result
       job.value = { ...s, percent: 100 }
+      // 所选模型被限流时后端会自动回退，这里把实际用的模型说清楚
+      const used = (s.result as any).models_used as string[] | undefined
+      if (form.model && used?.length && !used.includes(form.model)) {
+        noticeMsg.value = `所选模型 ${form.model} 当前不可用，已自动改用 ${used.join(' / ')} 完成生成。`
+      }
       if (s.result.courseware_id) await loadPreview(s.result.courseware_id)
       await Promise.all([loadHistory(), loadMyCourses()])
     } else if (s.status === 'failed') {

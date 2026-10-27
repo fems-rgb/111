@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     QWEN_VISION_MODEL: str = "qwen-vl-max"
     QWEN_MAX_TOKENS: int = 8192
     QWEN_TEMPERATURE: float = 0.7
+    # 429/5xx 时的单模型重试次数（总计尝试次数，含首次）
+    QWEN_MAX_RETRIES: int = 2
+    # 首选模型不可用（429 限流 / 403 未开通）时按顺序回退的模型，逗号分隔
+    QWEN_FALLBACK_MODELS: str = "qwen-plus,qwen-max,qwen-max-longcontext"
 
     # ── 安全 ──
     RATE_LIMIT_PER_MINUTE: int = 60
