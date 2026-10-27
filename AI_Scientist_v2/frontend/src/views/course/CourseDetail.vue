@@ -106,6 +106,17 @@
           </div>
         </div>
         <pre v-if="showSyllabus" class="mt-3 text-xs text-surface-600 bg-surface-50 rounded-lg p-3 max-h-64 overflow-y-auto whitespace-pre-wrap font-mono">{{ course.syllabus }}</pre>
+
+        <!-- 知识点图（可折叠） -->
+        <div class="mt-4 pt-4 border-t border-surface-100">
+          <button @click="graphOpen = !graphOpen" class="text-xs text-primary-600 hover:underline">
+            {{ graphOpen ? '▲ 收起知识点图' : '▼ 展开知识点图' }}
+          </button>
+          <div v-if="graphOpen" class="mt-3" style="height: 400px">
+            <GraphView scope="syllabus" :scope-id="course.id" :auto-load="false"
+                       empty-tip="让 AI 从当前大纲抽取知识点关联图（需课程已录入大纲或章节）" />
+          </div>
+        </div>
       </div>
 
       <!-- ═══ 课件列表 ═══ -->
@@ -493,6 +504,7 @@ import { courseApi, coursewareApi, uploadProgress, type Course, type CoursewareB
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
+import GraphView from '@/components/common/GraphView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -507,6 +519,7 @@ const coursewares = ref<CoursewareBrief[]>([])
 const students = ref<any[]>([])
 const isTeacher = ref(false)
 const showSyllabus = ref(false)
+const graphOpen = ref(false)
 const scanning = ref<number | null>(null)
 
 const materials = reactive<MaterialSources>({

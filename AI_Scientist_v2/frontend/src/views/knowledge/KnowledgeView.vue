@@ -193,6 +193,19 @@
       </div>
     </div>
 
+    <!-- 知识图谱（知识库共享一张图，节点 = 文档/概念） -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold text-surface-800">🕸️ 知识图谱</h3>
+        <button @click="graphOpen = !graphOpen" class="text-xs text-surface-500 hover:text-primary-600">{{ graphOpen ? '收起 ▲' : '展开 ▼' }}</button>
+      </div>
+      <div v-if="graphOpen" style="height: 420px">
+        <GraphView scope="kb" scope-id="me" :auto-load="false"
+                   empty-tip="让 AI 从你的知识库中抽取关联图谱（需先上传至少一份文档）" />
+      </div>
+      <p v-if="!graphOpen" class="text-xs text-surface-400">展开后从当前用户的全部文档中抽取概念关系图</p>
+    </div>
+
     <div class="card overflow-hidden">
       <table class="w-full text-sm">
         <thead class="bg-surface-50 border-b border-surface-200">
@@ -320,7 +333,10 @@ import { useRouter, useRoute } from 'vue-router'
 import type { ExternalPaper } from '@/api/modules/knowledge'
 import { knowledgeApi, type KnowledgeDoc } from '@/api/modules/knowledge'
 import EbookDocPreview from '@/components/common/EbookDocPreview.vue'
+import GraphView from '@/components/common/GraphView.vue'
 import { useAppStore } from '@/stores/app'
+
+const graphOpen = ref(false)
 
 const router = useRouter()
 const route = useRoute()

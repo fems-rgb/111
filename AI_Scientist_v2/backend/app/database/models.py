@@ -718,6 +718,28 @@ class GeneralLesson(Base):
     course = relationship("GeneralCourse", back_populates="lessons")
 
 
+class KnowledgeGraph(Base):
+    """通用知识图谱缓存（Phase C）
+
+    一张表承载四个 scope：general(通识课) / kb(知识库) / project(研究项目) /
+    syllabus(课程大纲)。nodes/edges 存原始 JSON，前端自研 SVG 力导向消费。
+    project 由外键直接组装零 LLM；其余三个 scope 由 call_qwen 一次抽取。
+    """
+    __tablename__ = "knowledge_graphs"
+    __table_args__ = (UniqueConstraint("scope", "scope_id", name="uq_kg_scope"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    scope = Column(String(16), nullable=False, index=True)      # general / kb / project / syllabus
+    scope_id = Column(String(64), nullable=False, index=True)   # 课程/项目/用户 id（kb 按 user）
+    nodes = Column(JSON, default=list)                          # [{id,label,group}]
+    edges = Column(JSON, default=list)                          # [[source,target,relation]]
+    status = Column(String(16), default="ready")                # ready / empty
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    model_used = Column(String(64), default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class GeneralProgress(Base):
     """学习进度：按 (user, lesson) 唯一，用于课程卡片完成度与续学定位"""
     __tablename__ = "general_progress"

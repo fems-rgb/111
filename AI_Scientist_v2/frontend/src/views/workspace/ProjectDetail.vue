@@ -155,6 +155,18 @@
       </div>
     </div>
 
+    <!-- 项目结构图（零 LLM，从任务/假设外键直接组装） -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">🕸️ 项目结构图</h2>
+        <button @click="graphOpen = !graphOpen" class="text-xs text-surface-500 hover:text-primary-600">{{ graphOpen ? '收起 ▲' : '展开 ▼' }}</button>
+      </div>
+      <div v-if="graphOpen" style="height: 420px">
+        <GraphView scope="project" :scope-id="project.id"
+                   empty-tip="项目还没有任务与假设，启动研究后会自动出图" />
+      </div>
+    </div>
+
     <!-- 最终成果 -->
     <div v-if="project.final_output" class="card">
       <h2 class="text-lg font-semibold mb-4">📄 最终研究成果</h2>
@@ -194,6 +206,9 @@ import { usePolling } from '@/composables/usePolling'
 import StatusBadge from '@/components/common/StatusBadge.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import PipelineProgress from '@/components/pipeline/PipelineProgress.vue'
+import GraphView from '@/components/common/GraphView.vue'
+
+const graphOpen = ref(false)
 
 const route = useRoute()
 const router = useRouter()

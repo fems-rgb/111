@@ -138,6 +138,19 @@
         </div>
       </div>
 
+      <!-- 知识图谱（可折叠） -->
+      <div class="mt-6">
+        <button class="w-full flex items-center justify-between text-sm font-semibold text-surface-800"
+                @click="graphOpen = !graphOpen">
+          <span>🕸️ 知识图谱</span>
+          <span class="text-[11px] text-surface-400">{{ graphOpen ? '收起 ▲' : '展开 ▼' }}</span>
+        </button>
+        <div v-if="graphOpen" class="mt-3" style="height: 420px">
+          <GraphView scope="general" :scope-id="course.id"
+                     empty-tip="让 AI 从课程大纲抽取知识图谱" />
+        </div>
+      </div>
+
       <p class="mt-8 text-center text-[11px] text-surface-400">
         本文由 AI 生成初稿，作者可逐节重写。读到不对的地方，随时用每节底部的 AI 助教追问。
       </p>
@@ -149,8 +162,11 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
+import GraphView from '@/components/common/GraphView.vue'
 import { generalApi, generalCoverUrl, type GeneralCourseDetail } from '@/api/modules/general'
 import './general.css'
+
+const graphOpen = ref(false)
 
 const route = useRoute()
 const router = useRouter()
