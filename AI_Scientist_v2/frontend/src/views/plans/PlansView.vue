@@ -18,6 +18,19 @@
       </button>
     </div>
 
+    <!-- 批量管理条：全选 / 删除选中 -->
+    <div v-if="!loading && items.length" class="card p-3 mb-3 flex flex-wrap items-center gap-2 text-xs">
+      <label class="flex items-center gap-1 cursor-pointer select-none">
+        <input type="checkbox" class="rounded border-surface-300" :checked="allSelected"
+               :indeterminate="sel.size > 0 && !allSelected" @change="toggleAll" />
+        全选（共 {{ items.length }} 个）
+      </label>
+      <button @click="batchDelete" :disabled="!sel.size || deleting"
+              class="px-2.5 py-1 rounded-md bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
+        🗑 删除选中{{ sel.size ? ` (${sel.size})` : '' }}
+      </button>
+    </div>
+
     <div v-if="loading && !items.length" class="py-16 text-center text-sm text-surface-400">加载中…</div>
     <div v-else-if="!items.length" class="py-16 text-center">
       <p class="text-4xl mb-3">📝</p>
@@ -29,9 +42,12 @@
     </div>
 
     <div v-else class="space-y-3">
-      <div v-for="p in items" :key="p.id" class="card p-4">
+      <div v-for="p in pagedItems" :key="p.id" class="card p-4">
         <div class="flex items-start justify-between gap-3">
-          <div class="min-w-0 flex-1">
+          <div class="flex items-start gap-2 min-w-0 flex-1">
+            <input type="checkbox" class="mt-1 rounded border-surface-300 flex-shrink-0"
+                   :checked="sel.has(p.id)" @change="toggle(p.id)" />
+            <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 flex-wrap">
               <h3 class="text-base font-semibold text-surface-800 truncate">{{ p.title }}</h3>
               <span class="text-[10px] px-2 py-0.5 rounded-full" :class="sourceClass(p.source)">{{ p.source === 'ai' ? 'AI' : '手动' }}</span>
@@ -44,6 +60,7 @@
               <span v-if="p.due_at">· 到期 {{ fmtDate(p.due_at) }}</span>
               <span v-if="dueSoon(p)" class="text-amber-600 ml-1">⚠ 即将到期</span>
             </p>
+            </div>
           </div>
           <div class="flex items-center gap-1 flex-shrink-0">
             <button v-if="canToPipeline(p)" @click="toPipeline(p)" :disabled="busy === p.id"
@@ -76,7 +93,14 @@
       </div>
     </div>
 
-    <!-- ═══ 新建计划 ═══ -->
+    <!-- 分页：页码 + 翻页 -->
+    <div v-if="!loading && pages > 1" class="flex items-center justify-center gap-3 mt-4 text-sm">
+      <button @click="page = Math.max(1, page - 1)" :disabled="page <= 1"
+              class="px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-100 disabled:opacity-40">◀ 上一页</button>
+      <span class="text-surface-500">第 {{ page }} / {{ pages }} 页 · 共 {{ items.length }} 个</span>
+      <button @click="page = Math.min(pages, page + 1)" :disabled="page >= pages"
+              class="px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-100 disabled:opacity-40">下一页 ▶</button>
+    </div>
     <Teleport to="body">
       <div v-if="showCreate" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="showCreate = false">
         <div class="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -211,12 +235,47 @@ const items = ref<Plan[]>([])
 const loading = ref(false)
 const busy = ref<number | null>(null)
 const projects = ref<Array<{ id: number; title: string }>>([])
+// 多选 + 分页 + 批量删除
+const sel = ref(new Set<number>())
+const deleting = ref(false)
+const PAGE_SIZE = 10
+const page = ref(1)
+const pages = computed(() => Math.max(1, Math.ceil(items.value.length / PAGE_SIZE)))
+const pagedItems = computed(() => {
+  const start = (page.value - 1) * PAGE_SIZE
+  return items.value.slice(start, start + PAGE_SIZE)
+})
+const allSelected = computed(() =>
+  items.value.length > 0 && items.value.every(p => sel.value.has(p.id)))
+function toggle(id: number) {
+  const s = new Set(sel.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  sel.value = s
+}
+function toggleAll() {
+  sel.value = allSelected.value ? new Set<number>() : new Set(items.value.map(p => p.id))
+}
+async function batchDelete() {
+  const ids = [...sel.value]
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 个计划？不可恢复。`)) return
+  deleting.value = true
+  try {
+    for (const id of ids) { try { await plansApi.remove(id) } catch { /* 单条失败不中断 */ } }
+    appStore.showToast?.(`已删除 ${ids.length} 个计划`, 'success')
+    sel.value = new Set()
+    page.value = 1
+    await load()
+  } finally { deleting.value = false }
+}
 
 async function load() {
   loading.value = true
   try {
     const r = await plansApi.list(currentTab.value)
     items.value = r.data?.items || []
+    sel.value = new Set()
+    page.value = 1
   } catch (e: any) {
     appStore.showToast?.('加载计划失败：' + (e?.message || e), 'error')
   } finally { loading.value = false }

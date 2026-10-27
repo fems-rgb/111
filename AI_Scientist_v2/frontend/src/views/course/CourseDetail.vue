@@ -137,6 +137,20 @@
           </div>
         </div>
 
+        <!-- 教师批量操作条：全选 / 删除选中 -->
+        <div v-if="isTeacher && coursewares.length" class="flex flex-wrap items-center gap-2 mb-3 text-xs">
+          <label class="flex items-center gap-1 cursor-pointer select-none">
+            <input type="checkbox" class="rounded border-surface-300" :checked="cwAllSelected"
+                   :indeterminate="cwSelected.size > 0 && !cwAllSelected" @change="cwToggleAll" />
+            全选
+          </label>
+          <button @click="cwBatchDelete" :disabled="!cwSelected.size"
+                  class="px-2.5 py-1 rounded-md bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
+            🗑 删除选中{{ cwSelected.size ? ` (${cwSelected.size})` : '' }}
+          </button>
+          <span v-if="cwSelected.size" class="text-surface-400">已选 {{ cwSelected.size }} / {{ coursewares.length }} 份</span>
+        </div>
+
         <div v-if="uploading" class="mb-3 p-3 rounded-lg bg-blue-50 border border-blue-100">
           <div class="flex items-center justify-between text-xs mb-1.5">
             <span class="text-blue-700">⏳ {{ uploadMsg }}</span>
@@ -158,6 +172,8 @@
           <div v-for="w in coursewares" :key="w.id"
                class="p-4 rounded-lg border border-surface-100 hover:border-primary-200 hover:shadow-sm transition-all">
             <div class="flex items-start gap-3">
+              <input v-if="isTeacher" type="checkbox" class="mt-1 rounded border-surface-300"
+                     :checked="cwSelected.has(w.id)" @change="cwToggle(w.id)" />
               <div class="w-10 h-10 rounded-lg flex items-center justify-center text-lg flex-shrink-0"
                    :class="w.source_type === 'ai_generated' ? 'bg-purple-100' : 'bg-blue-100'">
                 {{ w.source_type === 'ai_generated' ? '🤖' : '📊' }}
@@ -553,6 +569,9 @@ async function loadCourse() {
     const res = await courseApi.detail(courseId.value)
     course.value = res.data
     coursewares.value = res.data.coursewares || []
+    // 重拉后只保留仍存在的课件选择
+    const _valid = new Set((res.data.coursewares || []).map((w: CoursewareBrief) => w.id))
+    cwSelected.value = new Set([...cwSelected.value].filter(id => _valid.has(id)))
     isTeacher.value = !!res.data.is_teacher
     if (isTeacher.value) loadStudents()
     if (route.query.new === '1' && isTeacher.value) showGenerate.value = true
@@ -626,6 +645,32 @@ async function onPickFile(e: Event) {
 async function removeCourseware(w: CoursewareBrief) {
   if (!confirm(`确定删除课件「${w.title}」？`)) return
   try { await coursewareApi.remove(w.id); await loadCourse() } catch (e: any) { alert(e?.response?.data?.detail || '删除失败') }
+}
+
+// 课件列表：多选 + 批量删除
+const cwSelected = ref(new Set<number>())
+const cwAllSelected = computed(() =>
+  coursewares.value.length > 0 && coursewares.value.every(w => cwSelected.value.has(w.id)))
+function cwToggle(id: number) {
+  const s = new Set(cwSelected.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  cwSelected.value = s
+}
+function cwToggleAll() {
+  cwSelected.value = cwAllSelected.value
+    ? new Set<number>()
+    : new Set(coursewares.value.map(w => w.id))
+}
+async function cwBatchDelete() {
+  const ids = [...cwSelected.value]
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 份课件？\n\n渲染图、导出缓存与派生文档会一并清理，且不可恢复。`)) return
+  try {
+    const r = await coursewareApi.batchDelete(ids)
+    appStore.showToast(`已删除 ${r.data?.deleted ?? ids.length} 份课件`, 'success')
+    cwSelected.value = new Set()
+    await loadCourse()
+  } catch (e: any) { alert(e?.response?.data?.detail || '批量删除失败') }
 }
 
 // ═══ AI 体检（需求 3） ═══

@@ -20,14 +20,15 @@ class Settings(BaseSettings):
 
     # ── 通义千问 ──
     QWEN_API_KEY: str = ""
-    QWEN_MODEL_NAME: str = "qwen-max"
+    QWEN_MODEL_NAME: str = "qwen-plus"          # 全局默认：均衡档（省成本），非专家场景不再默认最贵的 qwen-max
     QWEN_VISION_MODEL: str = "qwen-vl-max"
     QWEN_MAX_TOKENS: int = 8192
     QWEN_TEMPERATURE: float = 0.7
     # 429/5xx 时的单模型重试次数（总计尝试次数，含首次）
     QWEN_MAX_RETRIES: int = 2
     # 首选模型不可用（429 限流 / 403 未开通）时按顺序回退的模型，逗号分隔
-    QWEN_FALLBACK_MODELS: str = "qwen-plus,qwen-max,qwen-max-longcontext"
+    # 成本优先：先试最便宜的 qwen-turbo，再逐级升到 plus / max
+    QWEN_FALLBACK_MODELS: str = "qwen-turbo,qwen-plus,qwen-max,qwen-max-longcontext"
     # 通义千问兼容端点（OpenAI Chat Completions 接口），可被 env 覆盖
     QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 

@@ -8,7 +8,7 @@ GET /alerts 聚合四类数据驱动的预警（无人工规则配置，来源�
 返回始终为 {"ok": true, "alerts": [...]}，单类聚合失败只跳过不影响其余。
 """
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -88,7 +88,7 @@ def _model_alerts() -> list[dict]:
             out.append(_alert("model-rate-limited", "model_rate_limited", "warning",
                               "部分模型临时受限",
                               f"近期被限流或屏蔽：{names}。生成时会自动换用其他可用模型，无需操作。",
-                              "去课件工坊", "/coursewares/studio"))
+                              "去课件工坊", "/courseware-studio"))
     except Exception as e:
         logger.debug("[alerts] model skip: %s", e)
     return out
@@ -117,7 +117,8 @@ def _provider_alerts() -> list[dict]:
 
 async def _job_alerts(db: AsyncSession, user: User) -> list[dict]:
     out: list[dict] = []
-    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    # SQLite 存的是无时区 UTC 串，比较基准也用 naive utcnow，避免 tz-aware 与库内值比对失真
+    since = datetime.utcnow() - timedelta(hours=24)
     try:
         q = select(GenerateJob).where(GenerateJob.status == "failed",
                                       GenerateJob.updated_at >= since)
@@ -128,7 +129,7 @@ async def _job_alerts(db: AsyncSession, user: User) -> list[dict]:
             out.append(_alert(f"job-{j.job_id}", "job_failed", "error",
                               "课件生成失败",
                               f"《{(j.course_title or j.topic or '')[:40]}》生成失败：{(j.message or j.error or '')[:80]}",
-                              "去课件工坊", "/coursewares/studio"))
+                              "去课件工坊", "/courseware-studio"))
     except Exception as e:
         logger.debug("[alerts] jobs skip: %s", e)
     try:

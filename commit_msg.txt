@@ -1,0 +1,7 @@
+优化：模型默认改最省档 + 多列表批量删除/分页 + 修复模型下拉与预警跳转
+
+- 成本：全局默认 qwen-max→qwen-plus，快速档 qwen-plus→qwen-turbo，回退链前置 qwen-turbo（config.py/.env/mode_policy.py，前端文案同步）
+- 修复：ModelSwitcher 改为点击展开分组下拉直接选（保留 ◀▶ 循环）
+- 修复：预警跳转路径 /coursewares/studio→/courseware-studio；AlertBell 改模块级去重 Map + 6h 冷却，切页不再重复弹失败 toast；alerts 时间比对改 naive utcnow
+- 批量：工坊历史/课程课件/课程列表/计划/流水线/技能 均补齐全选、多选、批量删除、页码翻页；后端新增 coursewares/courses/automation 的 batch-delete 与 ai-mine/all
+- 清理：删除 PhaseB 验证残留的失败生成作业

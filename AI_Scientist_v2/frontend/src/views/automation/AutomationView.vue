@@ -37,6 +37,19 @@
 
       <!-- 我的流水线 -->
       <h2 class="text-lg font-semibold mt-8 mb-3">📋 我的流水线</h2>
+      <!-- 批量管理条：全选 / 删除选中 -->
+      <div v-if="!loading && pipelines.length" class="card p-3 mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <label class="flex items-center gap-1 cursor-pointer select-none">
+          <input type="checkbox" class="rounded border-surface-300" :checked="plAllSelected"
+                 :indeterminate="selPipelines.size > 0 && !plAllSelected" @change="plToggleAll" />
+          全选（共 {{ pipelines.length }} 条）
+        </label>
+        <button @click="batchDeletePipelines" :disabled="!selPipelines.size"
+                class="px-2.5 py-1 rounded-md bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
+          🗑 删除选中{{ selPipelines.size ? ` (${selPipelines.size})` : '' }}
+        </button>
+        <span v-if="selPipelines.size" class="text-surface-400">连带删除其运行记录</span>
+      </div>
       <div v-if="loading" class="card p-8 text-center text-surface-400">加载中...</div>
       <div v-else-if="pipelines.length===0" class="card p-8 text-center text-surface-400">
         <span class="text-3xl block mb-2">⚙️</span>
@@ -46,6 +59,8 @@
         <div v-for="p in pipelines" :key="p.id" :data-pipeline-id="p.id" class="card p-5 hover:ring-2 ring-primary-200 transition-all">
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-3">
+              <input type="checkbox" class="rounded border-surface-300"
+                     :checked="selPipelines.has(p.id)" @change="plToggle(p.id)" />
               <span class="text-xl">⚙️</span>
               <div>
                 <h3 class="font-semibold">{{ p.name }}</h3>
@@ -285,7 +300,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, watch, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { automationApi, type Pipeline } from '@/api/modules/automation'
 import { useAppStore } from '@/stores/app'
@@ -322,7 +337,11 @@ const fmtTime = (t?: string) => t ? new Date(t).toLocaleString('zh-CN') : '...'
 
 async function loadPipelines() {
   loading.value = true
-  try { pipelines.value = (await automationApi.list()).data.pipelines || [] }
+  try {
+    pipelines.value = (await automationApi.list()).data.pipelines || []
+    const valid = new Set(pipelines.value.map(p => p.id))
+    selPipelines.value = new Set([...selPipelines.value].filter(id => valid.has(id)))
+  }
   catch { appStore.showToast('加载流水线失败', 'error') }
   finally { loading.value = false }
 }
@@ -405,6 +424,30 @@ async function deletePipeline(id: string) {
   if (!confirm('确定删除该流水线？')) return
   try { await automationApi.delete(id); appStore.showToast('🗑️ 已删除', 'success'); await loadPipelines() }
   catch { appStore.showToast('删除失败', 'error') }
+}
+
+// 流水线：多选 + 批量删除
+const selPipelines = ref(new Set<string>())
+const plAllSelected = computed(() =>
+  pipelines.value.length > 0 && pipelines.value.every(p => selPipelines.value.has(p.id)))
+function plToggle(id: string) {
+  const s = new Set(selPipelines.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  selPipelines.value = s
+}
+function plToggleAll() {
+  selPipelines.value = plAllSelected.value ? new Set<string>() : new Set(pipelines.value.map(p => p.id))
+}
+async function batchDeletePipelines() {
+  const ids = [...selPipelines.value]
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 条流水线？将连带删除其运行记录，不可恢复。`)) return
+  try {
+    const r = await automationApi.batchDelete(ids)
+    appStore.showToast(`已删除 ${r.data?.deleted ?? ids.length} 条流水线`, 'success')
+    selPipelines.value = new Set()
+    await loadPipelines()
+  } catch { appStore.showToast('批量删除失败', 'error') }
 }
 async function stopPipeline(id: string) {
   try { await automationApi.stop(id); appStore.showToast('⏹ 停止信号已发送', 'success'); await loadPipelines() }

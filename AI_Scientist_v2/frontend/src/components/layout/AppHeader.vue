@@ -94,7 +94,7 @@ function switchMode(m: 'quick' | 'expert') {
   appStore.showToast(
     m === 'expert'
       ? '🔬 已切到专家模式：生成用 qwen-max，内容更详尽、图解与章节/页数更多，并展开全部高级参数'
-      : '⚡ 已切到快速模式：生成用 qwen-plus，精简抓重点、章节/页数更少更省时，高级参数自动收起',
+      : '⚡ 已切到快速模式：生成用最省的 qwen-turbo，精简抓重点、章节/页数更少更省钱，高级参数自动收起',
     'success',
   )
 }

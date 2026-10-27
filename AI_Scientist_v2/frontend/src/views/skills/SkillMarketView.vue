@@ -14,6 +14,19 @@
       <span>技能可与<strong>资料库</strong>（选择文件作为输入）、<strong>AI对话</strong>（输入 <code class="px-1 py-0.5 bg-surface-100 dark:bg-surface-700 rounded text-xs font-mono">/skill 技能ID input=内容</code>）、<strong>自动化流水线</strong>联动使用</span>
     </div>
 
+    <!-- 批量管理条（仅自定义技能可删）：全选 / 删除选中 -->
+    <div v-if="!loadingSkills && customSkills.length" class="card p-3 flex flex-wrap items-center gap-2 text-xs">
+      <label class="flex items-center gap-1 cursor-pointer select-none">
+        <input type="checkbox" class="rounded border-surface-300" :checked="allSkillSelected"
+               :indeterminate="selSkills.size > 0 && !allSkillSelected" @change="skillToggleAll" />
+        全选自定义技能（共 {{ customSkills.length }} 个）
+      </label>
+      <button @click="batchDeleteSkills" :disabled="!selSkills.size"
+              class="px-2.5 py-1 rounded-md bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
+        🗑 删除选中{{ selSkills.size ? ` (${selSkills.size})` : '' }}
+      </button>
+    </div>
+
     <!-- 加载状态 -->
     <div v-if="loadingSkills" class="card p-8 text-center text-surface-400">
       <span class="inline-block w-6 h-6 border-2 border-primary-500 border-t-transparent rounded-full animate-spin mr-2"></span>
@@ -28,6 +41,8 @@
         <!-- 删除按钮（仅自定义技能） -->
         <button v-if="(skill as any).is_custom" @click.stop="deleteSkill(skill)"
           class="absolute top-2 right-2 w-6 h-6 rounded-full bg-red-100 text-red-500 text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-200">✕</button>
+        <input v-if="(skill as any).is_custom" type="checkbox" class="absolute top-2 left-2 rounded border-surface-300"
+               :checked="selSkills.has(skill.id)" @click.stop @change="skillToggle(skill.id)" />
         <div class="text-2xl mb-2">{{ skill.icon }}</div>
         <h3 class="font-semibold text-surface-800 dark:text-white">{{ skill.name }}</h3>
         <p class="text-xs text-surface-500 mt-1 line-clamp-2">{{ skill.description }}</p>
@@ -251,7 +266,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { skillsApi, type SkillInfo } from '@/api/modules/skills'
 import { useAppStore } from '@/stores/app'
@@ -274,6 +289,28 @@ function useSkillInCourse(skill: SkillInfo) {
 const skills = ref<SkillInfo[]>([])
 const loadingSkills = ref(false)
 const activeSkill = ref<SkillInfo | null>(null)
+// 自定义技能：多选 + 批量删除
+const selSkills = ref(new Set<string>())
+const customSkills = computed(() => skills.value.filter(s => (s as any).is_custom))
+const allSkillSelected = computed(() =>
+  customSkills.value.length > 0 && customSkills.value.every(s => selSkills.value.has(s.id)))
+function skillToggle(id: string) {
+  const s = new Set(selSkills.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  selSkills.value = s
+}
+function skillToggleAll() {
+  selSkills.value = allSkillSelected.value ? new Set<string>() : new Set(customSkills.value.map(s => s.id))
+}
+async function batchDeleteSkills() {
+  const ids = [...selSkills.value]
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 个自定义技能？不可恢复。`)) return
+  for (const id of ids) { try { await skillsApi.delete(id) } catch { /* 单条失败不中断 */ } }
+  appStore.showToast(`已删除 ${ids.length} 个技能`, 'success')
+  selSkills.value = new Set()
+  await loadSkills()
+}
 const skillInput = ref<Record<string, any>>({})
 const skillResult = ref<any>(null)
 const running = ref(false)
@@ -337,6 +374,8 @@ async function loadSkills() {
   try {
     const res = await skillsApi.list()
     skills.value = res.data.skills || []
+    const valid = new Set(skills.value.filter(s => (s as any).is_custom).map(s => s.id))
+    selSkills.value = new Set([...selSkills.value].filter(id => valid.has(id)))
   } catch (e: any) {
     appStore.showToast('加载技能列表失败', 'error')
   } finally {

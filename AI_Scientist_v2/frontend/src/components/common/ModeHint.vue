@@ -29,11 +29,11 @@ const isExpert = computed(() => appStore.mode === 'expert')
 
 const LINES: Record<string, { quick: string; expert: string }> = {
   courseware: {
-    quick: 'qwen-plus 精简 · 约 4 章、每章 4 页 · 每页 60-90 字讲透',
+    quick: 'qwen-turbo 最省·精简 · 约 4 章、每章 4 页 · 每页 60-90 字讲透',
     expert: 'qwen-max 详尽 · 约 8 章、每章 6 页 · 每页 120-200 字 + 案例',
   },
   general: {
-    quick: 'qwen-plus · 约 4 节、每节 500-700 字 · 图解 1 个',
+    quick: 'qwen-turbo 最省 · 约 4 节、每节 500-700 字 · 图解 1 个',
     expert: 'qwen-max · 约 8 节、每节 900-1200 字 · 图解 2 个、更多案例',
   },
   outline: {

@@ -90,6 +90,10 @@ export const automationApi = {
   /** 删除流水线 */
   delete: (id: string) => client.delete(`/automation/${id}`),
 
+  /** 批量删除流水线（连带运行记录；非本人项后端静默跳过） */
+  batchDelete: (ids: string[]) =>
+    client.post<{ ok: boolean; deleted: number }>('/automation/batch-delete', { ids }),
+
   /** 从指定步骤重试 */
   retryFrom: (id: string, stepIndex: number, runId?: string) =>
     client.post<{ message: string; run_id: string }>(`/automation/${id}/retry-from`, { step_index: stepIndex, run_id: runId }),

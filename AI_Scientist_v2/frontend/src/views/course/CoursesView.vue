@@ -56,6 +56,20 @@
       </div>
     </div>
 
+    <!-- 教师批量管理条（仅「我教的」）：全选 / 删除选中 -->
+    <div v-if="canTeach && scope === 'mine' && items.length" class="card p-3 flex flex-wrap items-center gap-2 text-xs">
+      <label class="flex items-center gap-1 cursor-pointer select-none">
+        <input type="checkbox" class="rounded border-surface-300" :checked="courseAllSelected"
+               :indeterminate="selCourses.size > 0 && !courseAllSelected" @change="courseToggleAll" />
+        全选（共 {{ items.length }} 门）
+      </label>
+      <button @click="batchDeleteCourses" :disabled="!selCourses.size"
+              class="px-2.5 py-1 rounded-md bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
+        🗑 删除选中{{ selCourses.size ? ` (${selCourses.size})` : '' }}
+      </button>
+      <span v-if="selCourses.size" class="text-surface-400">已选 {{ selCourses.size }} 门课程及其课件</span>
+    </div>
+
     <!-- 列表 -->
     <div v-if="loading" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       <div v-for="i in 6" :key="i" class="card p-5 animate-pulse">
@@ -77,10 +91,13 @@
     </div>
 
     <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      <div v-for="c in items" :key="c.id"
+      <div v-for="c in pagedItems" :key="c.id"
            class="card p-5 hover:ring-2 ring-primary-200 transition-all cursor-pointer group flex flex-col"
+           :class="selCourses.has(c.id) ? 'ring-2 ring-red-300' : ''"
            @click="goDetail(c)">
         <div class="flex items-start gap-3">
+          <input v-if="canTeach && c.is_teacher" type="checkbox" class="mt-1 rounded border-surface-300"
+                 :checked="selCourses.has(c.id)" @click.stop @change="courseToggle(c.id)" />
           <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-100 to-accent-100 flex items-center justify-center text-2xl flex-shrink-0">
             {{ c.cover_emoji || '📖' }}
           </div>
@@ -123,7 +140,14 @@
       </div>
     </div>
 
-    <!-- ═══ 新建课程 ═══ -->
+    <!-- 分页：页码 + 翻页 -->
+    <div v-if="!loading && coursePages > 1" class="flex items-center justify-center gap-3 text-sm">
+      <button @click="coursePage = Math.max(1, coursePage - 1)" :disabled="coursePage <= 1"
+              class="px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-100 disabled:opacity-40">◀ 上一页</button>
+      <span class="text-surface-500">第 {{ coursePage }} / {{ coursePages }} 页 · 共 {{ items.length }} 门</span>
+      <button @click="coursePage = Math.min(coursePages, coursePage + 1)" :disabled="coursePage >= coursePages"
+              class="px-3 py-1.5 rounded-lg border border-surface-200 hover:bg-surface-100 disabled:opacity-40">下一页 ▶</button>
+    </div>
     <Teleport to="body">
       <div v-if="showCreate" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-start justify-center p-4 overflow-y-auto"
            @click.self="showCreate = false">
@@ -292,6 +316,19 @@ function applyCourseTemplate(t: CourseTemplate) {
 const loading = ref(false)
 const items = ref<Course[]>([])
 const total = ref(0)
+// 列表：多选 + 分页（“我教的”批量删除）
+const selCourses = ref(new Set<number>())
+const COURSE_PAGE_SIZE = 9
+const coursePage = ref(1)
+const coursePages = computed(() => Math.max(1, Math.ceil(items.value.length / COURSE_PAGE_SIZE)))
+const pagedItems = computed(() => {
+  const start = (coursePage.value - 1) * COURSE_PAGE_SIZE
+  return items.value.slice(start, start + COURSE_PAGE_SIZE)
+})
+const courseAllSelected = computed(() => {
+  const owned = items.value.filter(c => c.is_teacher)
+  return owned.length > 0 && owned.every(c => selCourses.value.has(c.id))
+})
 const q = ref((route.query.q as string) || '')
 const scope = ref<'all' | 'mine' | 'enrolled'>((route.query.scope as any) || 'all')
 const wantStale = ref(false)
@@ -336,6 +373,10 @@ async function reload() {
     }
     items.value = list
     total.value = res.data.total
+    // 重拉后清理失效选择并合理化页码
+    const valid = new Set(list.filter((c: Course) => c.is_teacher).map((c: Course) => c.id))
+    selCourses.value = new Set([...selCourses.value].filter(id => valid.has(id)))
+    coursePage.value = Math.min(coursePage.value, Math.max(1, Math.ceil(list.length / COURSE_PAGE_SIZE)))
   } catch (e: any) {
     console.error(e)
   } finally { loading.value = false }
@@ -354,6 +395,30 @@ async function removeCourse(c: Course) {
     await Promise.all([reload(), loadStats()])
   } catch (e: any) {
     alert(e?.response?.data?.detail || '删除失败，请稍后重试')
+  }
+}
+
+function courseToggle(id: number) {
+  const s = new Set(selCourses.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  selCourses.value = s
+}
+function courseToggleAll() {
+  const owned = items.value.filter(c => c.is_teacher).map(c => c.id)
+  selCourses.value = courseAllSelected.value ? new Set<number>() : new Set(owned)
+}
+async function batchDeleteCourses() {
+  const ids = [...selCourses.value]
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 门课程？\n\n其课件、渲染图与派生到资料库的文档会一并清理，且不可恢复。`)) return
+  try {
+    const r = await courseApi.batchDelete(ids)
+    appStore.showToast(`已删除 ${r.data?.deleted ?? ids.length} 门课程`, 'success')
+    selCourses.value = new Set()
+    coursePage.value = 1
+    await Promise.all([reload(), loadStats()])
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '批量删除失败，请稍后重试')
   }
 }
 

@@ -283,6 +283,33 @@ async def delete_course(course_id: int, user: User = Depends(get_current_user),
     course = await _course_or_404(db, course_id)
     if course.teacher_id != user.id and user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="只有课程负责人可以删除")
+    await _purge_course(db, course)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.post("/batch-delete")
+async def batch_delete_courses(body: dict, user: User = Depends(get_current_user),
+                               db: AsyncSession = Depends(get_db)):
+    """批量删除课程（仅本人负责的课，非本人项静默跳过）"""
+    ids = body.get("ids") or []
+    deleted = 0
+    for raw in ids:
+        try:
+            cid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        course = (await db.execute(select(Course).where(Course.id == cid))).scalar_one_or_none()
+        if not course or (course.teacher_id != user.id and user.role != UserRole.ADMIN):
+            continue
+        await _purge_course(db, course)
+        deleted += 1
+    await db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
+async def _purge_course(db: AsyncSession, course) -> None:
+    """删除单门课：课件电子化派生的资料库文档一并清（不 commit，供批量复用）"""
     # 课件电子化会往资料库写一份派生文档，课程删除时一并清掉，
     # 否则资料库会堆一堆无主文档（且其被课件引用时删不掉）
     doc_ids = {w.doc_id for w in (course.coursewares or []) if w.doc_id}
@@ -292,8 +319,6 @@ async def delete_course(course_id: int, user: User = Depends(get_current_user),
         doc = (await db.execute(select(Document).where(Document.id == did))).scalar_one_or_none()
         if doc:
             await db.delete(doc)
-    await db.commit()
-    return {"ok": True}
 
 
 # ════════════════ 选课 / 名册 ════════════════
@@ -994,6 +1019,52 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
     cw = await _courseware_or_404(db, cw_id)
     if cw.course and cw.course.teacher_id != user.id and user.role != UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="只有课程负责人可删除")
+    await _purge_courseware(db, cw)
+    await db.commit()
+    return {"ok": True}
+
+
+@cw_router.post("/batch-delete")
+async def batch_delete_coursewares(body: dict, user: User = Depends(require_teacher),
+                                   db: AsyncSession = Depends(get_db)):
+    """批量删除课件（逐个复用级联清理；非本人且非管理员的项静默跳过）"""
+    ids = body.get("ids") or []
+    deleted = 0
+    for raw in ids:
+        try:
+            cid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        cw = (await db.execute(select(Courseware).where(Courseware.id == cid))).scalar_one_or_none()
+        if not cw:
+            continue
+        if cw.course and cw.course.teacher_id != user.id and user.role != UserRole.ADMIN:
+            continue
+        await _purge_courseware(db, cw)
+        deleted += 1
+    await db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
+@cw_router.delete("/ai-mine/all")
+async def delete_all_my_coursewares(user: User = Depends(require_teacher),
+                                    db: AsyncSession = Depends(get_db)):
+    """一键清空「我生成过的课件」：仅删本人负责课程下 AI 生成的课件，不动教师上传原件课程"""
+    q = (select(Courseware)
+         .join(Course, Course.id == Courseware.course_id)
+         .where(Course.teacher_id == user.id,
+                Courseware.source_type == "ai_generated"))
+    rows = (await db.execute(q)).scalars().all()
+    for cw in rows:
+        await _purge_courseware(db, cw)
+    await db.commit()
+    return {"ok": True, "deleted": len(rows)}
+
+
+async def _purge_courseware(db: AsyncSession, cw) -> None:
+    """删除单份课件的完整级联：磁盘渲染图/导出缓存 + 派生文档 + 课件行（不 commit，供批量复用）。
+    顺序很重要：coursewares.doc_id 外键指向 documents，必须先删课件行再删文档。"""
+    cw_id = cw.id
     # 教师上传的原件仍在 uploads/，派生渲染图在 generated/courseware/，导出的 pptx 在
     # generated/exports/，三处都清掉，避免删完还留着磁盘垃圾
     rows = (await db.execute(select(Slide).where(Slide.courseware_id == cw_id))).scalars().all()
@@ -1023,8 +1094,7 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
             f.unlink(missing_ok=True)
     except OSError as e:
         logger.debug(f"export cleanup skipped: {e}")
-    # 联动生成的「课件电子化」文档也要删，否则知识库里会不断堆积已删课件的孤儿文档。
-    # 顺序很重要：coursewares.doc_id 外键指向 documents，必须先删课件行再删文档
+    # 联动生成的「课件电子化」文档也要删，否则知识库里会不断堆积已删课件的孤儿文档
     doc_id = cw.doc_id
     await db.delete(cw)
     await db.flush()
@@ -1033,8 +1103,6 @@ async def delete_courseware(cw_id: int, user: User = Depends(require_teacher),
                                 )).scalar_one_or_none()
         if doc:
             await db.delete(doc)
-    await db.commit()
-    return {"ok": True}
 
 
 @cw_router.get("/{cw_id}/versions")

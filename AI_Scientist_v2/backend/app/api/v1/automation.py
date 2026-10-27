@@ -269,6 +269,24 @@ async def delete_pipeline(
     return {"ok": True}
 
 
+@router.post("/batch-delete")
+async def batch_delete_pipelines(body: dict, user: User = Depends(get_current_user),
+                                 db: AsyncSession = Depends(get_db)):
+    """批量删除流水线（连带删除其运行记录；非本人/不存在的项静默跳过）"""
+    ids = body.get("ids") or []
+    deleted = 0
+    for pid in ids:
+        try:
+            p = await _get_user_pipeline(str(pid), user.id, db)
+        except HTTPException:
+            continue
+        await db.execute(sa_delete(PipelineRun).where(PipelineRun.pipeline_id == p.id))
+        await db.delete(p)
+        deleted += 1
+    await db.commit()
+    return {"ok": True, "deleted": deleted}
+
+
 # ── 全局取消标志（进程内） ─────────────────────────────────────
 import asyncio as _asyncio
 _running_cancels: dict[str, _asyncio.Event] = {}

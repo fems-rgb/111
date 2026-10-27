@@ -259,33 +259,68 @@
 
       <!-- ═══ 历史 ═══ -->
       <div class="card p-4 h-fit xl:sticky xl:top-4">
-        <div class="flex items-center justify-between mb-3">
-          <p class="text-sm font-semibold">🗂️ 我生成过的课件</p>
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-sm font-semibold">🗂️ 我生成过的课件 <span class="text-[11px] font-normal text-surface-400">({{ history.length }})</span></p>
           <button @click="loadHistory" class="text-[11px] text-surface-400 hover:text-primary-600">↻ 刷新</button>
         </div>
+
+        <!-- 批量操作工具条：全选 / 批量删除 / 删除全部 -->
+        <div v-if="history.length" class="flex flex-wrap items-center gap-2 mb-2 text-[11px]">
+          <label class="flex items-center gap-1 cursor-pointer select-none">
+            <input type="checkbox" class="rounded border-surface-300" :checked="allSelected"
+                   :indeterminate="selected.size > 0 && !allSelected" @change="toggleSelectAll" />
+            全选本页
+          </label>
+          <button @click="batchDeleteSelected" :disabled="!selected.size || deleting"
+                  class="px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
+            🗑 删除选中{{ selected.size ? ` (${selected.size})` : '' }}
+          </button>
+          <button @click="deleteAllHistory" :disabled="deleting"
+                  class="px-2 py-1 rounded text-surface-500 hover:bg-surface-100 disabled:opacity-40" title="清空我生成过的全部课件（不动上传原件）">
+            删除全部
+          </button>
+        </div>
+
         <div v-if="historyLoading" class="text-xs text-surface-400 py-6 text-center">⏳ 加载中…</div>
         <div v-else-if="!history.length" class="text-xs text-surface-400 py-6 text-center">还没有记录，先生成一份吧</div>
-        <div v-else class="space-y-2 max-h-[560px] overflow-y-auto pr-1">
-          <div v-for="h in history" :key="h.id" class="rounded-lg border border-surface-100 p-3 hover:border-primary-200 transition-colors">
-            <p class="text-xs font-medium truncate" :title="h.title">{{ h.title }}</p>
-            <p class="text-[10px] text-surface-400 mt-1 truncate">{{ h.course_title }} · {{ h.slide_count }} 页 · v{{ h.version }} · {{ fmtTime(h.created_at) }}</p>
-            <div class="flex gap-1.5 mt-2">
-              <button @click="$router.push(h.reader_url)"
-                      class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1">📖 阅读</button>
-              <button @click="$router.push({ name: 'CoursewareEbook', params: { courseId: h.course_id, cwId: h.id } })"
-                      class="text-[10px] px-2 py-1 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex-1" title="在线电子书">📕</button>
-              <a :href="coursewareApi.handoutUrl(h.id, 'student', 'docx')" target="_blank" rel="noopener"
-                 class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="学生讲义 Word">📄</a>
-              <a :href="coursewareApi.exportUrl(h.id)" :download="`课件_${h.id}.pptx`"
-                 class="text-[10px] px-2 py-1 rounded bg-primary-50 text-primary-700 hover:bg-primary-100 flex-1 text-center">⬇️ pptx</a>
-              <button @click="reuse(h)" class="text-[10px] px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100"
-                      title="按同样设置再生成一份">↺</button>
-              <button @click="removeHistory(h)" :disabled="deleting"
-                      class="text-[10px] px-2 py-1 rounded text-red-500 hover:bg-red-50 disabled:opacity-40"
-                      title="删除这份课件">🗑</button>
+        <template v-else>
+          <div class="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+            <div v-for="h in pagedHistory" :key="h.id"
+                 class="rounded-lg border p-3 transition-colors"
+                 :class="selected.has(h.id) ? 'border-primary-300 bg-primary-50/40' : 'border-surface-100 hover:border-primary-200'">
+              <div class="flex items-start gap-2">
+                <input type="checkbox" class="mt-0.5 rounded border-surface-300" :checked="selected.has(h.id)" @change="toggleSelect(h.id)" />
+                <div class="min-w-0 flex-1">
+                  <p class="text-xs font-medium truncate" :title="h.title">{{ h.title }}</p>
+                  <p class="text-[10px] text-surface-400 mt-1 truncate">{{ h.course_title }} · {{ h.slide_count }} 页 · v{{ h.version }} · {{ fmtTime(h.created_at) }}</p>
+                </div>
+              </div>
+              <div class="flex gap-1.5 mt-2 ml-6">
+                <button @click="$router.push(h.reader_url)"
+                        class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1">📖 阅读</button>
+                <button @click="$router.push({ name: 'CoursewareEbook', params: { courseId: h.course_id, cwId: h.id } })"
+                        class="text-[10px] px-2 py-1 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex-1" title="在线电子书">📕</button>
+                <a :href="coursewareApi.handoutUrl(h.id, 'student', 'docx')" target="_blank" rel="noopener"
+                   class="text-[10px] px-2 py-1 rounded bg-surface-100 hover:bg-surface-200 flex-1 text-center" title="学生讲义 Word">📄</a>
+                <a :href="coursewareApi.exportUrl(h.id)" :download="`课件_${h.id}.pptx`"
+                   class="text-[10px] px-2 py-1 rounded bg-primary-50 text-primary-700 hover:bg-primary-100 flex-1 text-center">⬇️ pptx</a>
+                <button @click="reuse(h)" class="text-[10px] px-2 py-1 rounded bg-purple-50 text-purple-700 hover:bg-purple-100"
+                        title="按同样设置再生成一份">↺</button>
+                <button @click="removeHistory(h)" :disabled="deleting"
+                        class="text-[10px] px-2 py-1 rounded text-red-500 hover:bg-red-50 disabled:opacity-40"
+                        title="删除这份课件">🗑</button>
+              </div>
             </div>
           </div>
-        </div>
+          <!-- 分页：页码 + 翻页 -->
+          <div v-if="histPages > 1" class="flex items-center justify-between mt-3 text-[11px]">
+            <button @click="prevHistPage" :disabled="histPage <= 1"
+                    class="px-2 py-1 rounded border border-surface-200 hover:bg-surface-100 disabled:opacity-40">◀ 上一页</button>
+            <span class="text-surface-500">第 {{ histPage }} / {{ histPages }} 页 · 共 {{ history.length }} 份</span>
+            <button @click="nextHistPage" :disabled="histPage >= histPages"
+                    class="px-2 py-1 rounded border border-surface-200 hover:bg-surface-100 disabled:opacity-40">下一页 ▶</button>
+          </div>
+        </template>
       </div>
     </div>
   </div>
@@ -403,6 +438,17 @@ const showAll = ref(false)
 const myCourses = ref<Course[]>([])
 const history = ref<AiCoursewareItem[]>([])
 const historyLoading = ref(false)
+// 历史列表：多选 + 分页（本页候选 = 当前页已加载项）
+const selected = ref(new Set<number>())
+const HIST_PAGE_SIZE = 8
+const histPage = ref(1)
+const histPages = computed(() => Math.max(1, Math.ceil(history.value.length / HIST_PAGE_SIZE)))
+const pagedHistory = computed(() => {
+  const start = (histPage.value - 1) * HIST_PAGE_SIZE
+  return history.value.slice(start, start + HIST_PAGE_SIZE)
+})
+const allSelected = computed(() =>
+  pagedHistory.value.length > 0 && pagedHistory.value.every(h => selected.value.has(h.id)))
 
 // 生成作业的真实进度（后端按阶段/章节/页上报，前端轮询驱动进度条）
 const job = ref<GenerateJobStatus | null>(null)
@@ -697,9 +743,65 @@ async function loadMyCourses() {
 async function loadHistory() {
   historyLoading.value = true
   try {
-    const r = await coursewareApi.aiMine(30)
+    const r = await coursewareApi.aiMine(200)
     history.value = r.data?.items || []
+    // 重拉后清理失效选择并合理化页码
+    const valid = new Set(history.value.map(h => h.id))
+    selected.value = new Set([...selected.value].filter(id => valid.has(id)))
+    histPage.value = Math.min(histPage.value, Math.max(1, Math.ceil(history.value.length / HIST_PAGE_SIZE)))
   } catch { /* ignore */ } finally { historyLoading.value = false }
+}
+
+function toggleSelect(id: number) {
+  const s = new Set(selected.value)
+  if (s.has(id)) s.delete(id); else s.add(id)
+  selected.value = s
+}
+function toggleSelectAll() {
+  const s = new Set(selected.value)
+  if (allSelected.value) {
+    for (const h of pagedHistory.value) s.delete(h.id)
+  } else {
+    for (const h of pagedHistory.value) s.add(h.id)
+  }
+  selected.value = s
+}
+function prevHistPage() { histPage.value = Math.max(1, histPage.value - 1) }
+function nextHistPage() { histPage.value = Math.min(histPages.value, histPage.value + 1) }
+
+async function batchDeleteSelected() {
+  const ids = [...selected.value]
+  if (!ids.length) return
+  if (!confirm(`确定删除选中的 ${ids.length} 份课件？\n\n渲染图、导出缓存与派生文档会一并清理，且不可恢复。`)) return
+  deleting.value = true
+  try {
+    const r = await coursewareApi.batchDelete(ids)
+    appStore.showToast(`已删除 ${r.data?.deleted ?? ids.length} 份课件`, 'success')
+    if (result.value?.courseware_id && selected.value.has(result.value.courseware_id)) {
+      result.value = null; slides.value = []
+    }
+    selected.value = new Set()
+    histPage.value = 1
+    await Promise.all([loadHistory(), loadMyCourses()])
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '批量删除失败，请稍后重试')
+  } finally { deleting.value = false }
+}
+
+async function deleteAllHistory() {
+  if (!confirm(`确定删除全部「我生成过的课件」（共 ${history.value.length} 份）？\n\n仅删 AI 生成的课件，不动教师上传原件；不可恢复。`)) return
+  if (!confirm('二次确认：此操作会清空工坊历史，确定继续？')) return
+  deleting.value = true
+  try {
+    const r = await coursewareApi.deleteAllMine()
+    appStore.showToast(`已清空，共删除 ${r.data?.deleted ?? 0} 份课件`, 'success')
+    result.value = null; slides.value = []
+    selected.value = new Set()
+    histPage.value = 1
+    await Promise.all([loadHistory(), loadMyCourses()])
+  } catch (e: any) {
+    alert(e?.response?.data?.detail || '删除全部失败，请稍后重试')
+  } finally { deleting.value = false }
 }
 
 onMounted(() => {

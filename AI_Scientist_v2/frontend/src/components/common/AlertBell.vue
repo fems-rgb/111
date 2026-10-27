@@ -39,6 +39,10 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 
 const POLL_MS = 60000
+const TOAST_COOLDOWN_MS = 6 * 3600_000
+// 模块级去重：AppHeader 随路由重新挂载，组件内 Set 会丢，导致每次切页面都重复弹同一个 error toast
+const toastedAt = new Map<string, number>()
+
 const router = useRouter()
 const appStore = useAppStore()
 const authStore = useAuthStore()
@@ -46,7 +50,6 @@ const authStore = useAuthStore()
 const alerts = ref<AlertItem[]>([])
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
-const seenErrorIds = new Set<string>()
 let timer: number | null = null
 
 const sevIcon = { error: '🔴', warning: '🟠', info: '🔵' } as Record<string, string>
@@ -66,12 +69,14 @@ async function poll() {
   try {
     const r = await alertsApi.list()
     alerts.value = r.data?.alerts || []
-    // error 级首次出现 toast 一次（同一 id 不重复打扰）
+    // error 级首次出现 toast 一次；同一 id 6h 冷却跨挂载生效，不重复打扰
+    const now = Date.now()
     for (const a of alerts.value) {
-      if (a.severity === 'error' && !seenErrorIds.has(a.id)) {
-        seenErrorIds.add(a.id)
-        appStore.showToast(`⚠️ ${a.title}`, 'error')
-      }
+      if (a.severity !== 'error') continue
+      const last = toastedAt.get(a.id)
+      if (last !== undefined && now - last < TOAST_COOLDOWN_MS) continue
+      toastedAt.set(a.id, now)
+      appStore.showToast(`⚠️ ${a.title}`, 'error')
     }
   } catch { /* 静默：预警不打扰主流程 */ }
 }

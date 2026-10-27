@@ -264,6 +264,10 @@ export const courseApi = {
 
   remove: (id: number) => client.delete(`/courses/${id}`),
 
+  /** 批量删除课程（仅本人负责；非本人项后端静默跳过） */
+  batchDelete: (ids: number[]) =>
+    client.post<{ ok: boolean; deleted: number }>('/courses/batch-delete', { ids }),
+
   enroll: (id: number) => client.post(`/courses/${id}/enroll`),
   unenroll: (id: number) => client.delete(`/courses/${id}/enroll`),
   students: (id: number) => client.get<{ items: any[]; total: number }>(`/courses/${id}/students`),
@@ -367,4 +371,12 @@ export const coursewareApi = {
     client.patch(`/coursewares/${id}/slides`, data),
 
   remove: (id: number) => client.delete(`/coursewares/${id}`),
+
+  /** 批量删除课件（工坊历史用；逐个级联清理，非本人项后端静默跳过） */
+  batchDelete: (ids: number[]) =>
+    client.post<{ ok: boolean; deleted: number }>('/coursewares/batch-delete', { ids }),
+
+  /** 一键清空我生成过的全部课件（仅 AI 生成，不动上传原件） */
+  deleteAllMine: () =>
+    client.delete<{ ok: boolean; deleted: number }>('/coursewares/ai-mine/all'),
 }

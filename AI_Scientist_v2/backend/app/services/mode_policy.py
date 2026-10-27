@@ -15,8 +15,8 @@ from app.config import settings
 QUICK = "quick"
 EXPERT = "expert"
 
-# 模式 -> 模型档位（qwen-plus 均衡省时长，qwen-max 质量最高）
-MODE_MODEL = {QUICK: "qwen-plus", EXPERT: "qwen-max"}
+# 模式 -> 模型档位（成本优先：quick 用最省的 qwen-turbo，expert 才上最贵的 qwen-max）
+MODE_MODEL = {QUICK: "qwen-turbo", EXPERT: "qwen-max"}
 # 专家档遇到超长素材时升长上下文模型
 LONGCONTEXT_MODEL = "qwen-max-longcontext"
 
