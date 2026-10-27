@@ -343,6 +343,12 @@ function toggleSelectAll() {
   }
   selectedIds.value = s
 }
+/** 删除后的统一软刷新：只重新拉取项目列表与统计，绝不整页 reload，
+ *  以免打断正在进行的生成 / 轮询等已有任务 */
+function refreshProjects() {
+  projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
+  projectStore.fetchStats(appStore.currentWorkspace)
+}
 async function handleBatchDelete() {
   const ids = Array.from(selectedIds.value)
   if (!confirm(`确定要删除选中的 ${ids.length} 个项目吗？此操作不可恢复。`)) return
@@ -351,7 +357,7 @@ async function handleBatchDelete() {
     const res = await projectApi.batchDelete(ids)
     appStore.showToast(res.data?.message || `已删除 ${ids.length} 个项目`, 'success')
     selectedIds.value = new Set()
-    projectStore.fetchProjects({ workspace: appStore.currentWorkspace })
+    refreshProjects()
   } catch (e: any) {
     appStore.showToast(e.response?.data?.detail || '批量删除失败', 'error')
   }
@@ -415,6 +421,7 @@ async function handleDelete(id: number) {
   try {
     await projectStore.deleteProject(id)
     appStore.showToast('项目已删除', 'success')
+    refreshProjects()
   } catch (e: any) {
     appStore.showToast(e.response?.data?.detail || '删除失败', 'error')
   }
@@ -430,6 +437,7 @@ async function handleDeleteAllProjects() {
     appStore.showToast(res.data?.message || '已清空全部项目', 'success')
     projectStore.projects = []
     selectedIds.value = new Set()
+    refreshProjects()
   } catch (e: any) {
     appStore.showToast(e.response?.data?.detail || '清空失败', 'error')
   }
