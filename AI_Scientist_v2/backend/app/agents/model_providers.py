@@ -31,13 +31,17 @@ class Provider:
     """一个模型供应商：一个 OpenAI 兼容端点 + 一把密钥 + 若干模型名"""
 
     def __init__(self, pid: str, label: str, base_url: str, api_key: str, models: list[str],
-                 env_key: str = ""):
+                 env_key: str = "", hint: str = "", local: bool = False):
         self.id = pid
         self.label = label
         self.base_url = base_url
         self.api_key = api_key
         self.models = models
         self.env_key = env_key or "API Key"
+        # hint：领 key / 启用方式的说明（未配 key 时展示给用户，告诉他怎么解锁）
+        self.hint = hint
+        # local：本地端点（如 Ollama），无需真实密钥、但需本机服务在跑
+        self.local = local
 
     @property
     def configured(self) -> bool:
@@ -45,7 +49,7 @@ class Provider:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "label": self.label, "models": list(self.models),
-                "configured": self.configured}
+                "configured": self.configured, "hint": self.hint, "local": self.local}
 
 
 def build_providers() -> list[Provider]:
@@ -67,8 +71,31 @@ def build_providers() -> list[Provider]:
                  env_key="MOONSHOT_API_KEY"),
         Provider("zhipu", "智谱 GLM", settings.ZHIPU_BASE_URL,
                  settings.ZHIPU_API_KEY, _split_names(settings.ZHIPU_MODELS),
-                 env_key="ZHIPU_API_KEY"),
+                 env_key="ZHIPU_API_KEY",
+                 hint="open.bigmodel.cn 注册领免费 key（glm-4-flash 免费）"),
+        Provider("gemini", "Google Gemini", settings.GEMINI_BASE_URL,
+                 settings.GEMINI_API_KEY, _split_names(settings.GEMINI_MODELS),
+                 env_key="GEMINI_API_KEY",
+                 hint="aistudio.google.com 免费领 key，快且强"),
+        Provider("groq", "Groq", settings.GROQ_BASE_URL,
+                 settings.GROQ_API_KEY, _split_names(settings.GROQ_MODELS),
+                 env_key="GROQ_API_KEY",
+                 hint="console.groq.com 免费领 key，推理速度极快"),
+        Provider("siliconflow", "硅基流动", settings.SILICONFLOW_BASE_URL,
+                 settings.SILICONFLOW_API_KEY, _split_names(settings.SILICONFLOW_MODELS),
+                 env_key="SILICONFLOW_API_KEY",
+                 hint="cloud.siliconflow.cn 注册送免费额度，中文友好"),
+        Provider("openrouter", "OpenRouter", settings.OPENROUTER_BASE_URL,
+                 settings.OPENROUTER_API_KEY, _split_names(settings.OPENROUTER_MODELS),
+                 env_key="OPENROUTER_API_KEY",
+                 hint="openrouter.ai 领 key，:free 后缀模型免费"),
     ]
+    # Ollama 本地：无需密钥（默认已占位 key），本机装并运行 Ollama 后即可用
+    if settings.OLLAMA_BASE_URL and _split_names(settings.OLLAMA_MODELS):
+        providers.append(Provider("ollama", "Ollama 本地（免费离线）", settings.OLLAMA_BASE_URL,
+                                  settings.OLLAMA_API_KEY, _split_names(settings.OLLAMA_MODELS),
+                                  env_key="OLLAMA_API_KEY", local=True,
+                                  hint="本机安装并运行 ollama，再 ollama pull qwen2.5:7b 即可"))
     if settings.CUSTOM_BASE_URL and _split_names(settings.CUSTOM_MODELS):
         providers.append(Provider("custom", "自定义（OpenAI 兼容）", settings.CUSTOM_BASE_URL,
                                   settings.CUSTOM_API_KEY, _split_names(settings.CUSTOM_MODELS),

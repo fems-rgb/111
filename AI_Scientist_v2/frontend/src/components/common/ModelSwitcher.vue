@@ -34,6 +34,20 @@
           </button>
         </div>
       </template>
+
+      <!-- 免费模型·填 key 即用（未配密钥的供应商：只展示不可选） -->
+      <template v-if="locked.length">
+        <div class="mt-1 border-t border-surface-100 dark:border-surface-700 pt-1">
+          <p class="px-3 py-1 text-[10px] uppercase tracking-wide text-surface-400">🔓 更多免费模型 · 填 key 即用</p>
+          <div v-for="lp in locked" :key="lp.provider" class="px-3 py-1.5 opacity-70">
+            <p class="text-[11px] font-medium text-surface-500 dark:text-surface-300">{{ lp.label }}
+              <span class="text-[10px] text-surface-400">· {{ lp.models.length }} 个模型</span>
+            </p>
+            <p class="text-[10px] text-surface-400 leading-snug">{{ lp.hint }}</p>
+            <p class="text-[10px] text-primary-600/80 font-mono">.env → {{ lp.env_key }}</p>
+          </div>
+        </div>
+      </template>
     </div>
   </div>
 </template>
@@ -41,7 +55,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { coursewareApi, type GenerateModelItem } from '@/api/modules/courses'
+import { coursewareApi, type GenerateModelItem, type LockedProvider } from '@/api/modules/courses'
 
 interface Opt extends GenerateModelItem {
   provider_label?: string
@@ -49,6 +63,7 @@ interface Opt extends GenerateModelItem {
 
 const appStore = useAppStore()
 const models = ref<Opt[]>([])
+const locked = ref<LockedProvider[]>([])
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
 
@@ -110,6 +125,7 @@ onMounted(async () => {
   try {
     const r = await coursewareApi.generateModels()
     models.value = r.data?.items || []
+    locked.value = r.data?.locked || []
   } catch { /* 拉不到列表就整体隐藏，不打扰 */ }
   window.addEventListener('click', close)
 })

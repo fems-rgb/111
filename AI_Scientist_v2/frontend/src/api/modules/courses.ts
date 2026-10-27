@@ -220,6 +220,15 @@ export interface GenerateModelGroup {
   items: GenerateModelItem[]
 }
 
+/** 未配 key 的供应商（下拉里灰显 + 提示怎么解锁，不可选、不参与生成） */
+export interface LockedProvider {
+  provider: string
+  label: string
+  env_key: string
+  hint: string
+  models: string[]
+}
+
 /** 工坊历史列表项 */
 export interface AiCoursewareItem {
   id: number
@@ -343,7 +352,7 @@ export const coursewareApi = {
 
   /** 可选模型列表 */
   generateModels: () =>
-    client.get<{ ok: boolean; default: string; items: GenerateModelItem[]; groups?: GenerateModelGroup[] }>('/coursewares/generate-models'),
+    client.get<{ ok: boolean; default: string; items: GenerateModelItem[]; groups?: GenerateModelGroup[]; locked?: LockedProvider[] }>('/coursewares/generate-models'),
 
   /** 我在工坊里生成过的课件 */
   aiMine: (limit = 30) =>

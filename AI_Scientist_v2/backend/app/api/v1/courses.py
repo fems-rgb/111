@@ -530,9 +530,19 @@ async def list_generate_models():
         "moonshot-v1-8k": ("Kimi 8K", "Moonshot 短上下文"),
         "moonshot-v1-32k": ("Kimi 32K", "Moonshot 中等上下文"),
         "moonshot-v1-128k": ("Kimi 128K", "Moonshot 长上下文，适合长材料"),
-        "glm-4-flash": ("GLM-4 Flash（快速）", "智谱轻量模型，快且经用"),
+        "glm-4-flash": ("GLM-4 Flash（免费）", "智谱轻量模型，免费且快"),
         "glm-4-air": ("GLM-4 Air（均衡）", "智谱均衡型"),
         "glm-4-plus": ("GLM-4 Plus（强力）", "智谱旗舰，质量最高"),
+        "gemini-2.0-flash": ("Gemini 2.0 Flash（免费）", "Google 免费额度，快且强"),
+        "gemini-1.5-flash": ("Gemini 1.5 Flash（免费）", "Google 轻量免费，长上下文"),
+        "llama-3.3-70b-versatile": ("Llama 3.3 70B（Groq 免费）", "Groq 极速推理，免费额度"),
+        "llama-3.1-8b-instant": ("Llama 3.1 8B（Groq 免费）", "超快轻量，免费额度"),
+        "Qwen/Qwen2.5-7B-Instruct": ("Qwen2.5 7B（硅基流动）", "国产中文友好，有免费额度"),
+        "deepseek-ai/DeepSeek-V3": ("DeepSeek-V3（硅基流动）", "高性价比，中文强"),
+        "meta-llama/llama-3.3-70b-instruct:free": ("Llama 3.3 70B（OpenRouter 免费）", "OpenRouter :free 免费模型"),
+        "qwen2.5:7b": ("Qwen2.5 7B（本地 Ollama）", "本机运行、完全免费离线"),
+        "llama3.1": ("Llama 3.1（本地 Ollama）", "本机运行、免费离线"),
+        "deepseek-r1:7b": ("DeepSeek-R1 7B（本地 Ollama）", "本机推理模型、免费离线"),
     }
     # 进程内限流记忆：最近撞过 429/未开通的模型标出来，避免用户反复踩同一个坑
     blocked = qwen_client.model_status()
@@ -547,13 +557,16 @@ async def list_generate_models():
 
     groups = []
     items: list[dict] = []
+    locked: list[dict] = []  # 未配 key 的供应商：前端灰显 + 提示怎么解锁，不参与生成
     for p in model_providers.providers():
         if not p.configured:
+            locked.append({"provider": p.id, "label": p.label, "env_key": p.env_key,
+                           "hint": p.hint, "models": p.models})
             continue
         g_items = [_mk(m, p) for m in p.models]
         items.extend(g_items)
         groups.append({"provider": p.id, "label": p.label, "items": g_items})
-    return {"ok": True, "default": default, "items": items, "groups": groups}
+    return {"ok": True, "default": default, "items": items, "groups": groups, "locked": locked}
 
 
 @cw_router.get("/{cw_id}")

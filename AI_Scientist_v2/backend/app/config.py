@@ -50,6 +50,28 @@ class Settings(BaseSettings):
     CUSTOM_BASE_URL: str = ""
     CUSTOM_MODELS: str = ""
 
+    # ── 免费额度云端供应商（均为 OpenAI 兼容 /chat/completions；领个免费 key 填上即出现在下拉）──
+    # Google Gemini（aistudio.google.com 免费额度，快且强）
+    GEMINI_API_KEY: str = ""
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    GEMINI_MODELS: str = "gemini-2.0-flash,gemini-1.5-flash"
+    # Groq（console.groq.com 免费、速度极快）
+    GROQ_API_KEY: str = ""
+    GROQ_BASE_URL: str = "https://api.groq.com/openai/v1/chat/completions"
+    GROQ_MODELS: str = "llama-3.3-70b-versatile,llama-3.1-8b-instant"
+    # 硅基流动 SiliconFlow（cloud.siliconflow.cn 注册送免费额度，国产中文友好）
+    SILICONFLOW_API_KEY: str = ""
+    SILICONFLOW_BASE_URL: str = "https://api.siliconflow.cn/v1/chat/completions"
+    SILICONFLOW_MODELS: str = "Qwen/Qwen2.5-7B-Instruct,deepseek-ai/DeepSeek-V3"
+    # OpenRouter（openrouter.ai 聚合，含 :free 免费模型）
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1/chat/completions"
+    OPENROUTER_MODELS: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # Ollama 本地（github.com/ollama/ollama，无需 key、完全免费离线；本机 ollama pull 后即可用）
+    OLLAMA_API_KEY: str = "ollama"   # 占位值：Ollama 不校验 key，非空即可通过调用前的密钥检查
+    OLLAMA_BASE_URL: str = "http://localhost:11434/v1/chat/completions"
+    OLLAMA_MODELS: str = "qwen2.5:7b,llama3.1,deepseek-r1:7b"
+
     # ── 安全 ──
     RATE_LIMIT_PER_MINUTE: int = 60
     MAX_UPLOAD_SIZE_MB: int = 20

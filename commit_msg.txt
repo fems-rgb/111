@@ -1,7 +1,8 @@
-优化：模型默认改最省档 + 多列表批量删除/分页 + 修复模型下拉与预警跳转
+功能：接入多路免费模型（Ollama 本地 + 云端免费额度供应商）并在下拉显示全部可选
 
-- 成本：全局默认 qwen-max→qwen-plus，快速档 qwen-plus→qwen-turbo，回退链前置 qwen-turbo（config.py/.env/mode_policy.py，前端文案同步）
-- 修复：ModelSwitcher 改为点击展开分组下拉直接选（保留 ◀▶ 循环）
-- 修复：预警跳转路径 /coursewares/studio→/courseware-studio；AlertBell 改模块级去重 Map + 6h 冷却，切页不再重复弹失败 toast；alerts 时间比对改 naive utcnow
-- 批量：工坊历史/课程课件/课程列表/计划/流水线/技能 均补齐全选、多选、批量删除、页码翻页；后端新增 coursewares/courses/automation 的 batch-delete 与 ai-mine/all
-- 清理：删除 PhaseB 验证残留的失败生成作业
+- 模型注册表新增供应商：Google Gemini、Groq、硅基流动 SiliconFlow、OpenRouter（均 OpenAI 兼容，填免费 key 即用）与 Ollama 本地（无需 key、完全免费离线）
+- config.py / .env：补齐各供应商 *_API_KEY(空)+*_BASE_URL+*_MODELS，附官网领 key 说明；Ollama 默认 qwen2.5:7b / llama3.1 / deepseek-r1:7b
+- model_providers.py：Provider 增加 hint(解锁提示)/local(本地) 标记；Ollama 以占位 key 视为已配置可直接选用
+- generate-models 接口：返回新增 locked[]（未配 key 的供应商 + env_key + hint），并把未配密钥的免费模型补齐中文名；已配置项仍走原 items/groups 不参与异常生成
+- ModelSwitcher.vue：下拉底部新增「更多免费模型·填 key 即用」区，灰显列出锁定供应商与解锁方式，解决看不到其他模型选择的问题
+- 重新构建前端并镜像 backend/static
