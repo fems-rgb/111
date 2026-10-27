@@ -1,8 +1,8 @@
-功能：接入多路免费模型（Ollama 本地 + 云端免费额度供应商）并在下拉显示全部可选
+安全加固：修复 auth 洪峰卡死、限流未挂载、SECRET_KEY 占位与凭据泄露
 
-- 模型注册表新增供应商：Google Gemini、Groq、硅基流动 SiliconFlow、OpenRouter（均 OpenAI 兼容，填免费 key 即用）与 Ollama 本地（无需 key、完全免费离线）
-- config.py / .env：补齐各供应商 *_API_KEY(空)+*_BASE_URL+*_MODELS，附官网领 key 说明；Ollama 默认 qwen2.5:7b / llama3.1 / deepseek-r1:7b
-- model_providers.py：Provider 增加 hint(解锁提示)/local(本地) 标记；Ollama 以占位 key 视为已配置可直接选用
-- generate-models 接口：返回新增 locked[]（未配 key 的供应商 + env_key + hint），并把未配密钥的免费模型补齐中文名；已配置项仍走原 items/groups 不参与异常生成
-- ModelSwitcher.vue：下拉底部新增「更多免费模型·填 key 即用」区，灰显列出锁定供应商与解锁方式，解决看不到其他模型选择的问题
+- auth_service.py：bcrypt 哈希/校验改用 run_in_threadpool，移出 async 事件循环，根治"被多次登录/注册请求拖死全站"
+- rate_limiter.py / deps.py / auth.py：新增每 IP 每分钟 10 次的 auth_rate_limiter 与 check_auth_rate_limit 依赖，挂到 /auth/login、/auth/register（此前 check_rate_limit 定义了却从未挂载，等于无频率保护）
+- config.py：SECRET_KEY 启动守卫，占位符/过短值自动换成随机密钥并告警；.env 已写入真实随机密钥（gitignore 不入库）
+- schemas/auth.py：注册密码下限 6→8、邮箱加格式校验（登录仍允许旧短密码，避免老用户登不进）；LoginView.vue 提示同步
+- LoginView.vue：移除登录页明文展示的默认管理员账号口令，杜绝凭据泄露
 - 重新构建前端并镜像 backend/static

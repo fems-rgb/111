@@ -8,8 +8,8 @@ class LoginRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     username: str = Field(..., min_length=2, max_length=50)
-    email: str = Field(..., max_length=100)
-    password: str = Field(..., min_length=6, max_length=100)
+    email: str = Field(..., max_length=100, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    password: str = Field(..., min_length=8, max_length=100)  # 注册强度提到 8 位（登录仍允许旧短密码）
     display_name: str = Field(default="", max_length=100)
     role: str = Field(default="student")
     institution: str = Field(default="", max_length=200)

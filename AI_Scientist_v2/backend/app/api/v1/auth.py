@@ -5,13 +5,14 @@ from app.database.models import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserInfo, UserUpdateRequest, RefreshTokenRequest
 from app.services.auth_service import register_user, authenticate_user, generate_tokens
 from app.security.auth import decode_refresh_token, create_access_token
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, check_auth_rate_limit
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(req: LoginRequest, db: AsyncSession = Depends(get_db),
+                _rl: None = Depends(check_auth_rate_limit)):
     try:
         user = await authenticate_user(db, req.username, req.password)
         tokens = generate_tokens(user)
@@ -22,7 +23,8 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/register", response_model=TokenResponse)
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db),
+                   _rl: None = Depends(check_auth_rate_limit)):
     try:
         user = await register_user(db, req)
         tokens = generate_tokens(user)

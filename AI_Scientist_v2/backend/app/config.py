@@ -113,5 +113,18 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# 安全守卫：SECRET_KEY 若仍是样板占位值或过短，启动时自动换为随机密钥，避免用公开密钥签发 JWT
+# （生产应在 .env 固定一个强随机密钥；随机临时值会使每次重启旧令牌失效，但安全性优先）
+_INSECURE_SECRET_KEYS = {
+    "change-me-in-production",
+    "please-change-this-to-a-random-secret-string",
+}
+if settings.SECRET_KEY in _INSECURE_SECRET_KEYS or len(settings.SECRET_KEY) < 32:
+    import secrets
+    import logging
+    settings.SECRET_KEY = secrets.token_hex(32)
+    logging.getLogger(__name__).warning(
+        "SECRET_KEY 为占位/过弱值，已临时替换为随机密钥；正式部署请在 .env 设置固定强密钥")
+
 # 确保必要目录存在（uploads / logs / generated 固定骨架 + .gitkeep）
 _paths.ensure_tree()

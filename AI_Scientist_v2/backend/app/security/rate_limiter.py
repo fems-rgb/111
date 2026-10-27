@@ -40,3 +40,5 @@ class RateLimiter:
 
 rate_limiter = RateLimiter()
 agent_rate_limiter = RateLimiter(max_requests=10, window_seconds=60)
+# 登录/注册专用：每 IP 每分钟最多 10 次，抵御撞库/暴力尝试与高频卡死
+auth_rate_limiter = RateLimiter(max_requests=10, window_seconds=60)

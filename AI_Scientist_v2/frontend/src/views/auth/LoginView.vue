@@ -85,7 +85,7 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1">密码</label>
-            <input v-model="regForm.password" type="password" class="input-field" placeholder="至少6位" required />
+            <input v-model="regForm.password" type="password" class="input-field" placeholder="至少8位" required />
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -110,8 +110,6 @@
             {{ loading ? '⏳ 注册中...' : '✨ 注册' }}
           </button>
         </form>
-
-        <p class="mt-6 text-center text-xs text-surface-400">默认管理员: admin / admin123456</p>
       </div>
     </div>
   </div>

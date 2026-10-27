@@ -5,7 +5,7 @@ from sqlalchemy import select
 from app.database.session import get_db
 from app.database.models import User, UserRole
 from app.security.auth import decode_access_token
-from app.security.rate_limiter import rate_limiter
+from app.security.rate_limiter import rate_limiter, auth_rate_limiter
 
 security_scheme = HTTPBearer(auto_error=False)
 
@@ -38,6 +38,15 @@ async def check_rate_limit(request: Request):
     allowed, retry_after = rate_limiter.is_allowed(key)
     if not allowed:
         raise HTTPException(status_code=429, detail=f"请求过于频繁，请{retry_after}秒后重试",
+                          headers={"Retry-After": str(retry_after)})
+
+
+async def check_auth_rate_limit(request: Request):
+    """登录/注册频率护城河：每 IP 限次，抵御撞库、暴力尝试与高频请求卡死"""
+    key = request.client.host if request.client else "unknown"
+    allowed, retry_after = auth_rate_limiter.is_allowed(key)
+    if not allowed:
+        raise HTTPException(status_code=429, detail=f"登录/注册尝试过于频繁，请{retry_after}秒后再试",
                           headers={"Retry-After": str(retry_after)})
 
 async def get_current_user_flexible(
