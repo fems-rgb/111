@@ -332,7 +332,7 @@
             <div v-if="genBusy && genJob" class="px-5 pb-3 space-y-2">
               <div class="flex items-center justify-between text-xs gap-2">
                 <span class="text-purple-700 truncate">{{ genJob.message || '生成中…' }}</span>
-                <span class="font-mono text-surface-500 shrink-0">{{ genJob.percent }}% · {{ genElapsed }}s</span>
+                <span class="font-mono text-surface-500 shrink-0">{{ genJob.percent }}% · {{ genElapsed }}s{{ etaText }}</span>
               </div>
               <div class="h-2 rounded-full bg-surface-100 overflow-hidden">
                 <div class="h-full rounded-full bg-gradient-to-r from-purple-500 to-primary-500 transition-all duration-700"
@@ -642,6 +642,13 @@ const genCancelled = ref(false)
 const models = ref<GenerateModelItem[]>([])
 const modelGroups = ref<GenerateModelGroup[]>([])
 const defaultModel = ref('')
+
+// 线性 ETA（后端按 percent + 已用时长估算）
+const etaText = computed(() => {
+  const s = genJob.value?.eta_seconds
+  if (genJob.value?.status !== 'running' || s == null) return ''
+  return s >= 90 ? ` · 预计还需 ${Math.max(1, Math.round(s / 60))} 分钟` : ` · 预计还需 ${Math.round(s)} 秒`
+})
 let genPoll: number | null = null
 let genTick: number | null = null
 const gen = reactive<{ topic: string; syllabus: string; chapter_count: number; slides_per_chapter: number; style: string; audience: string; sources: MaterialSelection; model: string }>({

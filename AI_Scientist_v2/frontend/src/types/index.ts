@@ -102,6 +102,10 @@ export interface CostSummary {
   total_tokens: number
   call_count: number
   model_breakdown: Record<string, { cost: number; tokens: number; calls: number }>
+  /** 近 30 天日成本（Phase B） */
+  history?: { day: string; cost_yuan: number; calls: number }[]
+  /** 线性外推预测（数据不足时 status=insufficient） */
+  forecast?: Record<string, any>
 }
 
 export interface ProjectStats {

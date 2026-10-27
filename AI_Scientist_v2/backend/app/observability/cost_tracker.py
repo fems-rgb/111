@@ -1,8 +1,14 @@
 """智研星枢 - API调用成本追踪"""
 import logging
+from datetime import date
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# 内存日桶 {YYYY-MM-DD: {cost, calls}}：热路径累加，由 prediction.flush_cost_daily
+# 低频镜像到 cost_daily 表（成本预测/预警的数据源）；_daily_dirty 标记未落库的变更
+_daily_bucket: dict[str, dict] = {}
+_daily_dirty = False
 
 MODEL_PRICING = {
     "qwen-max": {"input": 0.0003, "output": 0.0006},
@@ -41,6 +47,12 @@ class CostTracker:
         self.model_costs[model]["cost"] += cost
         self.model_costs[model]["tokens"] += input_tokens + output_tokens
         self.model_costs[model]["calls"] += 1
+        day = date.today().isoformat()
+        b = _daily_bucket.setdefault(day, {"cost": 0.0, "calls": 0})
+        b["cost"] += cost
+        b["calls"] += 1
+        global _daily_dirty
+        _daily_dirty = True
         if self.total_cost >= settings.COST_ALERT_THRESHOLD_YUAN:
             logger.warning(f"⚠️ 成本预警: 累计 ¥{self.total_cost:.4f}")
         return cost
@@ -62,6 +74,20 @@ class CostTracker:
             "avg_cost_per_call": round(self.total_cost / max(self.call_count, 1), 4),
             "model_breakdown": {m: {"cost": round(d["cost"], 4), "tokens": d["tokens"], "calls": d["calls"]} for m, d in self.model_costs.items()}
         }
+
+
+def daily_snapshot() -> dict[str, dict]:
+    """近 N 天内存日桶（含今天，未落库部分也可见）；返回副本"""
+    return {d: dict(v) for d, v in _daily_bucket.items()}
+
+
+def daily_dirty() -> bool:
+    return _daily_dirty
+
+
+def mark_daily_flushed() -> None:
+    global _daily_dirty
+    _daily_dirty = False
 
 
 cost_tracker = CostTracker()

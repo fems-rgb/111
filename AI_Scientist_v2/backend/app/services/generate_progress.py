@@ -32,7 +32,7 @@ _COLS = ("topic", "course_id", "course_title", "user_id", "status", "stage",
 # 返回给 API 的视图字段
 _VIEW = ("status", "stage", "percent", "message", "chapters_done", "chapters_total",
          "slides_done", "slides_total", "result", "error", "topic",
-         "course_id", "course_title")
+         "course_id", "course_title", "created_at")
 
 _JOBS: dict[str, dict] = {}
 

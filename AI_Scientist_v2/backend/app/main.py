@@ -21,7 +21,7 @@ from app.database.session import engine, Base
 from app.scheduler import register_pipeline_jobs
 from app.observability.logger import setup_logging
 from app.core.exceptions import global_exception_handler, AppException
-from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents, courses, general_courses
+from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents, courses, general_courses, alerts
 from app.api.v1.experiment_lab import router as experiment_lab_router
 
 # 前端构建产物路径（优先 frontend/dist 开发模式，后补 backend/static 预构建分发）
@@ -112,6 +112,8 @@ app.include_router(courses.router, prefix="/api/v1")
 app.include_router(courses.cw_router, prefix="/api/v1")
 # ── AI 通识课（人人都要学的图文微课） ──
 app.include_router(general_courses.router, prefix="/api/v1")
+# ── 预警中心（成本/模型/供应商密钥/任务失败聚合） ──
+app.include_router(alerts.router, prefix="/api/v1")
 # [FIXED] duplicate multimodal router removed
 
 @app.get("/api/health")

@@ -42,6 +42,9 @@
       <!-- 全局模型左右切换（◀ 自动/模型 ▶） -->
       <ModelSwitcher />
 
+      <!-- 预警铃铛（60s 轮询 /alerts） -->
+      <AlertBell />
+
       <!-- 快速/专家模式 -->
       <div class="flex items-center bg-surface-100 dark:bg-surface-700 rounded-lg p-0.5">
         <button @click="switchMode('quick')"
@@ -74,6 +77,7 @@ import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import ModelSwitcher from '@/components/common/ModelSwitcher.vue'
+import AlertBell from '@/components/common/AlertBell.vue'
 
 const router = useRouter()
 const appStore = useAppStore()

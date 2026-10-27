@@ -574,7 +574,8 @@ async def get_pipeline_logs(
         .order_by(PipelineRun.started_at.desc())
     )
     runs = result.scalars().all()
-    return {"logs": [_run_to_dict(r) for r in runs]}
+    steps_total = len(p.steps or [])
+    return {"logs": [_run_to_dict(r, steps_total=steps_total) for r in runs]}
 
 
 # ── 内部工具函数 ──────────────────────────────────────────────
@@ -610,8 +611,8 @@ def _pipeline_to_dict(p: Pipeline) -> dict:
     }
 
 
-def _run_to_dict(r: PipelineRun) -> dict:
-    return {
+def _run_to_dict(r: PipelineRun, steps_total: int = 0) -> dict:
+    out = {
         "run_id": r.id,
         "pipeline_id": r.pipeline_id,
         "status": r.status,
@@ -619,6 +620,13 @@ def _run_to_dict(r: PipelineRun) -> dict:
         "started_at": r.started_at.isoformat() if r.started_at else None,
         "finished_at": r.finished_at.isoformat() if r.finished_at else None,
     }
+    # 运行中给线性 ETA（步数比例 + 己用时长）；steps_total 未知则不给
+    if r.status == "running" and steps_total:
+        from app.services import prediction
+        done = sum(1 for s in (r.steps_log or []) if s.get("status") in ("completed", "failed", "cancelled"))
+        started = r.started_at
+        out["eta_seconds"] = prediction.eta_pipeline(done, steps_total, started) if started else None
+    return out
 
 
 @router.put("/default-template")

@@ -187,6 +187,8 @@ export interface GenerateJobStatus {
   status: 'running' | 'done' | 'failed' | 'cancelled'
   stage: string
   percent: number
+  /** 线性估剩余秒数（仅运行中且可信时非空） */
+  eta_seconds?: number | null
   message: string
   chapters_done: number
   chapters_total: number

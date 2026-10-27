@@ -239,6 +239,68 @@ async def list_courses(q: str = "", category: str = "", level: str = "",
     }
 
 
+@router.get("/learning-forecast")
+async def learning_forecast(user: User = Depends(get_current_user),
+                            db: AsyncSession = Depends(get_db)):
+    """每门课的学习线性预测：近 14 天完成节数外推「预计 X 天后学完」
+
+    整表一次聚合（不按课逐次查库）；未开始的课不给预测，避免噪声。
+    """
+    from app.services.prediction import linear_forecast
+    from datetime import datetime, timedelta, timezone
+
+    courses = (await db.execute(
+        select(GeneralCourse.id, GeneralCourse.title)
+        .where(GeneralCourse.status == "published"))).all()
+    lesson_map = dict((await db.execute(
+        select(GeneralLesson.id, GeneralLesson.course_id)
+        .where(GeneralLesson.status == "ready"))).all())
+    total_by_course: dict[int, int] = {}
+    for cid in lesson_map.values():
+        total_by_course[cid] = total_by_course.get(cid, 0) + 1
+    rows = (await db.execute(
+        select(GeneralProgress.lesson_id, GeneralProgress.status, GeneralProgress.percent,
+               GeneralProgress.updated_at)
+        .where(GeneralProgress.user_id == user.id))).all()
+
+    since = datetime.now(timezone.utc) - timedelta(days=14)
+    done_by_course: dict[int, int] = {}
+    daily_by_course: dict[int, list[int]] = {}
+    for lid, st, pct, upd in rows:
+        cid = lesson_map.get(lid)
+        if cid is None:
+            continue
+        if st == "done" or (pct or 0) >= 100:
+            done_by_course[cid] = done_by_course.get(cid, 0) + 1
+            if upd:
+                u = upd if upd.tzinfo else upd.replace(tzinfo=timezone.utc)
+                if u >= since:
+                    idx = min(13, (u - since).days)
+                    series = daily_by_course.setdefault(cid, [0] * 14)
+                    series[idx] += 1
+
+    out = []
+    for cid, title in courses:
+        total = total_by_course.get(cid, 0)
+        done = done_by_course.get(cid, 0)
+        item = {"course_id": cid, "title": title, "total_lessons": total, "done": done,
+                "percent": round(done / total * 100, 1) if total else 0.0,
+                "estimated_days_left": None}
+        if done > 0 and total > 0 and done < total:
+            series = [float(x) for x in daily_by_course.get(cid, [0] * 14)]
+            active = sum(1 for x in series if x > 0)
+            rate = done / 14.0
+            if active >= 3:
+                fc = linear_forecast(series)
+                if fc["status"] == "ok":
+                    rate = max(fc["predicted"], 0.05)
+            if rate > 0:
+                item["estimated_days_left"] = int((total - done) / rate) + 1
+                item["daily_rate"] = round(rate, 2)
+        out.append(item)
+    return {"ok": True, "items": out}
+
+
 @router.get("/courses/{course_id}")
 async def get_course(course_id: int,
                      user: User = Depends(get_current_user),

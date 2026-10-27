@@ -114,6 +114,12 @@ export const generalApi = {
 
   detail: (id: number) => client.get<GeneralCourseDetail>(`/general/courses/${id}`),
 
+  /** 每门课的学习线性预测（近 14 天完成节数外推） */
+  learningForecast: () =>
+    client.get<{ ok: boolean; items: { course_id: number; title: string; total_lessons: number;
+      done: number; percent: number; estimated_days_left: number | null; daily_rate?: number }[] }>(
+      '/general/learning-forecast'),
+
   lesson: (id: number) => client.get<GeneralLessonDetail>(`/general/lessons/${id}`),
 
   /** 上报进度：percent 0-100，或 done=true 直接标记完成 */

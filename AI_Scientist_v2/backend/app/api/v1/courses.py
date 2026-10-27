@@ -854,7 +854,12 @@ async def quick_generate_status(job_id: str, user: User = Depends(get_current_us
     if snap is None:
         raise HTTPException(status_code=404,
                             detail="作业记录不存在或已过期，可在「我生成过的课件」里查看结果")
-    return {"ok": True, "job_id": job_id, **snap}
+    # 线性估剩余秒数（仅运行中且 percent 可信时给；前端展示「预计还需 N 分钟」）
+    eta = None
+    if snap.get("status") == "running":
+        from app.services import prediction
+        eta = prediction.eta_generation(snap)
+    return {"ok": True, "job_id": job_id, "eta_seconds": eta, **snap}
 
 
 @cw_router.post("/quick-generate/{job_id}/cancel")

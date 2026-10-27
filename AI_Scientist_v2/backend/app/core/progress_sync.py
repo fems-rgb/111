@@ -90,6 +90,13 @@ async def _sync_once():
                 log.debug("[progress] skip task=%s: %s", getattr(task, "id", "?"), e)
         await db.commit()
 
+        # 顺带把成本内存日桶低频镜像到 cost_daily（预测/预警数据源；内部限流 >=60s）
+        try:
+            from app.services.prediction import flush_cost_daily
+            await flush_cost_daily(db)
+        except Exception as e:
+            log.debug("[progress] cost daily flush skip: %s", e)
+
 
 async def _loop():
     await asyncio.sleep(5)

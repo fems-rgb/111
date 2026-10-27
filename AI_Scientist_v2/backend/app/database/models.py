@@ -216,6 +216,20 @@ class CostRecord(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class CostDaily(Base):
+    """全站 API 成本的按天快照（成本预测/预警的数据源）
+
+    热路径只累内存日桶，由 prediction.flush_cost_daily 低频镜像进来；
+    重启后日桶从本表恢复历史（当天已落库部分会被内存桶覆盖，不丢数据）。
+    """
+    __tablename__ = "cost_daily"
+
+    day = Column(String(10), primary_key=True)   # YYYY-MM-DD
+    cost_yuan = Column(Float, default=0.0)
+    calls = Column(Integer, default=0)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 # ════════════════════════════════════════════════════════════
 #  审计日志表
 # ════════════════════════════════════════════════════════════

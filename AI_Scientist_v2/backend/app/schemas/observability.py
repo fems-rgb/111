@@ -26,3 +26,6 @@ class CostSummary(BaseModel):
     total_tokens: int
     call_count: int
     model_breakdown: dict
+    # Phase B：近 30 天日成本序列 + 线性外推预测（旧客户端忽略即可）
+    history: Optional[list] = None
+    forecast: Optional[dict] = None

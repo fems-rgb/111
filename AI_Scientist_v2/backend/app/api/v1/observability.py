@@ -20,9 +20,15 @@ async def get_traces(project_id: int = None, limit: int = 50, offset: int = 0,
     return [SpanInfo.model_validate(r) for r in result.scalars().all()]
 
 
-@router.get("/cost", response_model=CostSummary)
-async def get_cost(user: User = Depends(get_current_user)):
-    return CostSummary.model_validate(cost_tracker.get_summary())
+@router.get("/cost", response_model=CostSummary, response_model_exclude_none=True)
+async def get_cost(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """当前累计成本 + 近 30 天日成本历史与线性外推预测（Phase B）"""
+    from app.services import prediction
+    summary = cost_tracker.get_summary()
+    history = await prediction.cost_history(db, days=30)
+    summary["history"] = history
+    summary["forecast"] = prediction.predict_cost(history)
+    return CostSummary.model_validate(summary)
 
 
 @router.get("/traces/{trace_id}", response_model=list[SpanInfo])

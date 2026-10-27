@@ -203,7 +203,9 @@
                     <span :class="runStatusClass(log.status)" class="text-xs font-medium px-2 py-0.5 rounded-full">{{ runStatusLabel(log.status) }}</span>
                   </div>
                 </div>
-                <div class="text-xs text-surface-400 mb-3">{{ fmtTime(log.started_at) }} → {{ fmtTime(log.finished_at) }}</div>
+                <div class="text-xs text-surface-400 mb-3">{{ fmtTime(log.started_at) }} → {{ fmtTime(log.finished_at) }}
+                  <span v-if="logEta(log)" class="ml-2 text-purple-600">⏳ {{ logEta(log) }}</span>
+                </div>
                 <div class="space-y-2">
                   <div v-for="step in (log.steps||[])" :key="step.step" class="border border-surface-100 rounded-md overflow-hidden">
                     <div class="flex items-center gap-2 px-3 py-2 bg-surface-50 cursor-pointer hover:bg-surface-100" @click="step._expanded = !step._expanded">
@@ -383,6 +385,12 @@ async function runPipeline(id: string) {
     const p = pipelines.value.find(x => x.id === id)
     if (p) { logPipeline.value = p; pipelineLogs.value = [res.data.log].filter(Boolean); startLogPolling(id) }
   } catch (e: any) { appStore.showToast('执行失败: ' + (e.response?.data?.detail || e.message), 'error') }
+}
+// 运行中流水线的线性 ETA（后端 /logs 响应里的 eta_seconds）
+function logEta(log: any): string {
+  const s = log?.eta_seconds
+  if (log?.status !== 'running' || s == null) return ''
+  return s >= 90 ? `预计还需 ${Math.max(1, Math.round(s / 60))} 分钟` : `预计还需 ${Math.round(s)} 秒`
 }
 async function viewLogs(p: Pipeline) {
   logPipeline.value = p; logsLoading.value = true; pipelineLogs.value = []

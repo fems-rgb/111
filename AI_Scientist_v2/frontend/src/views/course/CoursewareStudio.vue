@@ -154,7 +154,7 @@
           <div v-if="busy && job" class="rounded-xl border border-primary-100 bg-gradient-to-b from-primary-50/70 to-white p-4 space-y-3">
             <div class="flex items-center justify-between gap-2">
               <p class="text-sm font-medium text-primary-700 truncate">{{ job.message || '生成中…' }}</p>
-              <p class="text-xs font-mono text-surface-500 shrink-0">{{ job.percent }}% · {{ elapsed }}s</p>
+              <p class="text-xs font-mono text-surface-500 shrink-0">{{ job.percent }}% · {{ elapsed }}s{{ etaText }}</p>
             </div>
             <div class="h-2.5 rounded-full bg-surface-100 overflow-hidden">
               <div class="h-full rounded-full bg-gradient-to-r from-primary-500 to-accent-500 transition-all duration-700"
@@ -377,6 +377,13 @@ const form = reactive({
 const models = ref<(GenerateModelItem & { unavailable?: boolean; unavailable_reason?: string })[]>([])
 const modelGroups = ref<GenerateModelGroup[]>([])
 const defaultModel = ref('')
+
+// 线性 ETA（后端按 percent + 已用时长估算）：「· 预计还需 N 分钟」
+const etaText = computed(() => {
+  const s = job.value?.eta_seconds
+  if (job.value?.status !== 'running' || s == null) return ''
+  return s >= 90 ? ` · 预计还需 ${Math.max(1, Math.round(s / 60))} 分钟` : ` · 预计还需 ${Math.round(s)} 秒`
+})
 const selectedModelDesc = computed(() => {
   const m = models.value.find(x => x.value === form.model)
   if (!m) return ''

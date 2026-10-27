@@ -95,6 +95,9 @@
           <div class="mt-2 h-1.5 rounded-full bg-surface-100 overflow-hidden">
             <div class="h-full bg-primary-500 transition-all" :style="{ width: percentOf(c) + '%' }"></div>
           </div>
+          <p v-if="forecastMap[c.id]" class="mt-1.5 text-[10px] text-purple-500">
+            📈 按当前节奏预计约 {{ forecastMap[c.id] }} 天后学完
+          </p>
         </div>
       </router-link>
     </div>
@@ -176,6 +179,8 @@ const appStore = useAppStore()
 const isExpert = computed(() => appStore.mode === 'expert')
 
 const items = ref<GeneralCourseBrief[]>([])
+// 学习预测：course_id -> 预计剩余天数（Phase B 线性外推；失败静默不影响列表）
+const forecastMap = ref<Record<number, number>>({})
 const categories = ref<{ name: string; count: number }[]>([])
 const canCreate = ref(false)
 const loading = ref(true)
@@ -220,6 +225,11 @@ async function load() {
     items.value = r.data.items || []
     categories.value = r.data.categories || []
     canCreate.value = !!r.data.can_create
+    generalApi.learningForecast().then((f) => {
+      const m: Record<number, number> = {}
+      for (const it of f.data?.items || []) if (it.estimated_days_left != null) m[it.course_id] = it.estimated_days_left
+      forecastMap.value = m
+    }).catch(() => { /* ignore */ })
   } catch (e: any) {
     items.value = []
   } finally {
