@@ -14,6 +14,7 @@ from typing import Any
 
 from app.agents.qwen_client import call_qwen
 from app.config import settings
+from app.services import mode_policy
 
 logger = logging.getLogger(__name__)
 
@@ -394,7 +395,7 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
                         slides_per_chapter: int = 5, style: str = "标准",
                         audience: str = "本科生", domain: str = "",
                         reference_material: str = "", project_id: int = None,
-                        on_progress=None, model: str = None,
+                        on_progress=None, model: str = None, mode: str = None,
                         should_cancel=None) -> tuple[list[dict], dict]:
     """新课程快速做课件：先出大纲，再逐章生成，全程上报进度
 
@@ -402,8 +403,13 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
     让前端进度条显示“第几章/共几页”这种真实进展，而不是一个转圈的盲等。
     分章生成还顺带解决了旧版一次性输出 80 页时被 max_tokens 截断的问题。
     model：命白名单则用该模型，否则用默认；should_cancel() 为真时抛 GenerationCancelled。
+    mode：'quick'/'expert' —— 决定模型档位（用户未显式选模型时）、内容深度指令与逐页篇幅；
+    两档都保留版式硬约束（每章≥1图+≥1对照），保证都图文并茂。
     """
-    mdl = resolve_model(model)
+    policy = mode_policy.apply_mode(mode, model, long_text=reference_material)
+    mdl = resolve_model(policy["model"])
+    cw = policy["courseware"]
+    directive = policy["directive"]
     # 实际用到的模型（限流时 qwen_client 会自动回退，这里如实记录供前端提示）
     models_used: list[str] = []
 
@@ -434,13 +440,13 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
     if _cancelled():
         raise GenerationCancelled()
     await _emit("outline", 6, "正在设计章节大纲…")
-    res = await call_qwen(_OUTLINE_SYSTEM, f"""主题：{topic}
+    res = await call_qwen(_OUTLINE_SYSTEM + "\n" + directive, f"""主题：{topic}
 领域：{domain or '通用'}
 授课对象：{audience}
 风格：{style}
 章节数：{chapter_count}，每章约 {slides_per_chapter} 页{syl_block}{ref_block}
 
-只输出 JSON。""", project_id=project_id, max_tokens=1600, model=mdl)
+只输出 JSON。""", project_id=project_id, max_tokens=cw["outline_tokens"], model=mdl)
     _track(res)
     cost += res.get("cost", 0)
     tin += res["tokens"]["input"]
@@ -488,13 +494,14 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
 本章标题：{chapter_name}
 本章要解决的问题：{key_q or '自拟'}
 本章知识点：{pts_text}
+{directive}
 请输出 {slides_per_chapter} 页：同一章内版式不重复，其中至少 1 页用 chart 画数据、
 至少 1 页用 flow 画流程或 table 做对照，最后一页固定是本章小结，
 其余页面用 bullets（4-6 条主点 + 子点，带 detail 与 example）。
-每页都要有 detail（80-120 字）、example（40-80 字）与 notes（150-250 字）。{ref_block if i == 0 else ''}
+每页都要有 detail（{cw['detail']} 字）、example（40-80 字）与 notes（150-250 字）。{ref_block if i == 0 else ''}
 
 只输出 {{"slides": [...]}}。""", project_id=project_id,
-                              max_tokens=min(8000, 1600 + slides_per_chapter * 1200), model=mdl)
+                              max_tokens=min(8000, cw["chapter_base_tokens"] + slides_per_chapter * 1200), model=mdl)
         _track(cres)
         cost += cres.get("cost", 0)
         tin += cres["tokens"]["input"]
@@ -579,21 +586,32 @@ async def generate_deck(topic: str, syllabus: str = "", chapter_count: int = 6,
         "exercises": exercises,
         "reading": reading,
         "model": mdl,
+        "mode": policy["mode"],
         "models_used": models_used or [mdl],
         "cost": round(cost, 6),
         "tokens": {"input": tin, "output": tout},
     }
 
 
-async def outline_from_syllabus(text: str, domain: str = "", project_id: int = None) -> dict:
-    """辅助联动：把粘贴的大纲/研报文本抽取成章节结构"""
-    user_prompt = f"""把下面的课程材料整理为章节大纲。领域：{domain or '通用'}
+async def outline_from_syllabus(text: str, domain: str = "", project_id: int = None,
+                                mode: str = None) -> dict:
+    """辅助联动：把粘贴的大纲/研报文本抽取成章节结构
 
+    mode：'quick' 每章只提 3-4 个核心知识点；'expert' 每章展开更细（5-8 个知识点、可再带子项）。
+    """
+    policy = mode_policy.apply_mode(mode, long_text=text)
+    fine = ("每章提炼 5-8 个知识点，尽量把原理、方法、案例都覆盖到。"
+            if policy["mode"] == mode_policy.EXPERT
+            else "每章只留 3-4 个最核心的知识点，抓主干。")
+    user_prompt = f"""把下面的课程材料整理为章节大纲。领域：{domain or '通用'}
+{fine}
 材料：
 {text[:6000]}
 
 输出 JSON：{{"title": "建议课程名", "domain": "领域", "chapters": [{{"title": "章名", "points": ["知识点"]}}]}}"""
-    res = await call_qwen("你是课程设计助手，输出严格 JSON。", user_prompt, project_id=project_id)
+    res = await call_qwen("你是课程设计助手，输出严格 JSON。", user_prompt,
+                          project_id=project_id, max_tokens=policy["courseware"]["outline_tokens"],
+                          model=policy["model"])
     return (_extract_json(res["content"]) or {}), {"cost": res.get("cost", 0)}
 
 

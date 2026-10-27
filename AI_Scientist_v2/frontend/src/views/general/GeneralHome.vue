@@ -7,7 +7,11 @@
           <span>🌱</span>AI 通识课
         </h1>
         <p class="mt-1.5 text-sm text-surface-500">
-          不用懂技术也能读。每节 6-8 分钟，读完知道 AI 是什么、哪里能信、怎么用得上。
+          给完全零基础的人：30 秒就能开始读的 AI 图文微课。每节 6-8 分钟，配图解与随堂自测，读完知道 AI 是什么、哪里能信、怎么用得上。
+        </p>
+        <p class="mt-1 text-xs text-surface-400">
+          这是给普通人“学”的地方；老师想产出专业 PPT 课件，请去
+          <button class="text-primary-600 hover:underline" @click="$router.push('/courseware-studio')">📽️ 课件工坊</button>。
         </p>
       </div>
       <button v-if="canCreate" class="btn-primary flex items-center gap-1.5" @click="openDraft">
@@ -107,6 +111,10 @@
             AI 先给出课程大纲和章节标题，你确认后可以逐节生成正文。正文也由 AI 写，你能随时改。
           </p>
 
+          <div class="mt-4">
+            <ModeHint scope="general" />
+          </div>
+
           <div class="mt-5 space-y-4">
             <div>
               <label class="g-label">想讲什么主题？</label>
@@ -130,10 +138,14 @@
                 </select>
               </div>
             </div>
-            <div>
+            <div v-if="isExpert">
               <label class="g-label">分几节（{{ form.chapter_count }} 节）</label>
               <input v-model.number="form.chapter_count" type="range" min="3" max="10" class="w-full accent-primary-600" />
-              <p class="mt-1 text-[11px] text-surface-400">每节控制在 6-8 分钟能读完，不建议超过 10 节。</p>
+              <p class="mt-1 text-[11px] text-surface-400">专家模式可自定节数；每节控制在 6-8 分钟能读完。</p>
+            </div>
+            <div v-else class="rounded-lg bg-surface-50 border border-surface-100 px-3 py-2 text-xs text-surface-500 flex items-center justify-between">
+              <span>快速模式：约 <b class="font-mono text-primary-700">4</b> 节，每节精简图解 1 个</span>
+              <button class="text-primary-600 hover:underline" @click="appStore.setMode('expert')">切专家模式自定义节数 →</button>
             </div>
           </div>
 
@@ -152,12 +164,16 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import ModeHint from '@/components/common/ModeHint.vue'
+import { useAppStore } from '@/stores/app'
 import { generalApi, generalCoverUrl, type GeneralCourseBrief } from '@/api/modules/general'
 import './general.css'
 
 const router = useRouter()
+const appStore = useAppStore()
+const isExpert = computed(() => appStore.mode === 'expert')
 
 const items = ref<GeneralCourseBrief[]>([])
 const categories = ref<{ name: string; count: number }[]>([])
@@ -236,7 +252,12 @@ async function submitDraft() {
   drafting.value = true
   draftError.value = ''
   try {
-    const r = await generalApi.draft({ ...form })
+    const r = await generalApi.draft({
+      topic: form.topic, audience: form.audience, level: form.level,
+      mode: appStore.mode,
+      // 快速模式不传节数，由后端按模式默认（约 4 节）；专家模式用用户自定
+      ...(isExpert.value ? { chapter_count: form.chapter_count } : {}),
+    })
     draftOpen.value = false
     router.push(`/general/${r.data.course_id}`)
   } catch (e: any) {

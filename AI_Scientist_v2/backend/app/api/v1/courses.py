@@ -1202,7 +1202,7 @@ async def _build_deck(db: AsyncSession, course: Course, req: GenerateDeckRequest
         style=req.style, audience=req.audience,
         domain=req.domain or course.domain or "", reference_material=material,
         project_id=req.project_id or course.project_id, on_progress=on_progress,
-        model=req.model, should_cancel=should_cancel)
+        model=req.model, mode=req.mode, should_cancel=should_cancel)
 
     if not slides:
         raise HTTPException(status_code=500, detail="AI 未返回可用课件内容，请调整大纲后重试")
@@ -1344,7 +1344,7 @@ async def ai_outline(req: OutlineRequest, user: User = Depends(require_teacher),
     """粘贴大纲/讲义文本（也可叠加素材）→ 自动结构化章节，开课辅助"""
     material, provenance = await _resolve_material(db, user, req.sources, "", None, None)
     text = req.text + (("\n\n" + material) if material else "")
-    data, usage = await course_ai_service.outline_from_syllabus(text, req.domain)
+    data, usage = await course_ai_service.outline_from_syllabus(text, req.domain, mode=req.mode)
     return {"ok": True, "title": data.get("title", ""), "domain": data.get("domain", ""),
             "chapters": data.get("chapters", []), "cost": usage.get("cost", 0),
             "sources_used": provenance}

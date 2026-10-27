@@ -126,11 +126,11 @@ export const generalApi = {
       `/general/lessons/${lessonId}/ask`, { question }, { timeout: 180000 }),
 
   /** AI 起草一门课：只出大纲，正文逐节生成 */
-  draft: (data: { topic: string; audience?: string; level?: string; chapter_count?: number }) =>
+  draft: (data: { topic: string; audience?: string; level?: string; chapter_count?: number; model?: string; mode?: string }) =>
     client.post<GeneralDraftResult>('/general/courses/draft', data, { timeout: 240000 }),
 
   /** 生成单节正文 + 自测题（约 10-20s，失败可单独重试） */
-  generateLesson: (lessonId: number, data?: { audience?: string; style?: string; extra?: string }) =>
+  generateLesson: (lessonId: number, data?: { audience?: string; style?: string; extra?: string; model?: string; mode?: string }) =>
     client.post<GeneralGenerateResult>(`/general/lessons/${lessonId}/generate`, data || {}, { timeout: 300000 }),
 
   publish: (id: number) =>

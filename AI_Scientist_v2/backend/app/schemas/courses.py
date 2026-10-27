@@ -57,6 +57,8 @@ class GenerateDeckRequest(BaseModel):
     # 课件工坊：不传 course_id 时自动建一个仅自己可见的私有课程来承载课件
     course_id: Optional[int] = None
     create_course: bool = True
+    # 快速 / 专家模式：决定模型档位（未显式选 model 时）与内容深度、逐页篇幅
+    mode: str = Field(default="quick", max_length=12)
 
 
 class AiRefreshRequest(BaseModel):
@@ -88,3 +90,4 @@ class OutlineRequest(BaseModel):
     text: str = Field(..., min_length=10, max_length=20000)
     domain: str = Field(default="", max_length=100)
     sources: Optional[dict[str, Any]] = None
+    mode: str = Field(default="quick", max_length=12)

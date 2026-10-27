@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.models import GeneralCourse, GeneralLesson
+from app.api.v1.general_seed_extra import EXTRA_COURSES
 
 logger = logging.getLogger(__name__)
 
@@ -511,41 +512,56 @@ LESSON_FIGURES = [
 
 
 async def seed_general_courses(db: AsyncSession) -> None:
-    """表为空时插入示例课。已有数据则完全跳过，不会覆盖用户内容。"""
-    existing = (await db.execute(select(GeneralCourse.id).limit(1))).scalar_one_or_none()
-    if existing:
-        return
+    """按课程标题幂等：只补种缺失的种子课，已有课程与用户进度完全不动。
 
-    course = GeneralCourse(
-        title=COURSE["title"],
-        subtitle=COURSE["subtitle"],
-        emoji=COURSE["emoji"],
-        category=COURSE["category"],
-        level=COURSE["level"],
-        summary=COURSE["summary"],
-        tags=COURSE["tags"],
-        cover_image=COURSE.get("cover_image", ""),
-        status="published",
-        author_id=None,
-        lesson_count=len(LESSONS),
-    )
-    db.add(course)
-    await db.flush()
+    早期版本“只要有任意一门课就整体跳过”，导致后续新增的种子课永远补不进来。
+    改成逐门按标题检查：同名已存在则跳过，缺失才插入（含 lessons + figure），不清库。
+    """
+    bundles = [{"course": COURSE, "lessons": LESSONS, "figures": LESSON_FIGURES}, *EXTRA_COURSES]
+    inserted = 0
+    for bundle in bundles:
+        meta = bundle["course"]
+        lessons = bundle["lessons"]
+        figures = bundle.get("figures") or []
+        exists = (await db.execute(
+            select(GeneralCourse.id).where(GeneralCourse.title == meta["title"]).limit(1)
+        )).scalar_one_or_none()
+        if exists:
+            continue
 
-    for i, item in enumerate(LESSONS):
-        db.add(GeneralLesson(
-            course_id=course.id,
-            order_index=i,
-            title=item["title"],
-            kicker=item["kicker"],
-            summary=item["summary"],
-            content=item["content"],
-            quiz=item["quiz"],
-            figure=LESSON_FIGURES[i] if i < len(LESSON_FIGURES) else [],
-            cover_image=f"seed_l{i}.png",
-            minutes=item["minutes"],
-            status="ready",
-        ))
+        course = GeneralCourse(
+            title=meta["title"],
+            subtitle=meta["subtitle"],
+            emoji=meta["emoji"],
+            category=meta["category"],
+            level=meta["level"],
+            summary=meta["summary"],
+            tags=meta["tags"],
+            cover_image=meta.get("cover_image", ""),
+            status="published",
+            author_id=None,
+            lesson_count=len(lessons),
+        )
+        db.add(course)
+        await db.flush()
 
-    await db.commit()
-    logger.info(f"🌱 通识课种子已写入：gc{course.id}「{course.title}」{len(LESSONS)} 节")
+        for i, item in enumerate(lessons):
+            db.add(GeneralLesson(
+                course_id=course.id,
+                order_index=i,
+                title=item["title"],
+                kicker=item["kicker"],
+                summary=item["summary"],
+                content=item["content"],
+                quiz=item["quiz"],
+                figure=figures[i] if i < len(figures) else [],
+                cover_image=item.get("cover_image", f"seed_l{i}.png"),
+                minutes=item["minutes"],
+                status="ready",
+            ))
+        inserted += 1
+        logger.info(f"🌱 通识课种子补种：gc{course.id}「{course.title}」{len(lessons)} 节")
+
+    if inserted:
+        await db.commit()
+        logger.info(f"🌱 通识课种子本次新增 {inserted} 门")

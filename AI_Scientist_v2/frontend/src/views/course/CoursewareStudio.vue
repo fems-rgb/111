@@ -5,9 +5,9 @@
       <div>
         <h1 class="text-2xl font-bold flex items-center gap-2">📽️ 课件工坊</h1>
         <p class="text-sm text-surface-500 mt-1">
-          不用先建课程 —— 给一个主题，AI 直接产出整套 PPT 课件（全程进度可视），可下载 <span class="font-mono">.pptx</span> 投影，
-          也能按封面/目录/分章在线读电子书、导出 PDF/EPUB 送手机，还能生成学生/教师讲义（Word / PDF）直接打印
+          面向教师的专业 PPT 生产工具：给一个主题，AI 直接产出可投影的整套课件（.pptx / 电子书 / 学生与教师讲义），全程进度可视
         </p>
+        <p class="text-xs text-surface-400 mt-1">零基础想自己学 AI？去 <button class="text-primary-600 hover:underline" @click="$router.push('/general')">🌱 AI 通识课</button>（面向普通人的图文微课）</p>
       </div>
       <button @click="$router.push('/courses')"
               class="text-sm px-3 py-1.5 rounded-lg bg-surface-100 hover:bg-surface-200">🎓 课程中心</button>
@@ -39,6 +39,19 @@
       <!-- ═══ 生成表单 ═══ -->
       <div class="xl:col-span-2 space-y-4">
         <div class="card p-5 space-y-4">
+          <!-- 开箱模板：点一下预填整套参数并推荐模式 -->
+          <div>
+            <p class="text-xs font-medium text-surface-600 mb-1.5">🎁 从模板开始（点一下自动填好风格/受众/章节页数与大纲）</p>
+            <div class="flex flex-wrap gap-2">
+              <button v-for="t in TEMPLATES" :key="t.name" @click="applyTemplate(t)"
+                      class="text-xs px-3 py-1.5 rounded-lg border border-surface-200 hover:border-primary-300 hover:bg-primary-50/50 transition-colors text-left">
+                <span class="mr-1">{{ t.emoji }}</span>{{ t.name }}
+                <span :class="['ml-1 text-[10px]', t.recommend === 'expert' ? 'text-accent-600' : 'text-primary-600']">
+                  {{ t.recommend === 'expert' ? '🔬' : '⚡' }}</span>
+              </button>
+            </div>
+          </div>
+
           <div>
             <label class="block text-sm font-medium mb-1">🎯 讲授主题 <span class="text-red-500">*</span></label>
             <textarea v-model.trim="form.topic" rows="2" class="input-field resize-none"
@@ -64,7 +77,8 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <!-- 规模与风格：专家模式可细调；快速模式按模式默认，只留只读摘要 -->
+          <div v-if="isExpert" class="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div>
               <label class="block text-xs font-medium text-surface-600 mb-1">章节数</label>
               <input v-model.number="form.chapter_count" type="number" min="1" max="20" class="input-field text-sm py-1.5" />
@@ -86,9 +100,15 @@
               </select>
             </div>
           </div>
+          <div v-else class="flex flex-wrap items-center gap-2 text-xs text-surface-500 rounded-lg bg-surface-50 border border-surface-100 px-3 py-2">
+            <span>规模：约 <b class="font-mono text-primary-700">{{ effChapter }}</b> 章 · 每章 <b class="font-mono text-primary-700">{{ effSlides }}</b> 页</span>
+            <span class="opacity-40">·</span>
+            <span>风格 {{ form.style }} · 受众 {{ form.audience }}</span>
+            <button class="ml-auto text-primary-600 hover:underline" @click="appStore.setMode('expert')">切专家模式细调 →</button>
+          </div>
 
-          <div>
-            <label class="block text-xs font-medium text-surface-600 mb-1">🧠 生成模型（可选）</label>
+          <div v-if="isExpert">
+            <label class="block text-xs font-medium text-surface-600 mb-1">🧠 生成模型（可选，留空按模式自动定档）</label>
             <div class="flex items-center gap-2">
               <select v-model="form.model" class="input-field text-sm py-1.5 max-w-xs">
                 <option value="">🤖 默认模型（{{ defaultModel || '后端配置' }}）</option>
@@ -106,7 +126,10 @@
                       placeholder="1. 注意力机制的直觉&#10;2. QKV 与缩放点积&#10;3. 多头注意力"></textarea>
           </div>
 
-          <MaterialSourcePicker v-model="form.sources" :preselect="preselect" />
+          <MaterialSourcePicker v-if="isExpert" v-model="form.sources" :preselect="preselect" />
+          <p v-else class="text-[11px] text-surface-400">🧩 多源素材聚合（资料/问题/报告/流水线）在专家模式开放 —— 想让课件建立在你已有的东西上？<button class="text-primary-600 hover:underline" @click="appStore.setMode('expert')">切专家模式</button></p>
+
+          <ModeHint scope="courseware" />
 
           <div class="flex flex-wrap items-center gap-3 pt-1">
             <button v-if="!busy" @click="generate" :disabled="!form.topic"
@@ -263,11 +286,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
 import SlidePage from '@/components/course/SlidePage.vue'
+import ModeHint from '@/components/common/ModeHint.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
 import {
   courseApi, coursewareApi,
   type AiCoursewareItem, type Course, type DeckResult, type GenerateJobStatus,
@@ -292,6 +317,50 @@ const route = useRoute()
 const router = useRouter()
 
 const canTeach = computed(() => TEACHER_ROLES.includes(authStore.user?.role || ''))
+
+const appStore = useAppStore()
+const isExpert = computed(() => appStore.mode === 'expert')
+
+/** 开箱模板：点一下把主题/风格/受众/章节页数/大纲骨架都填好，并切到该模板推荐的模式 */
+interface DeckTemplate {
+  name: string; emoji: string; recommend: 'quick' | 'expert'
+  style: string; audience: string; chapter_count: number; slides_per_chapter: number
+  topic_hint: string; syllabus: string
+}
+const TEMPLATES: DeckTemplate[] = [
+  { name: '新概念讲解', emoji: '💡', recommend: 'quick', style: '标准', audience: '本科生',
+    chapter_count: 4, slides_per_chapter: 4, topic_hint: '例如：什么是向量数据库',
+    syllabus: '1. 一句话讲清它是什么\n2. 为什么需要它\n3. 它怎么运作\n4. 典型用法与常见坑' },
+  { name: '课程开篇第一章', emoji: '📖', recommend: 'quick', style: '标准', audience: '本科生',
+    chapter_count: 5, slides_per_chapter: 4, topic_hint: '例如：《人工智能导论》第 1 章 AI 是什么',
+    syllabus: '1. 课程地图与学习目标\n2. 从图灵测试谈起\n3. 这门课怎么学\n4. 一个能动手的小练习\n5. 本章小结' },
+  { name: '研究进展汇报', emoji: '🔬', recommend: 'expert', style: '研究进展', audience: '研究生',
+    chapter_count: 7, slides_per_chapter: 6, topic_hint: '例如：大模型推理键值缓存优化最新进展',
+    syllabus: '1. 问题定义与动机\n2. 相关工作对比\n3. 方法设计\n4. 实验设置\n5. 结果与分析\n6. 局限与下一步\n7. 小结' },
+  { name: '科普通识讲座', emoji: '🌱', recommend: 'quick', style: '科普通识', audience: '初学者',
+    chapter_count: 4, slides_per_chapter: 4, topic_hint: '例如：普通人该怎么用 AI',
+    syllabus: '1. AI 跟我有什么关系\n2. 用一个生活类比讲原理\n3. 今天就能上手的用法\n4. 最常见的误区' },
+]
+function applyTemplate(t: DeckTemplate) {
+  if (!form.topic || form.topic === (lastAppliedHint.value || '')) form.topic = ''
+  form.style = t.style
+  form.audience = t.audience
+  form.chapter_count = t.chapter_count
+  form.slides_per_chapter = t.slides_per_chapter
+  form.syllabus = t.syllabus
+  lastAppliedHint.value = t.topic_hint
+  if (appStore.mode !== t.recommend) appStore.setMode(t.recommend)
+  appStore.showToast(`已套用模板「${t.name}」，并切到${t.recommend === 'expert' ? '专家' : '快速'}模式`, 'success')
+}
+const lastAppliedHint = ref('')
+
+// 模式切换时，把隐藏的章节/页数收敛到当前档的合理规模（快速更小、专家保留用户设定）
+watch(isExpert, (expert) => {
+  if (!expert) {
+    if (form.chapter_count > 4) form.chapter_count = 4
+    if (form.slides_per_chapter > 4) form.slides_per_chapter = 4
+  }
+})
 
 const form = reactive({
   topic: '', title: '', domain: '', syllabus: '',
@@ -328,8 +397,12 @@ const elapsed = ref(0)
 let pollTimer: number | null = null
 let tickTimer: number | null = null
 
+// 当前模式下实际生效的章节/页数规模：快速档封顶 4，专家档用用户设定
+const effChapter = computed(() => isExpert.value ? form.chapter_count : Math.min(form.chapter_count, 4))
+const effSlides = computed(() => isExpert.value ? form.slides_per_chapter : Math.min(form.slides_per_chapter, 4))
+
 const totalPages = computed(() =>
-  1 + Math.max(1, form.chapter_count) * (Math.max(1, form.slides_per_chapter) + 1) + 1)
+  1 + Math.max(1, effChapter.value) * (Math.max(1, effSlides.value) + 1) + 1)
 const activeCwId = computed(() => result.value?.courseware_id || 0)
 const shownSlides = computed(() => (showAll.value ? slides.value : slides.value.slice(0, 6)))
 const stageIndex = computed(() => {
@@ -516,7 +589,7 @@ async function generate() {
   elapsed.value = 0
   job.value = {
     ok: true, job_id: '', status: 'running', stage: 'queued', percent: 1,
-    message: '正在提交生成作业…', chapters_done: 0, chapters_total: form.chapter_count,
+    message: '正在提交生成作业…', chapters_done: 0, chapters_total: effChapter.value,
     slides_done: 0, slides_total: totalPages.value,
   }
   tickTimer = window.setInterval(() => { elapsed.value += 1 }, 1000)
@@ -526,14 +599,15 @@ async function generate() {
       title: form.title || undefined,
       domain: form.domain || undefined,
       syllabus: form.syllabus || undefined,
-      chapter_count: form.chapter_count,
-      slides_per_chapter: form.slides_per_chapter,
+      chapter_count: effChapter.value,
+      slides_per_chapter: effSlides.value,
       style: form.style,
       audience: form.audience,
       course_id: form.course_id,
       sources: form.sources,
       auto_save: true,
       model: form.model || undefined,
+      mode: appStore.mode,
     })
     const jobId = res.data.job_id
     if (!jobId) throw new Error('服务端未返回 job_id')

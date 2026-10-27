@@ -148,11 +148,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 import { generalApi, generalCoverUrl, type GeneralCourseDetail } from '@/api/modules/general'
 import './general.css'
 
 const route = useRoute()
 const router = useRouter()
+const appStore = useAppStore()
 
 const course = ref<GeneralCourseDetail | null>(null)
 const loading = ref(true)
@@ -194,7 +196,7 @@ async function load() {
 async function genOne(id: number) {
   genState[id] = 'running'
   try {
-    const r = await generalApi.generateLesson(id)
+    const r = await generalApi.generateLesson(id, { mode: appStore.mode })
     genState[id] = 'idle'
     if (r.data.fallback_from) {
       notice.value = `所选模型 ${r.data.fallback_from} 当前不可用，已自动改用 ${r.data.model} 完成。`

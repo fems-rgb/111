@@ -134,18 +134,27 @@
           </div>
 
           <div class="p-5 space-y-4">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div class="md:col-span-2">
-                <label class="block text-xs font-medium text-surface-600 mb-1">课程名称 *</label>
-                <input v-model.trim="form.title" class="input-field text-sm" placeholder="例如：大语言模型对齐导论" />
+            <!-- 从模板开课：点一下预填名称/编号/领域/大纲骨架，仍可手改（两种模式都可见） -->
+            <div>
+              <label class="block text-xs font-medium text-surface-600 mb-1.5">从模板开课（可选，套用后仍可手改）</label>
+              <div class="flex flex-wrap gap-2">
+                <button v-for="t in COURSE_TEMPLATES" :key="t.name" type="button" @click="applyCourseTemplate(t)"
+                        class="text-xs px-3 py-1.5 rounded-full bg-surface-100 text-surface-700 hover:bg-primary-50 hover:text-primary-700 border border-surface-200 transition-colors">
+                  {{ t.cover_emoji }} {{ t.name }}
+                </button>
               </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-medium text-surface-600 mb-1">课程名称 *</label>
+              <input v-model.trim="form.title" class="input-field text-sm" placeholder="例如：大语言模型对齐导论" />
+            </div>
+
+            <div v-if="isExpert" class="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label class="block text-xs font-medium text-surface-600 mb-1">课程编号</label>
                 <input v-model.trim="form.code" class="input-field text-sm" placeholder="CS-401" />
               </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label class="block text-xs font-medium text-surface-600 mb-1">领域</label>
                 <input v-model.trim="form.domain" class="input-field text-sm" placeholder="人工智能" />
@@ -154,13 +163,14 @@
                 <label class="block text-xs font-medium text-surface-600 mb-1">封面 Emoji</label>
                 <input v-model.trim="form.cover_emoji" class="input-field text-sm" placeholder="📖" />
               </div>
-              <div>
-                <label class="block text-xs font-medium text-surface-600 mb-1">可见性</label>
-                <select v-model="form.visibility" class="input-field text-sm">
-                  <option value="public">公开（学生可浏览）</option>
-                  <option value="private">仅自己可见</option>
-                </select>
-              </div>
+            </div>
+
+            <div v-if="isExpert">
+              <label class="block text-xs font-medium text-surface-600 mb-1">可见性</label>
+              <select v-model="form.visibility" class="input-field text-sm">
+                <option value="public">公开（学生可浏览）</option>
+                <option value="private">仅自己可见</option>
+              </select>
             </div>
 
             <div>
@@ -168,10 +178,11 @@
               <textarea v-model.trim="form.description" class="input-field text-sm h-20" placeholder="一句话说明课程目标与受众"></textarea>
             </div>
 
-            <div>
+            <div v-if="isExpert">
               <label class="block text-xs font-medium text-surface-600 mb-1">教学大纲（可粘贴任意文本，AI 可自动拆章）</label>
               <textarea v-model="form.syllabus" class="input-field text-sm h-28 font-mono"
                         placeholder="第1章 绪论&#10;1.1 研究背景&#10;1.2 核心挑战&#10;第2章 ..."></textarea>
+              <div class="mt-2"><ModeHint scope="outline" /></div>
               <div class="flex flex-wrap items-center gap-2 mt-2">
                 <button type="button" @click="aiOutline" :disabled="aiLoading || form.syllabus.trim().length < 10"
                         class="text-xs px-3 py-1.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 disabled:opacity-50">
@@ -187,11 +198,17 @@
               </div>
             </div>
 
+            <!-- 快速模式：编号/领域/大纲/素材/项目等高级项已折叠，套模板时后台已填好，切专家可展开编辑 -->
+            <p v-if="!isExpert" class="text-[11px] text-surface-500 rounded-lg bg-surface-50 px-3 py-2">
+              快速模式只填名称与简介即可开课。套用模板后，编号 / 领域 / 大纲已自动填好；需要逐章编辑或 AI 拆章，请
+              <button class="text-primary-600 hover:underline" @click="appStore.setMode('expert')">切到专家模式</button>。
+            </p>
+
             <!-- 联动：开课素材来源（题目/报告/项目/资料/技能） -->
-            <MaterialSourcePicker v-model="form.sources" :preselect="preselect" />
+            <MaterialSourcePicker v-if="isExpert" v-model="form.sources" :preselect="preselect" />
 
             <!-- 联动：关联研究项目 -->
-            <div>
+            <div v-if="isExpert">
               <label class="block text-xs font-medium text-surface-600 mb-1">关联研究项目（可选，课程 AI 会继承项目上下文）</label>
               <select v-model="form.project_id" class="input-field text-sm">
                 <option :value="null">不关联</option>
@@ -199,7 +216,7 @@
               </select>
             </div>
 
-            <div v-if="outlineChapters.length" class="rounded-lg border border-surface-200 p-3 max-h-40 overflow-y-auto">
+            <div v-if="isExpert && outlineChapters.length" class="rounded-lg border border-surface-200 p-3 max-h-40 overflow-y-auto">
               <p class="text-xs font-medium mb-2">章节结构预览</p>
               <div v-for="(ch, i) in outlineChapters" :key="i" class="text-[11px] mb-1.5">
                 <span class="font-medium">第{{ i + 1 }}章 {{ ch.title }}</span>
@@ -230,17 +247,47 @@ import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { courseApi, type Course, type Chapter, type MaterialSelection } from '@/api/modules/courses'
 import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
 import { useProjectStore } from '@/stores/project'
 import MaterialSourcePicker from '@/components/course/MaterialSourcePicker.vue'
+import ModeHint from '@/components/common/ModeHint.vue'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
+const appStore = useAppStore()
 const projectStore = useProjectStore()
 const { projects } = storeToRefs(projectStore)
 
 const TEACHER_ROLES = ['teacher', 'researcher', 'admin']
 const canTeach = computed(() => TEACHER_ROLES.includes(auth.user?.role || ''))
+const isExpert = computed(() => appStore.mode === 'expert')
+
+/** 开课模板：点一下预填名称/编号/领域/大纲骨架，仍可手改 */
+interface CourseTemplate {
+  name: string; title: string; code: string; domain: string
+  cover_emoji: string; description: string; syllabus: string
+}
+const COURSE_TEMPLATES: CourseTemplate[] = [
+  { name: '人工智能导论', title: '人工智能导论', code: 'AI-101', domain: '人工智能', cover_emoji: '🤖',
+    description: '面向本科生的 AI 入门课，建立直觉、破除误传、上手常用工具。',
+    syllabus: '第1章 什么是人工智能\n第2章 机器学习基础直觉\n第3章 大模型与提示词\n第4章 AI 的边界与伦理' },
+  { name: 'Python 编程基础', title: 'Python 编程基础', code: 'CS-101', domain: '计算机科学', cover_emoji: '🐍',
+    description: '从零掌握 Python 语法与基本编程思维，配套练习与项目。',
+    syllabus: '第1章 变量与类型\n第2章 分支与循环\n第3章 函数与模块\n第4章 文件与异常\n第5章 综合小项目' },
+  { name: '数据思维入门', title: '数据思维入门', code: 'DS-101', domain: '数据科学', cover_emoji: '📊',
+    description: '不写代码也能懂：如何看数据、防被图表忽悠、用数据做决策。',
+    syllabus: '第1章 数据从哪来\n第2章 平均与分布\n第3章 相关不是因果\n第4章 图表怎么误人' },
+]
+function applyCourseTemplate(t: CourseTemplate) {
+  form.title = t.title
+  form.code = t.code
+  form.domain = t.domain
+  form.cover_emoji = t.cover_emoji
+  form.description = t.description
+  form.syllabus = t.syllabus
+  appStore.showToast(`已套用开课模板「${t.name}」`, 'success')
+}
 
 const loading = ref(false)
 const items = ref<Course[]>([])
@@ -363,7 +410,7 @@ async function aiOutline() {
   aiLoading.value = true
   createMsg.value = ''
   try {
-    const res = await courseApi.aiOutline({ text: form.syllabus, domain: form.domain, sources: form.sources })
+    const res = await courseApi.aiOutline({ text: form.syllabus, domain: form.domain, sources: form.sources, mode: appStore.mode })
     const d = res.data
     outlineChapters.value = d.chapters || []
     if (d.title && !form.title) form.title = d.title

@@ -280,7 +280,7 @@ export const courseApi = {
     slides_per_chapter?: number; skill_runs?: { skill_id: string }[]; title?: string
   }) => client.post<any>(`/courses/${courseId}/sync-from-pipeline`, data, { timeout: 300000 }),
 
-  aiOutline: (data: { text: string; domain?: string; sources?: MaterialSelection }) =>
+  aiOutline: (data: { text: string; domain?: string; sources?: MaterialSelection; mode?: string }) =>
     client.post<{ ok: boolean; title: string; domain: string; chapters: Chapter[] }>(
       '/courses/ai/outline', data, { timeout: 240000 }),
 }
@@ -312,6 +312,7 @@ export const coursewareApi = {
     topic: string; title?: string; domain?: string; syllabus?: string
     chapter_count?: number; slides_per_chapter?: number; style?: string; audience?: string
     course_id?: number | null; sources?: MaterialSelection; auto_save?: boolean; model?: string
+    mode?: string
   }) => client.post<{ ok: boolean; job_id: string; course_id: number; course_title: string; status_url: string }>(
     '/coursewares/quick-generate', data, { timeout: 120000 }),
 

@@ -41,12 +41,12 @@
 
       <!-- 快速/专家模式 -->
       <div class="flex items-center bg-surface-100 dark:bg-surface-700 rounded-lg p-0.5">
-        <button @click="appStore.setMode('quick')"
+        <button @click="switchMode('quick')"
           :class="['px-3 py-1 text-xs font-medium rounded-md transition-all',
             appStore.mode === 'quick' ? 'bg-white dark:bg-surface-600 shadow-sm text-primary-600' : 'text-surface-500 dark:text-surface-400 hover:text-surface-700']">
           ⚡ 快速
         </button>
-        <button @click="appStore.setMode('expert')"
+        <button @click="switchMode('expert')"
           :class="['px-3 py-1 text-xs font-medium rounded-md transition-all',
             appStore.mode === 'expert' ? 'bg-white dark:bg-surface-600 shadow-sm text-accent-600' : 'text-surface-500 dark:text-surface-400 hover:text-surface-700']">
           🔬 专家
@@ -77,6 +77,18 @@ const authStore = useAuthStore()
 
 function openCmdPalette() {
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }))
+}
+
+// 切换快速/专家模式：给出具体影响提示，让“模式到底改变了什么”一目了然
+function switchMode(m: 'quick' | 'expert') {
+  if (appStore.mode === m) return
+  appStore.setMode(m)
+  appStore.showToast(
+    m === 'expert'
+      ? '🔬 已切到专家模式：生成用 qwen-max，内容更详尽、图解与章节/页数更多，并展开全部高级参数'
+      : '⚡ 已切到快速模式：生成用 qwen-plus，精简抓重点、章节/页数更少更省时，高级参数自动收起',
+    'success',
+  )
 }
 
 const permissionLevel = computed(() => authStore.user?.role || 'student')

@@ -25,6 +25,7 @@ from app.database.models import (
     User, UserRole, GeneralCourse, GeneralLesson, GeneralProgress,
 )
 from app.database.session import get_db
+from app.services import mode_policy
 from app.utils import paths as _paths
 
 logger = logging.getLogger(__name__)
@@ -379,11 +380,13 @@ async def draft_course(payload: dict,
         raise HTTPException(400, "请填写课程主题")
     audience = str(payload.get("audience") or "完全零基础的成年人").strip()
     level = str(payload.get("level") or "零基础").strip()
-    chapter_count = max(2, min(int(payload.get("chapter_count") or 6), 12))
+    policy = mode_policy.apply_mode(payload.get("mode"), payload.get("model"))
+    gc = policy["general"]
+    chapter_count = max(2, min(int(payload.get("chapter_count") or gc["chapter_count"]), 12))
 
     try:
         res = await call_qwen(
-            OUTLINE_SYSTEM,
+            OUTLINE_SYSTEM + "\n" + policy["directive"],
             f"""课程主题：{topic}
 目标读者：{audience}
 难度：{level}
@@ -401,7 +404,7 @@ async def draft_course(payload: dict,
                 "kicker": "6-10 字导语",
                 "summary": "30 字内本节要解决的问题",
                 "minutes": 8}}]}}""",
-            max_tokens=2000, temperature=0.6,
+            max_tokens=2000, temperature=0.6, model=policy["model"],
         )
     except QwenError as e:
         raise HTTPException(503, f"AI 起草失败：{str(e)[:160]}")
@@ -455,10 +458,17 @@ async def generate_lesson(lesson_id: int, payload: dict | None = None,
     audience = str(payload.get("audience") or "完全零基础的成年人")[:60]
     style = str(payload.get("style") or "生活化、有画面感")[:40]
     extra = str(payload.get("extra") or "")[:800]
+    policy = mode_policy.apply_mode(payload.get("mode"), payload.get("model"))
+    gc = policy["general"]
+    lesson_system = (
+        LESSON_SYSTEM + "\n" + policy["directive"] +
+        f"\n【本档尺度】正文控制在 {gc['content_chars']} 字；"
+        f"figure 放 {gc['figures']} 个要点类图解（flow/compare/cards）再加 1 个 callout。"
+    )
 
     try:
         res = await call_qwen(
-            LESSON_SYSTEM,
+            lesson_system,
             f"""课程：{course.title}（{course.subtitle}）
 目标读者：{audience}
 风格：{style}
@@ -468,7 +478,7 @@ async def generate_lesson(lesson_id: int, payload: dict | None = None,
 {('额外要求：' + extra) if extra else ''}
 
 只输出 JSON。""",
-            max_tokens=3200, temperature=0.65,
+            max_tokens=gc["max_tokens"], temperature=0.65, model=policy["model"],
         )
     except QwenError as e:
         raise HTTPException(503, f"AI 生成失败：{str(e)[:160]}")
