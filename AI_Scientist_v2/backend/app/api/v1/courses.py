@@ -491,7 +491,7 @@ async def _materialize_courseware(db: AsyncSession, cw: Courseware, src_path: st
 # ════════════════ 阅读端点（coursewares 路由） ════════════════
 
 @cw_router.get("/ai-mine")
-async def list_my_ai_coursewares(limit: int = Query(30, ge=1, le=100),
+async def list_my_ai_coursewares(limit: int = Query(30, ge=1, le=200),
                                 user: User = Depends(get_current_user),
                                 db: AsyncSession = Depends(get_db)):
     """课件工坊的「我生成过的课件」列表（AI 生成，含导出/阅读链接）

@@ -232,18 +232,23 @@ async function genAll() {
   batch.done = 0
   batch.error = ''
   notice.value = ''
+  const failed: number[] = []
   for (const id of todo) {
     if (!batch.running) break
     try {
       await genOne(id)
       batch.done++
     } catch (e: any) {
-      batch.error = e?.response?.data?.detail || '有一节生成失败，可以单独点「生成本节」重试'
-      break
+      // 单节失败不打断整批：之前一遇错就 break，剩下的节永远停在 pending
+      failed.push(id)
+      batch.error = `已有 ${failed.length} 节失败（多为模型限流/超时），其余继续生成中…`
     }
   }
   batch.running = false
   await load()
+  if (failed.length) {
+    batch.error = `本次有 ${failed.length} 节没生成成功（大多是模型限流或超时），其余已完成；可再点一次本按钮补生成`
+  }
 }
 
 async function publish() {

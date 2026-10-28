@@ -84,12 +84,26 @@ class Provider:
                 "configured": self.configured, "hint": self.hint, "local": self.local}
 
 
+def _apply_runtime_keys() -> None:
+    """把管理员在界面上填入的运行时密钥注入 settings（在每次构建前执行）
+
+    延迟导入：app.services 包初始化会拉起 doc_engine → qwen_client，
+    与本模块形成环，放在函数内可避开启动期循环导入。
+    """
+    try:
+        from app.services import provider_keys
+        provider_keys.apply(settings)
+    except Exception as e:
+        logger.warning(f"运行时密钥注入失败（忽略，沿用 .env）: {e}")
+
+
 def build_providers() -> list[Provider]:
-    """依据当前 settings（进程启动时读取 .env）构造供应商列表。
+    """依据当前 settings（.env + 运行时填入的 key）构造供应商列表。
 
     通义千问始终存在（向后兼容：它是默认档与回退链的归宿）；其余供应商仅在
     配置了密钥后才出现，自定义端点还要求 Base URL 与模型名齐全。
     """
+    _apply_runtime_keys()
     providers = [
         Provider("qwen", "通义千问", settings.QWEN_BASE_URL,
                  settings.QWEN_API_KEY, _split_names(settings.QWEN_FALLBACK_MODELS) +
@@ -146,13 +160,29 @@ def build_providers() -> list[Provider]:
     return providers
 
 
+def _rebuild_index(provs: list[Provider]) -> dict[str, Provider]:
+    idx: dict[str, Provider] = {}
+    for p in provs:
+        for m in p.models:
+            idx.setdefault(m, p)
+    return idx
+
+
 _PROVIDERS: list[Provider] = build_providers()
 # 统一以 qwen 端点兜底：未注册模型（含历史回退名）仍按通义千问处理，保持旧行为
-_INDEX: dict[str, Provider] = {}
-for _p in _PROVIDERS:
-    for _m in _p.models:
-        _INDEX.setdefault(_m, _p)
+_INDEX: dict[str, Provider] = _rebuild_index(_PROVIDERS)
 _DEFAULT_PROVIDER: Provider = _PROVIDERS[0]  # qwen 恒在首位
+
+
+def reload() -> list[Provider]:
+    """重新注入运行时密钥并重建供应商/模型索引（保存 or 清除 key 后调用）"""
+    global _PROVIDERS, _INDEX, _DEFAULT_PROVIDER
+    provs = build_providers()
+    _PROVIDERS = provs
+    _INDEX = _rebuild_index(provs)
+    _DEFAULT_PROVIDER = provs[0] if provs else Provider("qwen", "通义千问", "", "", [])
+    logger.info(f"模型供应商已重建：{sum(1 for p in provs if p.configured)}/{len(provs)} 已配置")
+    return provs
 
 
 def providers() -> list[Provider]:

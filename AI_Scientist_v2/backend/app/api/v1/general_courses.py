@@ -61,13 +61,18 @@ LESSON_SYSTEM = """你是面向零基础大众的 AI 通识课作者，读者是
 【输出格式】严格 JSON，不要 markdown 代码围栏：
 {"summary": "一句话概括本节",
  "minutes": 8,
- "content": "Markdown 正文，700-1100 字，含 3-5 个二级标题",
- "figure": [图解块，1-2 个，用来把本节核心概念画出来，见下],
+ "content": "Markdown 正文，700-1100 字，含 4-5 个二级标题，每个标题下 2-3 段短段落",
+ "figure": [图解块，2-3 个，分属不同小节，见下],
  "quiz": [{"q": "题干", "options": ["选项1", "选项2", "选项3", "选项4"],
            "answer": 0, "explain": "为什么选它，30 字内"}]}
 quiz 必须 3 题，answer 是正确选项下标（0 开始），干扰项要是"听起来合理但确实错了"的选项。
 
-【figure 图解块】每个块是下列四种之一，前端会画成真正的图形，不要写成长段文字：
+【figure 图解块】每个块是下列四种之一，前端会画成真正的图形，不要写成长段文字。
+硬约束：
+- 至少 2 块，且必须分属不同小节（例如一块 flow 讲流程、一块 compare 讲易混淆概念）；
+- title 用对应小节的短名，让读者知道它讲哪一段；
+- 正文相应的二级标题下要用一句话引出它（如「先看下面的流程图」），禁止提也不提就丢在文末；
+- 几块不要全用同一种 kind，至少两种不同类型。
 - 流程：{"kind":"flow","title":"几步走","steps":[{"label":"短标题","desc":"不超过 20 字"}]}（3-5 步）
 - 对比：{"kind":"compare","title":"别混淆","left":{"title":"栏目名","items":["短句"]},"right":{"title":"栏目名","items":["短句"]}}（各 2-4 条）
 - 要点卡：{"kind":"cards","title":"记住三点","cards":[{"icon":"一个 emoji","title":"短标题","desc":"不超过 30 字"}]}（2-4 张）
@@ -83,7 +88,11 @@ ASK_SYSTEM = """你是这门 AI 通识课的助教。只依据下面提供的本
 #  工具
 # ════════════════════════════════════════════════════════════
 def _extract_json(text: str) -> dict:
-    """从模型输出里取出 JSON（容忍 ```json 围栏与前后废话）"""
+    """从模型输出里取出 JSON（容忍 ```json 围栏与前后废话；顶层数组会拆包）
+
+    返回值恒为 dict：模型偶尔把整份结果包成 `[{...}]`，之前直接判为非 dict
+    就丢弃，表现为「AI 没返回可用的大纲」；这里做容错拆包。
+    """
     if not text:
         return {}
     t = text.strip()
@@ -91,14 +100,23 @@ def _extract_json(text: str) -> dict:
         m = re.search(r"```(?:json)?\s*([\s\S]*?)```", t)
         if m:
             t = m.group(1).strip()
-    start, end = t.find("{"), t.rfind("}")
-    if start >= 0 and end > start:
-        t = t[start:end + 1]
-    try:
-        data = json.loads(t)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    for opener, closer in (("{", "}"), ("[", "]")):
+        start, end = t.find(opener), t.rfind(closer)
+        cand = t[start:end + 1] if start >= 0 and end > start else t
+        try:
+            data = json.loads(cand)
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, list):
+            items = [x for x in data if isinstance(x, dict)]
+            if not items:
+                return {}
+            if len(items) == 1:
+                return items[0]
+            return {"items": items, "chapters": items}
+    return {}
 
 
 def _is_owner(course: GeneralCourse, user: User) -> bool:
@@ -110,7 +128,7 @@ def _clean_figure(raw) -> list:
     if isinstance(raw, dict):
         raw = [raw]
     out = []
-    for b in (raw or [])[:3]:
+    for b in (raw or [])[:4]:
         if not isinstance(b, dict):
             continue
         kind = str(b.get("kind") or "").strip().lower()
@@ -352,6 +370,7 @@ async def get_lesson(lesson_id: int,
         "content": l.content or "", "quiz": l.quiz or [], "minutes": l.minutes,
         "figure": l.figure or [], "cover_image": l.cover_image or "",
         "status": l.status, "done": prog.get(l.id) == "done",
+        "can_edit": _is_owner(course, user),
         "prev_id": siblings[idx - 1].id if idx > 0 else None,
         "next_id": siblings[idx + 1].id if 0 <= idx < len(siblings) - 1 else None,
         "total": len(siblings), "index": idx + 1,

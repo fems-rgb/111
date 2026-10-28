@@ -43,13 +43,26 @@
           </div>
           <div class="my-6 h-px bg-surface-100"></div>
 
-          <!-- 图解块：正文前的可视化小结 -->
-          <div v-if="lesson.figure && lesson.figure.length" class="mb-6 space-y-3">
-            <LessonFigure v-for="(f, i) in lesson.figure" :key="i" :block="f" />
+          <!-- 图解随小节分散渲染：图文穿插，不再全部堆在正文顶部 -->
+          <div v-if="sections.length" class="g-read">
+            <template v-for="(sec, si) in sections" :key="si">
+              <MarkdownView v-if="sec.md" :content="sec.md" />
+              <LessonFigure v-for="(f, fi) in sec.figures" :key="`fig-${si}-${fi}`" :block="f" />
+            </template>
           </div>
 
-          <div class="g-read">
-            <MarkdownView :content="lesson.content" />
+          <!-- 正文为空（多为 pending）：不要留一张白纸 -->
+          <div v-else class="rounded-xl border border-dashed border-surface-300 bg-surface-50 p-6 text-center">
+            <p class="text-sm font-medium text-surface-700">这一节的正文还没生成</p>
+            <p class="mt-1 text-[11px] text-surface-500">课程大纲已经就绪，本节内容仍为空（状态 pending）。</p>
+            <button v-if="lesson.can_edit" class="btn-primary text-xs mt-3" :disabled="generating" @click="generateThis">
+              {{ generating ? '生成中…（约 10-20 秒）' : '✨ 生成这一节' }}
+            </button>
+            <p v-else class="mt-2 text-[11px] text-surface-400">等课程作者生成后就能读到。</p>
+            <p v-if="genNote" class="mt-2 text-[11px]" :class="genErr ? 'text-red-600' : 'text-accent-700'">{{ genNote }}</p>
+            <div v-if="lesson.figure && lesson.figure.length" class="mt-4 space-y-3 text-left">
+              <LessonFigure v-for="(f, i) in lesson.figure" :key="i" :block="f" />
+            </div>
           </div>
 
           <!-- 读完 -->
@@ -160,7 +173,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import LessonFigure from './LessonFigure.vue'
-import { generalApi, generalCoverUrl, type GeneralLessonDetail } from '@/api/modules/general'
+import { generalApi, generalCoverUrl, type FigureBlock, type GeneralLessonDetail } from '@/api/modules/general'
 import './general.css'
 
 const route = useRoute()
@@ -180,8 +193,78 @@ const marking = ref(false)
 const progressNote = ref('')
 const readPct = ref(0)
 const coverOk = ref(true)
+const generating = ref(false)
+const genNote = ref('')
+const genErr = ref(false)
 
 const suggestions = ['用一句话再说一遍', '举个生活里的例子', '这跟我有什么关系']
+
+interface ContentSection { heading: string; md: string; figures: FigureBlock[] }
+
+/** 标题归一化：去掉标点/空白，方便把图解 title 和小节标题对上 */
+function normTitle(s: string) {
+  return (s || '').replace(/[\s·:：、，,。.\-—－()（）【】\[\]"'“”‘’《》]/g, '').toLowerCase()
+}
+
+/**
+ * 把 Markdown 正文按二级标题切成小节，并把图解挂到对应小节末尾。
+ * 之前图解全部堆在正文顶部，长文里读者根本看不到图，这里做三档匹配：
+ * 1) 图解 title 与小节标题互相包含  2) 小节正文里出现该 title  3) 轮转分摊到各节
+ */
+const sections = computed<ContentSection[]>(() => {
+  const raw = (lesson.value?.content || '').trim()
+  if (!raw) return []
+  const chunks: { heading: string; lines: string[] }[] = []
+  for (const line of raw.split(/\r?\n/)) {
+    const m = /^##\s+(.+?)\s*$/.exec(line)
+    if (m) chunks.push({ heading: m[1], lines: [line] })
+    else if (chunks.length) chunks[chunks.length - 1].lines.push(line)
+    else chunks.push({ heading: '', lines: [line] })
+  }
+  const secs: ContentSection[] = chunks
+    .map(c => ({ heading: c.heading, md: c.lines.join('\n').trim(), figures: [] as FigureBlock[] }))
+    .filter(s => s.md)
+  if (!secs.length) return []
+
+  let cursor = 0
+  for (const f of lesson.value?.figure || []) {
+    const key = normTitle(f.title || '')
+    let idx = -1
+    if (key) {
+      idx = secs.findIndex(s => {
+        const h = normTitle(s.heading)
+        return !!h && (h.includes(key) || key.includes(h))
+      })
+      if (idx < 0) idx = secs.findIndex(s => normTitle(s.md).includes(key))
+    }
+    if (idx < 0) {
+      // 兜底：优先挂到非首节，保证图不会又全部压在开头
+      const pool = secs.length > 1 ? secs.slice(1) : secs
+      idx = secs.indexOf(pool[cursor % pool.length])
+      cursor += 1
+    }
+    secs[idx].figures.push(f)
+  }
+  return secs
+})
+
+/** 作者/管理员：正文为空时可直接补生成这一节 */
+async function generateThis() {
+  if (!lesson.value || generating.value) return
+  generating.value = true
+  genNote.value = ''
+  genErr.value = false
+  try {
+    const r = await generalApi.generateLesson(lesson.value.id, {})
+    genNote.value = `已生成 ${r.data.chars} 字、${r.data.figure_count} 个图解`
+    await load()
+  } catch (e: any) {
+    genErr.value = true
+    genNote.value = e?.response?.data?.detail || '生成失败，请稍后重试'
+  } finally {
+    generating.value = false
+  }
+}
 
 const answeredCount = computed(() => Object.keys(answers.value).length)
 const correctCount = computed(() => {

@@ -42,14 +42,39 @@ class GenerationCancelled(Exception):
     """用户中途停止生成作业（由 should_cancel 探测后抛出，_run_generate_job 捕获落 cancelled 终态）"""
 
 
-def _extract_json(text: str) -> Any:
-    """从 LLM 回复中稳健提取 JSON（支持 ```json 围栏 / 前后缀噪声）"""
+def _as_dict(raw: Any) -> dict:
+    """把模型输出收敛成 dict。
+
+    模型偶尔把结果整体包成顶层数组（`[{...}]` 或直接 `[{章1},{章2}]`），
+    下游一律 `data.get(...)`，拿到 list 就会抛
+    `'list' object has no attribute 'get'`，整份课件直接生成失败。
+    这里统一兼容：单元素数组拆包，多元素挂到 chapters/slides/items 三个常见键上。
+    """
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        items = [x for x in raw if isinstance(x, dict)]
+        if not items:
+            return {}
+        logger.warning("[ai] 模型返回顶层数组（%d 项），已按容错方式拆包", len(items))
+        if len(items) == 1:
+            return items[0]
+        return {"items": items, "chapters": items, "slides": items}
+    return {}
+
+
+def _extract_json(text: str) -> dict:
+    """从 LLM 回复中稳健提取 JSON（支持 ```json 围栏 / 前后缀噪声）
+
+    返回值恒为 dict：模型吐顶层数组 / 解不出 JSON 时都退化为 {}，
+    避免调用方 `.get` 直接炸掉整个生成作业。
+    """
     if not text:
-        return None
+        return {}
     fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     raw = fenced.group(1).strip() if fenced else text.strip()
     try:
-        return json.loads(raw)
+        return _as_dict(json.loads(raw))
     except Exception:
         pass
     # 退而求其次：截取第一个 { 或 [
@@ -57,10 +82,10 @@ def _extract_json(text: str) -> Any:
         s, e = raw.find(opener), raw.rfind(closer)
         if s >= 0 and e > s:
             try:
-                return json.loads(raw[s:e + 1])
+                return _as_dict(json.loads(raw[s:e + 1]))
             except Exception:
                 continue
-    return None
+    return {}
 
 
 STALENESS_SYSTEM = """你是资深课程设计助手，擅长判断教学课件内容是否过时。

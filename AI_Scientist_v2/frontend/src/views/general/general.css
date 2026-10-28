@@ -32,6 +32,10 @@
 .g-read .prose {
   @apply text-[15.5px] leading-[1.95] text-surface-700 max-w-none;
 }
+/* 图解已按小节分散，正文被切成多段：只让整篇第一个元素去掉顶部空白 */
+.g-read > :first-child .prose > :first-child {
+  margin-top: 0 !important;
+}
 .g-read .prose h1 {
   @apply text-xl font-bold text-surface-900 mt-0 mb-4;
 }

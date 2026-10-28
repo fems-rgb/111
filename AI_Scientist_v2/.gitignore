@@ -27,6 +27,9 @@ htmlcov/
 .env.local
 .env.production
 deploy/certs/*.pem
+# 管理员在界面填入的模型密钥（含明文密钥，禁止入库）
+backend/.provider_keys.json
+backend/.provider_keys.json.tmp
 
 # Node
 node_modules/

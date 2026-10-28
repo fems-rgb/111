@@ -390,3 +390,30 @@ export const coursewareApi = {
   deleteAllMine: () =>
     client.delete<{ ok: boolean; deleted: number }>('/coursewares/ai-mine/all'),
 }
+
+/** 模型供应商（后端 /providers，仅管理员可改；接口不回显任何密钥明文） */
+export interface ProviderInfo {
+  id: string
+  label: string
+  env_key: string
+  hint: string
+  configured: boolean
+  local: boolean
+  models: string[]
+  runtime: boolean
+}
+
+export const providerApi = {
+  list: () =>
+    client.get<{ items: ProviderInfo[]; configured: number; total: number }>('/providers'),
+
+  /** 保存密钥 → 后端立即重建模型索引，返回本次新解锁的模型名 */
+  saveKey: (providerId: string, apiKey: string) =>
+    client.post<{ ok: boolean; provider: ProviderInfo; unlocked: string[]; configured: number; total: number }>(
+      `/providers/${providerId}/key`, { api_key: apiKey }, { timeout: 30000 }),
+
+  /** 清除界面填入的密钥，回退到 .env 原值 */
+  clearKey: (providerId: string) =>
+    client.delete<{ ok: boolean; removed: boolean; provider: ProviderInfo | null }>(
+      `/providers/${providerId}/key`),
+}

@@ -24,15 +24,15 @@ LONGCONTEXT_MODEL = "qwen-max-longcontext"
 # 注入 system prompt 的深度指令（两档都保留图文并茂，只是密度不同）
 DEPTH_DIRECTIVE = {
     QUICK: "【精简档】抓重点、把结论说清楚即可，每个要点 1 句话、少铺细节；"
-           "图解 1-2 个够用就好，不要为凑数硬加。整体宁短勿长。",
+           "图解至少 2 个（不同类型，分属不同小节），不要整节只有文字。整体宁短勿长。",
     EXPERT: "【详尽档】讲透原理、给出真实数据 / 案例 / 反例，结论逐条列出；"
-            "图解 2-3 个，把关键机制、对比、流程都画出来，信息密度要高、内容要扎实。",
+            "图解 3 个，把关键机制、对比、流程都画出来，信息密度要高、内容要扎实。",
 }
 
 # 通识课规模默认：章节数 / 正文字数区间 / 要点类图解块数 / 单节输出 token
 GENERAL = {
-    QUICK: {"chapter_count": 4, "content_chars": "500-700", "figures": 1, "max_tokens": 2600},
-    EXPERT: {"chapter_count": 8, "content_chars": "900-1200", "figures": 2, "max_tokens": 4200},
+    QUICK: {"chapter_count": 4, "content_chars": "500-700", "figures": 2, "max_tokens": 3000},
+    EXPERT: {"chapter_count": 8, "content_chars": "900-1200", "figures": 3, "max_tokens": 4800},
 }
 
 # 课件工坊规模默认：章节数 / 每章页数 / 每页 detail 字数区间 / 大纲与逐章 token 预算

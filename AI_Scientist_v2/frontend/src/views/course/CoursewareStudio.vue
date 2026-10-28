@@ -282,6 +282,10 @@
         </div>
 
         <div v-if="historyLoading" class="text-xs text-surface-400 py-6 text-center">⏳ 加载中…</div>
+        <div v-else-if="historyError" class="rounded-lg border border-red-100 bg-red-50 px-3 py-3 text-[11px] text-red-600">
+          <p>{{ historyError }}</p>
+          <button @click="loadHistory" class="mt-2 text-[11px] underline">↻ 重试</button>
+        </div>
         <div v-else-if="!history.length" class="text-xs text-surface-400 py-6 text-center">还没有记录，先生成一份吧</div>
         <template v-else>
           <div class="space-y-2 max-h-[520px] overflow-y-auto pr-1">
@@ -438,6 +442,8 @@ const showAll = ref(false)
 const myCourses = ref<Course[]>([])
 const history = ref<AiCoursewareItem[]>([])
 const historyLoading = ref(false)
+// 列表拉取失败要说出来：之前 catch{} 静默吞掉，接口一报错就永远显示「还没有记录」
+const historyError = ref('')
 // 历史列表：多选 + 分页（本页候选 = 当前页已加载项）
 const selected = ref(new Set<number>())
 const HIST_PAGE_SIZE = 8
@@ -742,14 +748,22 @@ async function loadMyCourses() {
 
 async function loadHistory() {
   historyLoading.value = true
+  historyError.value = ''
   try {
+    // 后端 limit 上限 200（曾因传 200 撞 le=100 返回 422，列表被静默打空）
     const r = await coursewareApi.aiMine(200)
     history.value = r.data?.items || []
     // 重拉后清理失效选择并合理化页码
     const valid = new Set(history.value.map(h => h.id))
     selected.value = new Set([...selected.value].filter(id => valid.has(id)))
     histPage.value = Math.min(histPage.value, Math.max(1, Math.ceil(history.value.length / HIST_PAGE_SIZE)))
-  } catch { /* ignore */ } finally { historyLoading.value = false }
+  } catch (e: any) {
+    const st = e?.response?.status
+    const detail = e?.response?.data?.detail
+    historyError.value = st === 403
+      ? '当前账号无权查看课件历史'
+      : (typeof detail === 'string' ? detail : `列表加载失败${st ? `（HTTP ${st}）` : ''}，点「↻ 刷新」重试`)
+  } finally { historyLoading.value = false }
 }
 
 function toggleSelect(id: number) {

@@ -35,16 +35,36 @@
         </div>
       </template>
 
-      <!-- 免费模型·填 key 即用（未配密钥的供应商：只展示不可选） -->
+      <!-- 免费模型·填 key 即用（未配密钥的供应商：管理员可在此直接填 key 启用） -->
       <template v-if="locked.length">
         <div class="mt-1 border-t border-surface-100 dark:border-surface-700 pt-1">
           <p class="px-3 py-1 text-[10px] uppercase tracking-wide text-surface-400">🔓 更多免费模型 · 填 key 即用</p>
-          <div v-for="lp in locked" :key="lp.provider" class="px-3 py-1.5 opacity-70">
-            <p class="text-[11px] font-medium text-surface-500 dark:text-surface-300">{{ lp.label }}
-              <span class="text-[10px] text-surface-400">· {{ lp.models.length }} 个模型</span>
-            </p>
+          <div v-for="lp in locked" :key="lp.provider" class="px-3 py-1.5">
+            <div class="flex items-center justify-between gap-2">
+              <p class="text-[11px] font-medium text-surface-500 dark:text-surface-300 truncate">
+                {{ lp.label }} <span class="text-[10px] text-surface-400">· {{ lp.models.length }} 个模型</span>
+              </p>
+              <button v-if="isAdmin" @click.stop="toggleEdit(lp.provider)"
+                      class="shrink-0 text-[10px] px-1.5 py-0.5 rounded border border-primary-200 text-primary-600 hover:bg-primary-50 dark:border-primary-700 dark:hover:bg-surface-700">
+                {{ editing === lp.provider ? '收起' : '🔑 填 Key' }}
+              </button>
+            </div>
             <p class="text-[10px] text-surface-400 leading-snug">{{ lp.hint }}</p>
-            <p class="text-[10px] text-primary-600/80 font-mono">.env → {{ lp.env_key }}</p>
+            <p v-if="editing !== lp.provider" class="text-[10px] text-primary-600/80 font-mono">.env → {{ lp.env_key }}</p>
+            <div v-if="editing === lp.provider" class="mt-1.5">
+              <div class="flex items-center gap-1">
+                <input v-model="keyInput" type="password" autocomplete="off" spellcheck="false"
+                       :placeholder="`粘贴 ${lp.label} 的 API Key`"
+                       class="flex-1 min-w-0 text-[11px] px-2 py-1 rounded border border-surface-200 dark:border-surface-600 bg-white dark:bg-surface-700 text-surface-700 dark:text-surface-100 outline-none focus:border-primary-400"
+                       @click.stop @keydown.stop @keyup.enter="saveKey(lp)" />
+                <button @click.stop="saveKey(lp)" :disabled="saving"
+                        class="shrink-0 text-[10px] px-2 py-1 rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-50">
+                  {{ saving ? '保存中…' : '保存' }}
+                </button>
+              </div>
+              <p v-if="keyErr" class="mt-1 text-[10px] text-red-500 leading-snug">{{ keyErr }}</p>
+              <p class="mt-1 text-[10px] text-surface-400 leading-snug">保存后立即生效、无需重启；密钥只写不读，不会回显。</p>
+            </div>
           </div>
         </div>
       </template>
@@ -55,17 +75,26 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
-import { coursewareApi, type GenerateModelItem, type LockedProvider } from '@/api/modules/courses'
+import { useAuthStore } from '@/stores/auth'
+import { coursewareApi, providerApi, type GenerateModelItem, type LockedProvider } from '@/api/modules/courses'
 
 interface Opt extends GenerateModelItem {
   provider_label?: string
 }
 
 const appStore = useAppStore()
+const authStore = useAuthStore()
 const models = ref<Opt[]>([])
 const locked = ref<LockedProvider[]>([])
 const open = ref(false)
 const rootEl = ref<HTMLElement | null>(null)
+// 填 key 交互：同一时间只展开一个供应商，避免一屏多个输入框
+const editing = ref('')
+const keyInput = ref('')
+const keyErr = ref('')
+const saving = ref(false)
+// 仅管理员能改（写的是整台部署的密钥）
+const isAdmin = computed(() => authStore.isAdmin)
 
 // 第一项固定为「自动」：不指定模型，由后端按快速/专家模式定档
 const autoOpt: Opt = { value: '', label: '🤖 自动（按模式定档）', desc: '快速模式用最省的 qwen-turbo、专家模式用 qwen-max，后端自动选择', is_default: false }
@@ -121,12 +150,44 @@ function close(e: MouseEvent) {
   if (open.value && rootEl.value && !rootEl.value.contains(e.target as Node)) open.value = false
 }
 
-onMounted(async () => {
+function toggleEdit(pid: string) {
+  editing.value = editing.value === pid ? '' : pid
+  keyInput.value = ''
+  keyErr.value = ''
+}
+
+async function reloadModels() {
   try {
     const r = await coursewareApi.generateModels()
     models.value = r.data?.items || []
     locked.value = r.data?.locked || []
-  } catch { /* 拉不到列表就整体隐藏，不打扰 */ }
+  } catch { /* 拉不到就保持现状，不打断用户 */ }
+}
+
+async function saveKey(lp: LockedProvider) {
+  const k = keyInput.value.trim()
+  if (k.length < 4) { keyErr.value = '请粘贴完整的 API Key'; return }
+  saving.value = true
+  keyErr.value = ''
+  try {
+    const r = await providerApi.saveKey(lp.provider, k)
+    const unlocked = r.data?.unlocked?.length || 0
+    appStore.showToast(`🔓 已启用 ${lp.label}${unlocked ? `，新增 ${unlocked} 个模型` : ''}`, 'success')
+    editing.value = ''
+    keyInput.value = ''
+    await reloadModels()
+  } catch (e: any) {
+    const st = e?.response?.status
+    keyErr.value = st === 403
+      ? '只有管理员可以修改密钥'
+      : (e?.response?.data?.detail || '保存失败，请检查 Key 后重试')
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(async () => {
+  await reloadModels()
   window.addEventListener('click', close)
 })
 onUnmounted(() => window.removeEventListener('click', close))

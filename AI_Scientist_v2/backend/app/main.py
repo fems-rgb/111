@@ -21,7 +21,7 @@ from app.database.session import engine, Base
 from app.scheduler import register_pipeline_jobs
 from app.observability.logger import setup_logging
 from app.core.exceptions import global_exception_handler, AppException
-from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents, courses, general_courses, alerts, graphs, plans
+from app.api.v1 import auth, projects, agents, chat, observability, admin, stream, multimodal, knowledge, skills, automation, knowledge_external, export, batch_run, team, questions, evidence, documents, courses, general_courses, alerts, graphs, plans, providers
 from app.api.v1.experiment_lab import router as experiment_lab_router
 
 # 前端构建产物路径（优先 frontend/dist 开发模式，后补 backend/static 预构建分发）
@@ -75,7 +75,14 @@ async def lifespan(app: FastAPI):
         logger.info(f"🧩 Redis：{'已连通，分布式限流/锁定/并发闸启用' if _ok else '不可用，回退本地内存'}")
     await _gq.start()
     yield
-    # 关服：停掉 worker 池与 Redis 连接
+    # 关服：先停后台循环/定时器，再停 worker 池与 Redis 连接（否则 Ctrl+C 后残留任务拖着不退）
+    from app.core.progress_sync import stop_progress_sync
+    stop_progress_sync()
+    try:
+        from app.scheduler import scheduler as _sched
+        _sched.shutdown(wait=False)
+    except Exception:
+        pass
     await _gq.stop()
     await _rc.close()
 
@@ -120,6 +127,8 @@ app.include_router(experiment_lab_router, prefix="/api/v1")
 # ── 课程中心（开课/选课/课件电子化/AI 更新） ──
 app.include_router(courses.router, prefix="/api/v1")
 app.include_router(courses.cw_router, prefix="/api/v1")
+# ── 模型供应商：管理员在「选模型」里直接填 key，保存即生效 ──
+app.include_router(providers.router, prefix="/api/v1")
 # ── AI 通识课（人人都要学的图文微课） ──
 app.include_router(general_courses.router, prefix="/api/v1")
 # ── 预警中心（成本/模型/供应商密钥/任务失败聚合） ──

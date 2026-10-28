@@ -75,6 +75,8 @@ export interface GeneralLessonDetail {
   next_id: number | null
   total: number
   index: number
+  /** 当前用户是否为课程作者：正文为空时给出「生成本节」入口 */
+  can_edit: boolean
 }
 
 export interface GeneralProgressResult {

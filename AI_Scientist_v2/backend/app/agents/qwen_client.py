@@ -60,6 +60,17 @@ def _mark_block(model: str, seconds: int, reason: str) -> None:
     _MODEL_BLOCK[model] = (time.time() + seconds, reason)
 
 
+def clear_block(models: list[str] | None = None) -> None:
+    """清除限流/未开通的进程内标记（管理员换新 key 后重新给机会）
+
+    不传 models 则清空全部。"""
+    if not models:
+        _MODEL_BLOCK.clear()
+        return
+    for m in models:
+        _MODEL_BLOCK.pop(m, None)
+
+
 def _error_info(payload) -> tuple[str, str]:
     """从 DashScope 错误体里取 (code, message)，兼容两种包裹层级"""
     if not isinstance(payload, dict):
