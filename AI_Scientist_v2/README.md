@@ -390,7 +390,7 @@ QWEN_API_KEY=sk-xxxx
 QWEN_MODEL=qwen-max
 QWEN_VL_MODEL=qwen-vl-max
 DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
-CORS_ORIGINS=http://localhost:5173,http://localhost:8000
+ALLOWED_ORIGINS=["http://localhost:5173","http://localhost:8000"]   # CORS 白名单（JSON 数组；因 allow_credentials=True，生产勿用 "*"）
 
 # ── 可选供应商（密钥留空则该供应商不出现在模型切换列表）──
 DEEPSEEK_API_KEY=

@@ -24,10 +24,17 @@ services:
 
   redis:
     image: redis:7-alpine
-    # 限流计数/租约允许丢；登录锁定等状态短 TTL，无需重持久化
-    command: redis-server --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+    # Redis 承载分布式状态：限流计数、登录锁定、并发闸/租约、生成队列（见 §21）。
+    # noeviction：宁可写满报错也不悄悄淘汰队列/锁 key；appendonly yes 保证重启不丢飞行中状态。
+    # 队列受 GENERATION_MAX_CONCURRENCY / QUEUE_MAX 背压上限、计数类带 TTL，256mb 余量充足。
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
     volumes:
-      - redisdata:/data
+      - redisdata:/data                        # AOF 持久化落此卷，容器重建不丢
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   app:
@@ -53,15 +60,16 @@ services:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
-    # 水平扩展提示：--scale app=3 即可，nginx 通过 compose DNS 自动轮询所有副本
+    # 水平扩展：--scale app=3 即可；nginx 按 resolver valid=10s 重新解析 app DNS，~10s 内自动纳入新副本（无需 reload）
 
   nginx:
     image: nginx:alpine
     ports:
       - "80:80"
-      - "443:443"
+      # 启用 HTTPS 后再放开：需取消 nginx.conf 中 443 server 注释并备好 certs/
+      # - "443:443"
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./certs:/etc/nginx/certs:ro
