@@ -1,0 +1,28 @@
+# 本机网络受限时的全链路自检编排（验证 nginx→app→redis 真实转发与分布式计数）
+# 与生产 docker-compose.yml 同款 nginx.conf / 同款 deploy-app 镜像 / 同款 redis
+# 唯一差异：DB 用 SQLite 兜底（postgres 官方镜像此刻被本机 Docker Hub 限速拉不动；
+#           PG 连接池逻辑已在 B 方案单测/双进程验证中实证，云上 --build 时正常拉起）
+services:
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+  app:
+    image: deploy-app
+    environment:
+      DEBUG: "False"
+      DATABASE_URL: "sqlite+aiosqlite:///./zhixing.db"
+      REDIS_URL: "redis://redis:6379/0"
+      SECRET_KEY: "smokechainsecretkey0000000000000000000000000000"
+      QWEN_API_KEY: "sk-placeholder"
+    depends_on:
+      - redis
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8088:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app

@@ -46,3 +46,18 @@ Jinja2>=3.1.0
 
 # ═══ 课程中心：PPTX 课件电子化 / 反向导出 ═══
 python-pptx==1.0.2
+
+# ═══ 定时任务调度（scheduler/ cron pipeline；进程启动即 import，缺失则服务无法拉起）═══
+apscheduler==3.11.0
+
+# ═══ 文档解析与导出（课件/电子书 多格式导入；部分为功能级懒导入）═══
+# python-docx：.docx 课件导入 + deck_export 顶层依赖（import docx）
+python-docx==1.1.2
+# PyMuPDF：PDF 文本/图片解析（import fitz / pymupdf）
+PyMuPDF==1.28.2
+# openpyxl：.xlsx 课件表格导入
+openpyxl==3.1.5
+# xhtml2pdf：HTML→PDF 报告导出（export API）
+xhtml2pdf==0.2.17
+# lxml：deck_design 直接操作 OOXML（同时是 python-pptx 依赖）
+lxml==6.1.1

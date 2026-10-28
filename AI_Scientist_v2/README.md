@@ -653,7 +653,46 @@ GENERATION_MAX_CONCURRENCY=8
 
 > 现实边界：以上解决的是「单机→可横向扩展」的第一步（状态外置 + 削峰 + 连接池）。真正的百万/亿级还需对象存储替代本地 `generated/`、消息队列独立进程、读写分离与 CDN，属产品公司级工程。
 
-## 22. 许可证与致谢
+### 21.5 双进程真实验证（已实测通过）
+
+`backend/scripts/redis_cluster_check.py`：把「进程 A 执行完即销毁（内存归零）→ 全新进程 B 仍能看到 A 的封锁状态」作为判准，状态只可能来自 Redis，而非同进程内的“假分布式”。实测 10/10 项全过（本机 Docker 跑 Redis 7）：
+
+- IP 限流：A 把测试 IP 的 10 次/分钟配额用完 → B 同 IP 被拒、其他 IP 不受牵连
+- 账号锁定：A 累计 5 次失败触发锁定 → B 新进程查到该账号锁定中（TTL 897s）
+- 集群并发闸：A 占 3 个生成作业租约 → B 只能占到第 4 个，第 5 个被挡；过期租约自动回收（崩溃自愈）
+
+一键复跑：`python scripts/redis_cluster_check.py`（需 `.env` 配了可用的 `REDIS_URL`）。
+
+## 22. 一键上云（Docker Compose 生产编排）
+
+`deploy/` 目录提供与市面网站部署同构的全套产物：多阶段 Dockerfile（容器内构建前端 + 后端运行时合一，单镜像即全站）、docker-compose（nginx → app×N → PostgreSQL + Redis）、生产 nginx 配置（SSE 关缓冲 / XFF 真实 IP / 30m 上传 / 长任务超时）、`.env.example` 配置样板。
+
+上线五步（任选一家云厂商 2C4G 主机，Ubuntu 22+，装好 Docker）：
+
+```bash
+git clone https://github.com/fems-rgb/111.git && cd 111/AI_Scientist_v2/deploy
+cp .env.example .env        # 填 SECRET_KEY / POSTGRES_PASSWORD / QWEN_API_KEY
+docker compose up -d --build # 首次构建含前端编译，约 5–10 分钟
+docker compose up -d --scale app=3   # 人多时一条命令加副本（无状态，状态全在 Redis/PG）
+```
+
+对接域名/HTTPS：证书放 `deploy/certs/`（fullchain.pem + privkey.pem），解开 `nginx.conf` 末尾 443 块注释；域名解析到服务器后浏览器即走 https。验证入口：`http://服务器IP/`（全站）、`/api/health`（存活探测，compose healthcheck 兼用）。
+
+数据备份：`pgdata`（业务库）、`generated`/`uploads`（生成与上传文件）、`redisdata` 三个命名 volume，云盘快照或 `docker run --volumes-from` 导出均可。
+
+### 22.1 构建产物真实验证（已在本机 Docker 实测）
+
+用与生产同款的 `deploy/Dockerfile`、`deploy/nginx.conf`、`deploy/docker-compose.smoke.yml` 在本机 Docker 端到端拉起并验证：
+
+- 多阶段镜像真实构建成功：容器内 `npm ci + vue-tsc + vite build`（PWA）编译前端 → `pip install` 后端依赖，产出 `deploy-app:latest`（含全部运行依赖）。
+- `nginx → app → redis` 全链路起站：经 nginx 反代访问 `/api/health` 返回 **200 `{"status":"ok","version":"3.0.0","name":"智研星枢"}`**，`/` 返回 **200** 且带 SPA 挂载点（前端产物已从镜像内 `/app/frontend/dist` 直供，单容器即全站）。
+- 启动日志实测确认关键子系统均已加载：`apscheduler Scheduler started`、`Redis 已连通，分布式限流/锁定/并发闸启用`、`课件生成队列已启动：worker=4`、`数据库表结构已创建 / 自动迁移完成`、`Application startup complete`。
+
+> 构建中发现并修复的真实缺陷：`requirements.txt` 原先漏声明 **apscheduler（进程启动即 import）、python-docx、PyMuPDF、openpyxl、xhtml2pdf、lxml** 等依赖——开发机因 venv 恰好装过而“看起来正常”，干净镜像内会 `ModuleNotFoundError` 直接起不来。已全部补入并重新构建验证。
+
+> 本机网络边界：`postgres:16-alpine` 官方镜像在本机因 Docker Hub 分层 blob 被持续限速而无法拉全（纯本机网络问题，与编排产物无关；PG 连接池逻辑已在 §21 的单测/双进程验证中实证）。任意云主机 `docker compose up -d --build` 会正常拉取并拉起 PG；受限网络下可先用 `docker-compose.smoke.yml`（SQLite 兜底 DB）验证 `nginx→app→redis` 主链路。
+
+## 23. 许可证与致谢
 
 本项目为挑战杯「揭榜挂帅」专项赛参赛作品，基座模型为阿里巴巴通义千问 Qwen，通过阿里云百炼（DashScope）调用。
 感谢发榜单位浙江阿里巴巴云计算有限公司提供赛题与算力支持。

@@ -2,3 +2,25 @@
 
 # 中文提交消息临时文件（git commit -F 用，用完即删，勿入库）
 /commit_msg.txt
+
+# 本机一次性验证脚本与日志（Redis 分布式/云部署/APK 构建排障用，不入库）
+/apk_setup*.py
+/build_apk.cmd
+/check_*.py
+/diag_*.py
+/fix_build.py
+/final_pg.py
+/launch_docker.py
+/relaunch_docker.py
+/restart_build.py
+/retry_pg.py
+/rebuild.py
+/scan_deps.py
+/smoke_*.py
+/start_*.py
+/tail_logs.py
+/wait_*.py
+/poll_*.py
+/pg_status.py
+/*.log
+/*.txt

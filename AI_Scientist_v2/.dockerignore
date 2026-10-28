@@ -1,40 +1,21 @@
-# 智研星枢 - Docker 构建上下文忽略
-# 注意：docker-compose.yml 的 build context 为 ./backend，
-#       实际生效的是 backend/.dockerignore。
-#       本文件仅在从项目根目录构建时作为参考。
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
-env/
-
-# 本地数据/产物
-**/*.db
-**/*.sqlite3
-backend/logs/
-backend/uploads/
-backend/output/
+# Docker 构建上下文排除（放在仓库根，context = AI_Scientist_v2/）
+.git
+.github
+node_modules
+frontend/node_modules
+frontend/android
+frontend/.capacitor
+**/__pycache__
+*.pyc
 backend/.env
-frontend/dist/
-frontend/node_modules/
-
-# IDE / OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
-
-# Git / CI
-.git/
-.github/
+backend/zhixing.db
+backend/generated
+backend/uploads
+backend/logs
+backend/output
+backend/static
+deploy/.env
+deploy/certs
 *.md
-!README.md
-
-# 杂物
-**/*.bak
-**/*.bak_*
-**/*_backup.py
-**/*.log
-**/screenshots/
-**/屏幕截图*
+*.png
+.DS_Store
