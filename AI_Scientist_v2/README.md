@@ -617,7 +617,43 @@ npx cap open android             # 用 Android Studio 打开
 
 当前前端基于 **Element Plus（网页组件）**，小程序运行环境不支持，**无法直接复用**，需用 **uni-app / Taro** 重写 UI 层（API 层可直接复用，因为后端就是同一套 REST）。这是独立且成本最高的一条赛道，建议排在 PWA + 原生 App 跑通之后。
 
-## 21. 许可证与致谢
+## 21. 可扩展性（Redis 分布式状态 · 生成队列 · PostgreSQL）
+
+针对「很多人同时用会不会崩」，已把三处「单机天花板」按业界常规姿势改造。**原则：不配 Redis / 不换 PostgreSQL 也照常跑（自动降级内存 + SQLite），配置后无缝升级为分布式。**
+
+### 21.1 分布式限流与登录锁定（`app/security/`）
+
+- `rate_limiter.py`：滑动窗口优先走 **Redis 有序集**（`ZADD/ZREMRANGEBYSCORE/ZCARD` 事务管道），多实例共享同一份计数；`REDIS_URL` 留空或 Redis 抖动时**自动回退进程内存**。
+- `login_guard.py`：登录失败计数与账号锁定用 **Redis + TTL**（到期自动解锁、跨实例一致），同样带回退。
+- 三者的 `is_allowed / record_fail / is_locked` 均为 **async**；`api/deps.py` 反代后取真实客户端 IP（`X-Forwarded-For`），避免所有用户共用一个限流桶。
+- `app/services/redis_client.py`：懒单例 + 可用性探测，`redis` 包未装 / 连不上都返回「不可用」，主流程绝不因此报错。
+
+### 21.2 课件生成削峰队列（`app/services/job_queue.py`）
+
+生成一次课件要几十上百秒、且吃 LLM 配额，旧实现「每请求 `create_task` 直接跑」会被同时点击打爆。现改为：
+
+- **固定 worker 池 + 有界队列**：请求先入队拿 `job_id`，worker 按 `GENERATION_MAX_CONCURRENCY`（默认 4）逐个取出执行。
+- **背压/削峰**：等待队列 `GENERATION_QUEUE_MAX`（默认 100）排满时，`/coursewares/quick-generate` **直接返回 429 + Retry-After**，不无限堆积。
+- **集群级并发闸**：接 Redis 后用「租约 ZSET」限制跨实例总并发，进程崩溃时租约到期自动回收；无 Redis 仅用单实例 worker 数。
+- worker 池在 `main.py` lifespan 启停，关服优雅取消。
+
+### 21.3 数据层 PostgreSQL 兼容（`app/database/session.py`）
+
+同一套代码兼容 SQLite 与 PostgreSQL/MySQL：`DATABASE_URL` 换成 `postgresql+asyncpg://...` 即自动启用**连接池**（`DB_POOL_SIZE/DB_MAX_OVERFLOW/DB_POOL_RECYCLE`）；SQLite 分支维持 WAL。切换示例见 `.env`。
+
+### 21.4 启用方式
+
+```bash
+# 分布式（生产）
+REDIS_URL=redis://127.0.0.1:6379/0
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/zhixing
+GENERATION_MAX_CONCURRENCY=8
+# 均留空/默认即回到单机内存 + SQLite，开发机无需装任何中间件
+```
+
+> 现实边界：以上解决的是「单机→可横向扩展」的第一步（状态外置 + 削峰 + 连接池）。真正的百万/亿级还需对象存储替代本地 `generated/`、消息队列独立进程、读写分离与 CDN，属产品公司级工程。
+
+## 22. 许可证与致谢
 
 本项目为挑战杯「揭榜挂帅」专项赛参赛作品，基座模型为阿里巴巴通义千问 Qwen，通过阿里云百炼（DashScope）调用。
 感谢发榜单位浙江阿里巴巴云计算有限公司提供赛题与算力支持。

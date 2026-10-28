@@ -10,6 +10,12 @@ sqlalchemy[asyncio]==2.0.36
 aiosqlite==0.20.0
 alembic==1.14.1
 
+# ═══ 可扩展性（生产分布式；开发机不装/不配也能跑，代码会自动降级）═══
+# redis：配置 REDIS_URL 后启用分布式限流/登录锁定/生成并发闸；留空则走本地内存
+redis==5.2.0
+# asyncpg：DATABASE_URL 换 postgresql+asyncpg:// 时使用的异步驱动
+asyncpg==0.30.0
+
 # ═══ 认证与安全 ═══
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4

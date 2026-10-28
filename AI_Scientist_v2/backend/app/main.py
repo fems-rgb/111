@@ -67,7 +67,17 @@ async def lifespan(app: FastAPI):
     from app.api.v1.general_seed import seed_general_courses as _seed_gc
     async with _ASL() as _db:
         await _seed_gc(_db)
+    # 基础设施：探一次 Redis（不可用则限流/锁定/并发闸自动回退内存）+ 启动生成作业 worker 池
+    from app.services import redis_client as _rc
+    from app.services.job_queue import generation_queue as _gq
+    if _rc.redis_enabled():
+        _ok = await _rc.ping()
+        logger.info(f"🧩 Redis：{'已连通，分布式限流/锁定/并发闸启用' if _ok else '不可用，回退本地内存'}")
+    await _gq.start()
     yield
+    # 关服：停掉 worker 池与 Redis 连接
+    await _gq.stop()
+    await _rc.close()
 
 app = FastAPI(
     redirect_slashes=True,

@@ -33,9 +33,21 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def _client_ip(request: Request) -> str:
+    """取真实客户端 IP：反代后 request.client.host 会是代理地址，优先 X-Forwarded-For 首个。
+    （仅在信任的 Nginx/Caddy 反代后有效；直连部署仍用 socket 地址。）"""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    real = request.headers.get("x-real-ip")
+    if real:
+        return real.strip()
+    return request.client.host if request.client else "unknown"
+
+
 async def check_rate_limit(request: Request):
-    key = request.client.host if request.client else "unknown"
-    allowed, retry_after = rate_limiter.is_allowed(key)
+    key = _client_ip(request)
+    allowed, retry_after = await rate_limiter.is_allowed(key)
     if not allowed:
         raise HTTPException(status_code=429, detail=f"请求过于频繁，请{retry_after}秒后重试",
                           headers={"Retry-After": str(retry_after)})
@@ -43,8 +55,8 @@ async def check_rate_limit(request: Request):
 
 async def check_auth_rate_limit(request: Request):
     """登录/注册频率护城河：每 IP 限次，抵御撞库、暴力尝试与高频请求卡死"""
-    key = request.client.host if request.client else "unknown"
-    allowed, retry_after = auth_rate_limiter.is_allowed(key)
+    key = _client_ip(request)
+    allowed, retry_after = await auth_rate_limiter.is_allowed(key)
     if not allowed:
         raise HTTPException(status_code=429, detail=f"登录/注册尝试过于频繁，请{retry_after}秒后再试",
                           headers={"Retry-After": str(retry_after)})

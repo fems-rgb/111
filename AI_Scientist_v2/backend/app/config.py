@@ -81,6 +81,18 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 20
     ALLOWED_ORIGINS: str = '["http://localhost:5173"]'
 
+    # ── 可扩展性（Redis / 队列 / 连接池）：留空即单机内存态，配置后自动升级为分布式多实例共享 ──
+    # Redis 连接串（如 redis://127.0.0.1:6379/0）；留空或连不上 → 限流/登录锁定/并发闸全部回退本地内存
+    REDIS_URL: str = ""
+    # 课件生成后台作业：单实例同时最多跑几个（保护 LLM 配额与内存），其余排队
+    GENERATION_MAX_CONCURRENCY: int = 4
+    # 等待队列上限；满了新作业直接 429 背压（削峰），而不是无限堆积拖垮进程
+    GENERATION_QUEUE_MAX: int = 100
+    # 关系库连接池（仅对 PostgreSQL/MySQL 生效；SQLite 用固定小池）
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
+    DB_POOL_RECYCLE_SECONDS: int = 1800
+
     # ── 可观测性 ──
     TRACE_RETENTION_DAYS: int = 30
     COST_ALERT_THRESHOLD_YUAN: float = 100.0

@@ -31,6 +31,7 @@ from app.schemas.courses import (CourseCreateRequest, CourseUpdateRequest, Gener
                                  CoursewareUpdateRequest, SyncPipelineRequest)
 from app.services import ppt_service, course_ai_service, deck_export
 from app.services import generate_progress as gp
+from app.services.job_queue import generation_queue
 from app.database.session import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
@@ -860,6 +861,12 @@ async def quick_generate_courseware(req: GenerateDeckRequest,
     前端轮询 /coursewares/quick-generate/{job_id} 拿真实进度：第几章、第几页、当前阶段。
     未指定 course_id 时自动创建一门仅自己可见的草稿课程来承载课件。
     """
+    # 削峰背压：生成队列已满则直接拒（不建课、不落作业），保护 LLM 配额与进程
+    ok, queued_now = generation_queue.has_capacity()
+    if not ok:
+        raise HTTPException(status_code=429,
+                            detail="生成服务繁忙，当前排队已满，请稍后重试",
+                            headers={"Retry-After": "60"})
     course = None
     if req.course_id:
         course = await _course_or_404(db, req.course_id)
@@ -883,9 +890,16 @@ async def quick_generate_courseware(req: GenerateDeckRequest,
     job_id = await gp.new_job(topic=req.topic, course_id=course.id, course_title=course.title,
                               user_id=user.id,
                               chapters_total=max(1, min(int(req.chapter_count or 6), 12)))
-    asyncio.create_task(_run_generate_job(job_id, payload, user.id))
+    # 不再直接 create_task（那样几十人同时点会打爆进程与模型配额），而是入队由固定 worker 按并发上限取用
+    try:
+        await generation_queue.submit(job_id, lambda: _run_generate_job(job_id, payload, user.id))
+    except asyncio.QueueFull:
+        await gp.update(job_id, status="failed", stage="failed",
+                        message="生成服务繁忙，请稍后重试", error="queue full")
+        raise HTTPException(status_code=429, detail="生成服务繁忙，请稍后重试",
+                            headers={"Retry-After": "60"})
     return {"ok": True, "job_id": job_id, "course_id": course.id,
-            "course_title": course.title,
+            "course_title": course.title, "queued_ahead": queued_now,
             "status_url": f"/api/v1/coursewares/quick-generate/{job_id}"}
 
 

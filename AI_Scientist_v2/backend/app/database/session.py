@@ -1,21 +1,26 @@
-"""智研星枢 - 异步数据库引擎"""
+"""智研星枢 - 异步数据库引擎
+
+同一套代码兼容 SQLite（默认、零依赖，适合开发/单机）与 PostgreSQL/MySQL（生产横向扩展）：
+把 DATABASE_URL 换成 postgresql+asyncpg://... 或 mysql+asyncmy://... 即自动启用连接池，
+SQLite 分支则维持 WAL + busy_timeout 的并发姿势。
+"""
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.config import settings
 
-_IS_SQLITE = "sqlite" in settings.DATABASE_URL
-
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    # timeout：SQLite 原生 busy 超时（秒）。并发写时排队等待，而不是立刻抛 database is locked
-    connect_args={"check_same_thread": False, "timeout": 15} if _IS_SQLITE else {},
-    pool_pre_ping=True,
-)
-
+DATABASE_URL = settings.DATABASE_URL
+_IS_SQLITE = "sqlite" in DATABASE_URL
 
 if _IS_SQLITE:
+    # 单文件、写者有限：固定小池即可，靠 WAL 让读写互不阻塞
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=settings.DEBUG,
+        connect_args={"check_same_thread": False, "timeout": 15},
+        pool_pre_ping=True,
+    )
+
     @event.listens_for(engine.sync_engine, "connect")
     def _sqlite_pragmas(dbapi_connection, _record):
         """SQLite 并发姿势：WAL + 忙等
@@ -32,6 +37,16 @@ if _IS_SQLITE:
             cursor.execute("PRAGMA foreign_keys=ON")
         finally:
             cursor.close()
+else:
+    # PostgreSQL / MySQL：真正的连接池，支撑多并发与横向扩展
+    engine = create_async_engine(
+        DATABASE_URL,
+        echo=settings.DEBUG,
+        pool_pre_ping=True,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_recycle=settings.DB_POOL_RECYCLE_SECONDS,
+    )
 
 
 AsyncSessionLocal = async_sessionmaker(
@@ -51,14 +66,3 @@ async def get_db():
             yield session
         finally:
             await session.close()
-            await session.close()
-
-if "sqlite" in settings.DATABASE_URL:
-    @event.listens_for(engine.sync_engine, "connect")
-    def _sqlite_pragmas(dbapi_connection, _record):
-        # WAL 让读写互不阻塞；busy_timeout 让偶发争用排队等待，而不是直接抛 database is locked
-        cur = dbapi_connection.cursor()
-        cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA busy_timeout=15000")
-        cur.execute("PRAGMA synchronous=NORMAL")
-        cur.close()
