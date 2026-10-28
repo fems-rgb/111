@@ -17,9 +17,11 @@ pip install -r requirements.txt
 copy .env.example .env        # 填入 QWEN_API_KEY
 python run.py                 # → http://localhost:8000
 
-# Docker 一键
+# Docker 一键（单容器，开发 / 体验）
 cd AI_Scientist_v2
 docker compose up --build     # → http://localhost:8000
+
+# 生产多副本（nginx → app×N → PostgreSQL + Redis）见 AI_Scientist_v2/deploy/，详见项目 README §22
 ```
 
 ## 文档索引
@@ -35,10 +37,10 @@ docker compose up --build     # → http://localhost:8000
 ## 技术栈速览
 
 - **基座模型**：通义千问 Qwen（qwen-max · qwen-vl-max）· 阿里云百炼 DashScope
-- **后端**：Python 3.12 · FastAPI · SQLAlchemy async · SQLite · Alembic
+- **后端**：Python 3.12 · FastAPI · SQLAlchemy async · SQLite（默认）/ PostgreSQL（asyncpg）· Alembic
 - **前端**：Vue 3.5 · TypeScript 5.7 · Vite 6 · Pinia · Element Plus · Tailwind
 - **实验**：numpy/pandas/scipy/matplotlib · WeasyPrint（PDF 导出）
-- **运维**：Docker 单容器 · GitHub Actions CI · pytest
+- **运维**：Docker（单容器 / 生产 nginx+PostgreSQL+Redis）· Redis（可选分布式）· GitHub Actions CI · pytest
 
 ## 冒烟测试
 
@@ -54,11 +56,11 @@ pytest -q                     # 预期：12 passed
 111-1/
 ├── README.md                       ← 你在这里
 └── AI_Scientist_v2/
-    ├── backend/                    FastAPI + SPA（单端口）
+    ├── backend/                    FastAPI + SPA（单端口）· Dockerfile · requirements[-dev].txt · scripts/
     ├── frontend/                   Vue 3 源码
-    ├── docs/                       交付文档（.md + .pdf）
-    ├── scripts/                    PDF 生成等工具
-    ├── .github/workflows/ci.yml    CI
-    ├── docker-compose.yml          一键部署
+    ├── deploy/                     生产上云编排：nginx → app×N → PostgreSQL + Redis
+    ├── docs/                       交付文档（技术方案 .md/.pdf · 快速开始 · 提交清单）
+    ├── .github/workflows/ci.yml    GitHub Actions CI（后端 pytest + 前端 build）
+    ├── docker-compose.yml          单容器一键部署（开发 / 体验）
     └── README.md                   项目主文档
 ```

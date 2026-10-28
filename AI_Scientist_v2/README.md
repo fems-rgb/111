@@ -9,6 +9,20 @@
 
 ---
 
+## 目录
+
+- **0.** 功能模块地图 · **1.** 项目简介（核心特性 / 关键指标）· **2.** 快速开始（本地 / Docker / 免 Node）
+- **3.** 生成文件目录 · **4.** 课程中心与课件工坊（PPT 全链路）· **5.** 平台治理（模型·预警·预测·图谱·计划）
+- **6.** 系统架构 · **7.** 技术栈 · **8.** 多智能体九阶段 · **9.** 实验引擎 · **10.** 目录结构
+- **11.** 配置与环境变量 · **12.** API 参考 · **13.** 数据库 Schema（33 表）
+- **14.** Docker 部署（单容器 · 开发/体验）· **15.** 质量闸门 · **16.** 测试 · **17.** 可观测性与安全
+- **18.** 已知问题与排坑 · **19.** FAQ · **20.** 多端形态（PWA·原生 App·小程序）
+- **21.** 可扩展性（Redis 分布式 · 生成队列 · PostgreSQL）· **22.** 一键上云（生产编排）· **23.** 许可证与致谢
+
+> **两条部署路径**：① 单容器一体化（`docker-compose.yml` + `backend/Dockerfile`，SPA+API 同端口，§2 / §14）适合本地与小规模；② 生产上云（`deploy/`：nginx → app×N → PostgreSQL + Redis，§22）适合多副本横向扩展。二者数据同源、代码同一套。
+
+---
+
 ## 0. 功能模块地图（想做什么，直接看这张表）
 
 | 模块 | 侧边栏入口 | 路由 | 能做什么 | 主要后端 |
@@ -69,14 +83,14 @@ AI 对话页工具栏还有 `📽️` 按钮，可把当前项目（含对话记
 
 | 指标 | 数值 |
 | --- | --- |
-| 后端 Python（`backend/app`） | 112 文件 / 22,205 行 |
-| 前端 Vue + TS（`frontend/src`） | 74 文件 / 16,091 行 |
-| REST API | 173 个操作 / 141 条 `/api` 路径 |
-| 数据表 | 33 张（新增 `knowledge_graphs` · `plans` · `cost_daily` · `generate_jobs` · 通识课 3 表） |
+| 后端 Python（`backend/app`） | 115 文件 / 22,909 行 |
+| 前端 Vue + TS（`frontend/src`） | 76 文件 / 16,577 行 |
+| REST API | 178 个操作 / 145 条 `/api` 路径 |
+| 数据表 | 33 张（含 `knowledge_graphs` · `plans` · `cost_daily` · `generate_jobs` · 通识课 3 表） |
 | Agent | 15 项注册 · 9 阶段默认流水线 |
 | 内置科学问题 | 125 题（Science 2005 前沿难题） |
-| 前端视图 / 组件 / API 模块 | 24 / 17 / 17 |
-| 单元测试 | 12 用例 pytest 全通过（另有 ASGITransport 进程内端到端脚本覆盖全模块） |
+| 前端视图 / 组件 / API 模块 | 24 / 17 / 19 |
+| 测试 | 12 用例 pytest 全通过 · Redis 双进程分布式自测 10/10（§21.5）· 生产镜像本机 Docker 端到端起站验证（§22.1） |
 
 ---
 
@@ -98,13 +112,15 @@ cd AI_Scientist_v2\frontend
 npm ci && npm run dev           # → http://localhost:5173
 ```
 
-### 方式 B：Docker 一键
+### 方式 B：Docker 一键（单容器 · SPA+API）
 
 ```bash
 cd AI_Scientist_v2
 docker compose up --build
-# → http://localhost:8000 （前端 SPA + API 同端口）
+# → http://localhost:8000 （前端 SPA + API 同端口，SQLite 落命名卷）
 ```
+
+> 生产多副本 / PostgreSQL / Redis / Nginx 反代的一键上云见 §22（`deploy/`）。
 
 ### 方式 C：免 Node（预构建 SPA）
 
@@ -300,12 +316,13 @@ Plan(scope: personal|team|pipeline|auto, items:[{text,due,agent,done}], source: 
 
 | 层 | 选型 |
 | --- | --- |
-| 前端 | Vue 3 + TypeScript + Vite 6 · Pinia · vue-router · TailwindCSS · Element Plus · KaTeX |
-| 后端 | Python 3.11+ · FastAPI · SQLAlchemy 2 (async) · Pydantic v2 · Alembic |
+| 前端 | Vue 3 + TypeScript + Vite 6 · Pinia · vue-router · TailwindCSS · Element Plus · KaTeX · vite-plugin-pwa |
+| 后端 | Python 3.11+（实测 3.12）· FastAPI · SQLAlchemy 2 (async) · Pydantic v2 · Alembic · Uvicorn |
+| 数据 / 分布式 | SQLite（aiosqlite，默认）· PostgreSQL（asyncpg，可平滑切换并启用连接池）· Redis（可选：分布式限流 / 登录锁定 / 并发闸）· APScheduler（定时流水线） |
 | 模型 | Qwen-Max / Plus / VL（默认基座）· DashScope SDK；可选 DeepSeek / Kimi / GLM / 自定义 OpenAI 兼容端点 |
-| 课件 | python-pptx（解析与反向导出）· Pillow（逐页渲染与压缩） |
-| 实验 | matplotlib / numpy / pandas，子进程沙箱执行 |
-| 部署 | Docker Compose · 单端口同时提供 SPA 与 API |
+| 课件 / 文档 | python-pptx（解析与反向导出）· python-docx · PyMuPDF · openpyxl · Pillow（逐页渲染压缩）· xhtml2pdf / weasyprint（PDF 导出） |
+| 实验 | matplotlib / numpy / scipy / pandas，子进程沙箱执行 |
+| 部署 | 两条路径：单容器一键（`docker-compose.yml` + `backend/Dockerfile`，SPA+API 同端口）；生产上云（`deploy/`：多阶段镜像 + nginx → app×N → PostgreSQL + Redis） |
 
 ## 8. 多智能体与九阶段流水线
 
@@ -334,24 +351,29 @@ AI_Scientist_v2/
 │   │   ├── agents/            # 22 个 Agent 文件 + orchestrator + tools（15 项注册）
 │   │   ├── api/v1/            # 28 个端点模块（courses.py 含课程 + 课件双 router；
 │   │   │                      #   新增 alerts / graphs / plans / general_courses）
-│   │   ├── services/          # 20 个服务：qwen_client · mode_policy · prediction · ppt_service ·
-│   │   │                      #   course_ai_service · generate_progress · …
+│   │   ├── services/          # qwen_client · mode_policy · prediction · ppt_service · course_ai_service ·
+│   │   │                      #   generate_progress · job_queue（Redis 生成队列）· redis_client（可选分布式）· …
 │   │   ├── schemas/           # Pydantic 契约
-│   │   ├── database/          # models（33 表）· session · init_db · Alembic
-│   │   ├── core/ · security/  # 事件总线 · 加密 · JWT · 速率限制
+│   │   ├── database/          # models（33 表）· session（SQLite / PostgreSQL asyncpg 连接池）· init_db · Alembic
+│   │   ├── security/          # JWT · 加密 · 分布式限流 rate_limiter · 账号锁定 login_guard
+│   │   ├── scheduler/         # APScheduler 定时流水线（cron 触发九阶段）
+│   │   ├── core/              # 事件总线 · 配置 · 依赖注入
 │   │   ├── utils/paths.py     # ★ 生成文件唯一路径入口
 │   │   ├── observability/     # tracer · 成本统计（含 cost_daily 内存日桶）
 │   │   └── main.py            # 路由注册 · SPA 托管 · 启动建树
+│   ├── scripts/              # redis_cluster_check.py 分布式自验证脚本等
 │   ├── generated/             # ★ 所有系统生成文件（gitignore，保留骨架）
 │   ├── uploads/               # 用户上传原件
 │   ├── static/                # 前端构建产物（免 Node 运行）
 │   ├── logs/ · tests/ · migrations/
-│   └── run.py · requirements.txt · .env
+│   └── run.py · requirements.txt · requirements-dev.txt · Dockerfile · .env
 ├── frontend/
 │   └── src/{api,components,composables,router,stores,types,views,i18n,…}
 │       ├── components/common/  # GraphView（自研 SVG 力导向）· ModelSwitcher（顶栏模型切换）
 │       └── views/plans/        # PlansView（四 tab 计划中心）
-├── docker-compose.yml · Dockerfile
+├── deploy/                    # ★ 生产上云编排（§22）：多阶段镜像 + nginx → app×N → PostgreSQL + Redis
+├── docs/                      # 技术方案.md / .pdf · 快速开始.md · 提交清单.md
+├── docker-compose.yml         # 单容器一体化部署（§14）
 └── README.md
 ```
 
@@ -384,7 +406,16 @@ CUSTOM_MODELS=
 
 # ── 预警阈值 ──
 COST_ALERT_THRESHOLD_YUAN=100.0
+
+# ── 可扩展性（全部可选，留空即单机降级，见 §21）──
+REDIS_URL=                       # 留空 → 队列/限流/缓存回落进程内，单副本照常运行
+GENERATION_MAX_CONCURRENCY=4     # 并发生成上限（配合 Redis 队列做背压）
+GENERATION_QUEUE_MAX=100         # 待处理生成任务队列长度上限
+DB_POOL_SIZE=10                  # PostgreSQL asyncpg 连接池（SQLite 下忽略）
+DB_MAX_OVERFLOW=20               # 连接池溢出上限
 ```
+
+> 单机体验无需设置以上五项；配置 `REDIS_URL` 后生成队列、分布式限流、跨副本缓存自动切换为 Redis 后端，多副本共享同一套状态（§21）。
 
 路径类配置在 `app/config.py` 里已改为**绝对默认值**，通常无需覆盖：
 
@@ -441,7 +472,9 @@ COST_ALERT_THRESHOLD_YUAN=100.0
 
 迁移：`alembic revision --autogenerate -m "..."` + `alembic upgrade head`；全新环境可直接 `python -m app.database.init_db`。
 
-## 14. Docker 部署
+## 14. Docker 部署（单容器 · 开发 / 体验）
+
+> 本节是**单容器一体化**部署（SPA + API 同端口，SQLite 落命名卷），适合本地验证与小规模使用；需要多副本横向扩展、PostgreSQL + Redis 的**生产上云**编排见 §22（`deploy/`）。
 
 `docker-compose.yml`（实际配置，单容器同时提供 SPA 与 API）：
 
@@ -466,17 +499,24 @@ docker compose up --build     # → http://localhost:8000 ｜ /docs
 
 Dockerfile 已 `mkdir -p /app/generated`，容器内路径与本地完全一致；环境变量 `DATABASE_URL` 在容器内指向 `./data/zhixing.db`。
 
-## 15. 质量闸门（本地执行）
+## 15. 质量闸门（CI 与本地）
 
-项目未随仓提供 CI 配置文件；推荐在提交前执行下面三步（已验证均绿）：
+仓库已内置 **GitHub Actions CI**（`AI_Scientist_v2/.github/workflows/ci.yml`，push / PR 到 `main`·`develop` 触发），两个 job：
+
+| Job | 内容 |
+| --- | --- |
+| `backend` | Python 3.12 · 装 WeasyPrint 系统依赖 · `pip install -r requirements.txt + requirements-dev.txt` · `pytest -q --maxfail=1`（SQLite 临时库 + 占位 Key，不跑真实流水线） |
+| `frontend` | Node 20 · `npm ci` · `npm run build`（含 vue-tsc 类型检查）· 上传 dist 产物 |
+
+> CI 不持真实 `QWEN_API_KEY`（留给本地 / 评审演示）；流水线实跑需自备密钥。
+
+提交前也可在本地手动跑同等三步（均已验证为绿）：
 
 ```bash
 cd AI_Scientist_v2/frontend && npm run build        # vue-tsc 类型检查 + vite build
 cd ../backend  && python -m pytest tests -q         # 12 用例
 robocopy ../frontend/dist ./static /MIR         # 同步免 Node 产物
 ```
-
-若需接入 CI，直接把上面三段写进 `.github/workflows/ci.yml` 即可。
 
 ## 16. 测试
 
